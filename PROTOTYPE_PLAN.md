@@ -736,10 +736,10 @@ At approximately 430px wide or below:
 
 - [x] Save the approved plan as `PROTOTYPE_PLAN.md` before creating application code.
 - [x] Mark the save-plan progress item complete immediately after the file exists.
-- [ ] Create the Vite/React/TypeScript project in place without replacing Git history.
-- [ ] Preserve the existing README content and expand it with setup instructions later.
-- [ ] Add npm scripts, TypeScript configuration, linting, testing, and `.gitignore`.
-- [ ] Generate and commit `package-lock.json`.
+- [x] Create the Vite/React/TypeScript project in place without replacing Git history.
+- [x] Preserve the existing README content and expand it with setup instructions later.
+- [x] Add npm scripts, TypeScript configuration, linting, testing, and `.gitignore`.
+- [x] Generate and commit `package-lock.json`.
 
 ### Phase 1 — Architecture and visual foundation
 
@@ -788,7 +788,7 @@ At approximately 430px wide or below:
 ## 15. Progress checklist
 
 - [x] Approved plan saved as `PROTOTYPE_PLAN.md`.
-- [ ] Project scaffold and developer commands ready.
+- [x] Project scaffold and developer commands ready.
 - [ ] Mock data and state machine complete.
 - [ ] Phone shell and visual system complete.
 - [ ] Consumer Screens 1–5 complete.
@@ -810,10 +810,10 @@ At approximately 430px wide or below:
 
 Run from the repository root:
 
-- [ ] `npm install` for the first dependency installation and lockfile creation.
-- [ ] `npm run dev` to start local development.
-- [ ] `npm run lint` with no errors.
-- [ ] `npm run typecheck` with no TypeScript errors.
+- [x] `npm install` for the first dependency installation and lockfile creation.
+- [x] `npm run dev` to start local development.
+- [x] `npm run lint` with no errors.
+- [x] `npm run typecheck` with no TypeScript errors.
 - [ ] `npm run test` with all Vitest tests passing.
 - [ ] `npm run build` with a successful static production build.
 - [ ] `npm run preview` to inspect the production build locally.
@@ -871,7 +871,7 @@ Run from the repository root:
 Commits should be small, coherent, and made without rewriting the existing repository history.
 
 - [x] `docs: add approved prototype plan`
-- [ ] `chore: scaffold React Vite prototype`
+- [x] `chore: scaffold React Vite prototype`
 - [ ] `feat: add phone shell and demo state foundation`
 - [ ] `feat: build Jia vouch and sharing flow`
 - [ ] `feat: add offer claim payment and vouch loop`
