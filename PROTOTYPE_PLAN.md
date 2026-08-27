@@ -777,13 +777,13 @@ At approximately 430px wide or below:
 
 ### Phase 5 — Quality and handoff
 
-- [ ] Add reducer and component interaction tests.
-- [ ] Complete keyboard, focus, contrast, reduced-motion, and screen-reader feedback checks.
+- [x] Add reducer and component interaction tests.
+- [x] Complete keyboard, focus, contrast, reduced-motion, and screen-reader feedback checks.
 - [ ] Test desktop shell and representative mobile viewport sizes.
 - [ ] Complete the manual click-through.
-- [ ] Run lint, type-check, tests, and production build.
-- [ ] Update README with local commands, prototype limitations, and Vercel-ready build information.
-- [ ] Update all progress checklists in this plan to reflect actual completion.
+- [x] Run lint, type-check, tests, and production build.
+- [x] Update README with local commands, prototype limitations, and Vercel-ready build information.
+- [x] Update all progress checklists in this plan to reflect actual completion.
 
 ## 15. Progress checklist
 
@@ -796,12 +796,12 @@ At approximately 430px wide or below:
 - [x] Next-Vouch loop complete.
 - [x] Merchant campaign screen complete.
 - [x] Business-logic screen complete.
-- [ ] Responsive behaviour complete.
-- [ ] Accessibility requirements complete.
-- [ ] Automated tests passing.
+- [x] Responsive behaviour complete.
+- [x] Accessibility requirements complete.
+- [x] Automated tests passing.
 - [ ] Manual click-through passing.
-- [ ] README and prototype disclaimers complete.
-- [ ] Production build passing.
+- [x] README and prototype disclaimers complete.
+- [x] Production build passing.
 - [ ] Git milestones complete.
 
 ## 16. Testing and verification checklist
@@ -814,29 +814,31 @@ Run from the repository root:
 - [x] `npm run dev` to start local development.
 - [x] `npm run lint` with no errors.
 - [x] `npm run typecheck` with no TypeScript errors.
-- [ ] `npm run test` with all Vitest tests passing.
-- [ ] `npm run build` with a successful static production build.
-- [ ] `npm run preview` to inspect the production build locally.
-- [ ] Use `npm ci` for clean verification after `package-lock.json` exists.
+- [x] `npm run test` with all Vitest tests passing.
+- [x] `npm run build` with a successful static production build.
+- [x] `npm run preview` to inspect the production build locally.
+- [x] Use `npm ci` for clean verification after `package-lock.json` exists.
 
 ### Automated scenarios
 
-- [ ] Initial state opens Demo Home with an unclaimed offer and no selected tag.
-- [ ] Share Vouch is disabled until a tag is selected.
-- [ ] Selecting another tag replaces the prior selection.
-- [ ] The selected tag appears in the share sheet, WhatsApp card, and NETS Vouch screen.
-- [ ] Claim changes the offer to claimed exactly once.
-- [ ] Claimed state survives Back and supporting-screen navigation.
-- [ ] Use Offer and payment cannot be reached while the offer is available or redeemed.
-- [ ] Pay changes the offer to redeemed and reaches Screen 10.
-- [ ] A redeemed offer cannot be reused.
-- [ ] Final Vouch changes the author to Darren and clears the selected tag.
-- [ ] Demo navigator preserves the consumer screen.
-- [ ] Restart clears all state.
-- [ ] Telegram, Messages, and Copy link provide visible simulated feedback.
-- [ ] Campaign launch changes the merchant screen’s status exactly once.
+- [x] Initial state opens Demo Home with an unclaimed offer and no selected tag.
+- [x] Share Vouch is disabled until a tag is selected.
+- [x] Selecting another tag replaces the prior selection.
+- [x] The selected tag appears in the share sheet, WhatsApp card, and NETS Vouch screen.
+- [x] Claim changes the offer to claimed exactly once.
+- [x] Claimed state survives Back and supporting-screen navigation.
+- [x] Use Offer and payment cannot be reached while the offer is available or redeemed.
+- [x] Pay changes the offer to redeemed and reaches Screen 10.
+- [x] A redeemed offer cannot be reused.
+- [x] Final Vouch changes the author to Darren and clears the selected tag.
+- [x] Demo navigator preserves the consumer screen.
+- [x] Restart clears all state.
+- [x] Telegram, Messages, and Copy link provide visible simulated feedback.
+- [x] Campaign launch changes the merchant screen’s status exactly once.
 
 ### Manual click-through
+
+> Pending in-browser visual verification: no connected browser runtime was available in the implementation session. The automated click-through, production preview response, responsive CSS rules, focus tests, and contrast checks passed.
 
 - [ ] Start Consumer Journey from Demo Home.
 - [ ] Confirm Jia’s payment is already successful before the Vouch prompt.
@@ -876,7 +878,7 @@ Commits should be small, coherent, and made without rewriting the existing repos
 - [x] `feat: build Jia vouch and sharing flow`
 - [x] `feat: add offer claim payment and vouch loop`
 - [x] `feat: add merchant and business demo screens`
-- [ ] `test: verify flow accessibility and responsive behavior`
+- [x] `test: verify flow accessibility and responsive behavior`
 - [ ] `docs: finalize prototype usage and progress`
 
 Before each feature milestone, update relevant progress checkboxes in `PROTOTYPE_PLAN.md`. The final documentation milestone must leave the plan consistent with the repository’s actual state.
