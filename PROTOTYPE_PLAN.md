@@ -770,10 +770,10 @@ At approximately 430px wide or below:
 
 ### Phase 4 — Supporting demonstrations
 
-- [ ] Implement Merchant Campaign content and launched state.
-- [ ] Implement Business Logic comparison and required disclaimer.
-- [ ] Implement Back, Next, Close, and resume behaviour across supporting screens.
-- [ ] Verify supporting screens never overwrite consumer progress.
+- [x] Implement Merchant Campaign content and launched state.
+- [x] Implement Business Logic comparison and required disclaimer.
+- [x] Implement Back, Next, Close, and resume behaviour across supporting screens.
+- [x] Verify supporting screens never overwrite consumer progress.
 
 ### Phase 5 — Quality and handoff
 
@@ -794,8 +794,8 @@ At approximately 430px wide or below:
 - [x] Consumer Screens 1–5 complete.
 - [x] Consumer Screens 6–10 complete.
 - [x] Next-Vouch loop complete.
-- [ ] Merchant campaign screen complete.
-- [ ] Business-logic screen complete.
+- [x] Merchant campaign screen complete.
+- [x] Business-logic screen complete.
 - [ ] Responsive behaviour complete.
 - [ ] Accessibility requirements complete.
 - [ ] Automated tests passing.
@@ -875,7 +875,7 @@ Commits should be small, coherent, and made without rewriting the existing repos
 - [x] `feat: add phone shell and demo state foundation`
 - [x] `feat: build Jia vouch and sharing flow`
 - [x] `feat: add offer claim payment and vouch loop`
-- [ ] `feat: add merchant and business demo screens`
+- [x] `feat: add merchant and business demo screens`
 - [ ] `test: verify flow accessibility and responsive behavior`
 - [ ] `docs: finalize prototype usage and progress`
 
