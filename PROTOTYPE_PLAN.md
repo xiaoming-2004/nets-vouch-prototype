@@ -743,11 +743,11 @@ At approximately 430px wide or below:
 
 ### Phase 1 — Architecture and visual foundation
 
-- [ ] Define mock data, internal types, reducer state, reducer actions, and navigation guards.
-- [ ] Implement design tokens, global styles, and responsive page background.
-- [ ] Build the iPhone shell, status bar, internal scrolling, screen transition wrapper, and safe areas.
-- [ ] Build reusable buttons, headers, cards, badges, tag selector, dialogs, feedback, and success-state components.
-- [ ] Build Demo Home, Demo Navigator, Back handling, Close handling, and Restart.
+- [x] Define mock data, internal types, reducer state, reducer actions, and navigation guards.
+- [x] Implement design tokens, global styles, and responsive page background.
+- [x] Build the iPhone shell, status bar, internal scrolling, screen transition wrapper, and safe areas.
+- [x] Build reusable buttons, headers, cards, badges, tag selector, dialogs, feedback, and success-state components.
+- [x] Build Demo Home, Demo Navigator, Back handling, Close handling, and Restart.
 
 ### Phase 2 — Jia’s Vouch and sharing journey
 
@@ -789,8 +789,8 @@ At approximately 430px wide or below:
 
 - [x] Approved plan saved as `PROTOTYPE_PLAN.md`.
 - [x] Project scaffold and developer commands ready.
-- [ ] Mock data and state machine complete.
-- [ ] Phone shell and visual system complete.
+- [x] Mock data and state machine complete.
+- [x] Phone shell and visual system complete.
 - [ ] Consumer Screens 1–5 complete.
 - [ ] Consumer Screens 6–10 complete.
 - [ ] Next-Vouch loop complete.
@@ -872,7 +872,7 @@ Commits should be small, coherent, and made without rewriting the existing repos
 
 - [x] `docs: add approved prototype plan`
 - [x] `chore: scaffold React Vite prototype`
-- [ ] `feat: add phone shell and demo state foundation`
+- [x] `feat: add phone shell and demo state foundation`
 - [ ] `feat: build Jia vouch and sharing flow`
 - [ ] `feat: add offer claim payment and vouch loop`
 - [ ] `feat: add merchant and business demo screens`
