@@ -751,12 +751,12 @@ At approximately 430px wide or below:
 
 ### Phase 2 — Jia’s Vouch and sharing journey
 
-- [ ] Implement Screen 1 payment success.
-- [ ] Implement Screen 2 Vouch creation and single-select tags.
-- [ ] Implement Screen 3 iOS-style share sheet.
-- [ ] Implement Screen 4 simulated WhatsApp conversation.
-- [ ] Implement Screen 5 NETS Vouch and clearly separate optional offer.
-- [ ] Verify the exact required copy and first half of the flow.
+- [x] Implement Screen 1 payment success.
+- [x] Implement Screen 2 Vouch creation and single-select tags.
+- [x] Implement Screen 3 iOS-style share sheet.
+- [x] Implement Screen 4 simulated WhatsApp conversation.
+- [x] Implement Screen 5 NETS Vouch and clearly separate optional offer.
+- [x] Verify the exact required copy and first half of the flow.
 
 ### Phase 3 — Claim, later use, payment, and loop
 
@@ -791,7 +791,7 @@ At approximately 430px wide or below:
 - [x] Project scaffold and developer commands ready.
 - [x] Mock data and state machine complete.
 - [x] Phone shell and visual system complete.
-- [ ] Consumer Screens 1–5 complete.
+- [x] Consumer Screens 1–5 complete.
 - [ ] Consumer Screens 6–10 complete.
 - [ ] Next-Vouch loop complete.
 - [ ] Merchant campaign screen complete.
@@ -873,7 +873,7 @@ Commits should be small, coherent, and made without rewriting the existing repos
 - [x] `docs: add approved prototype plan`
 - [x] `chore: scaffold React Vite prototype`
 - [x] `feat: add phone shell and demo state foundation`
-- [ ] `feat: build Jia vouch and sharing flow`
+- [x] `feat: build Jia vouch and sharing flow`
 - [ ] `feat: add offer claim payment and vouch loop`
 - [ ] `feat: add merchant and business demo screens`
 - [ ] `test: verify flow accessibility and responsive behavior`
