@@ -760,13 +760,13 @@ At approximately 430px wide or below:
 
 ### Phase 3 — Claim, later use, payment, and loop
 
-- [ ] Implement Screen 6 offer claimed.
-- [ ] Implement Screen 7 My Offers.
-- [ ] Implement Screen 8 later-use offer state.
-- [ ] Implement Screen 9 simulated NETS payment.
-- [ ] Implement Screen 10 redemption success.
-- [ ] Implement redeemed-state protection and the Darren-to-next-Vouch loop.
-- [ ] Verify claim and redemption state survives Back and supporting-screen navigation.
+- [x] Implement Screen 6 offer claimed.
+- [x] Implement Screen 7 My Offers.
+- [x] Implement Screen 8 later-use offer state.
+- [x] Implement Screen 9 simulated NETS payment.
+- [x] Implement Screen 10 redemption success.
+- [x] Implement redeemed-state protection and the Darren-to-next-Vouch loop.
+- [x] Verify claim and redemption state survives Back and supporting-screen navigation.
 
 ### Phase 4 — Supporting demonstrations
 
@@ -792,8 +792,8 @@ At approximately 430px wide or below:
 - [x] Mock data and state machine complete.
 - [x] Phone shell and visual system complete.
 - [x] Consumer Screens 1–5 complete.
-- [ ] Consumer Screens 6–10 complete.
-- [ ] Next-Vouch loop complete.
+- [x] Consumer Screens 6–10 complete.
+- [x] Next-Vouch loop complete.
 - [ ] Merchant campaign screen complete.
 - [ ] Business-logic screen complete.
 - [ ] Responsive behaviour complete.
@@ -874,7 +874,7 @@ Commits should be small, coherent, and made without rewriting the existing repos
 - [x] `chore: scaffold React Vite prototype`
 - [x] `feat: add phone shell and demo state foundation`
 - [x] `feat: build Jia vouch and sharing flow`
-- [ ] `feat: add offer claim payment and vouch loop`
+- [x] `feat: add offer claim payment and vouch loop`
 - [ ] `feat: add merchant and business demo screens`
 - [ ] `test: verify flow accessibility and responsive behavior`
 - [ ] `docs: finalize prototype usage and progress`
