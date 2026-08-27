@@ -59,7 +59,7 @@ export function DemoNavigator({ state, onClose, onConsumer, onSupport, onRestart
         <div className="navigator-list">
           <button type="button" className="navigator-item" onClick={onConsumer}>
             <span className="navigator-item__icon navigator-item__icon--blue"><Route size={20} aria-hidden="true" /></span>
-            <span><strong>{state.hasStarted ? 'Resume journey' : 'Consumer journey'}</strong><small>Payment → Vouch → offer → next Vouch</small></span>
+            <span><strong>{state.hasStarted ? 'Resume journey' : 'Consumer journey'}</strong><small>Scan → pay → Vouch → optional Darren demo</small></span>
             <ArrowRight size={18} aria-hidden="true" />
           </button>
           <button type="button" className="navigator-item" onClick={() => onSupport('merchant-campaign')}>

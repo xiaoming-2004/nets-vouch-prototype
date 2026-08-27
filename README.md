@@ -4,7 +4,7 @@ Interactive front-end prototype for the NETS Vouch payment and referral journey.
 
 **One payment creates the next.**
 
-The demo follows Jia’s completed NETS payment, her Vouch shared through a simulated WhatsApp conversation, Darren’s optional merchant-funded offer, and his later payment that creates the next Vouch.
+The demo starts from Jia’s NETS-style Main Menu. She scans a fictional QR, reviews and completes a simulated payment, optionally creates a Vouch, and can then continue into Darren’s recipient journey, optional merchant-funded offer, and later payment that creates the next Vouch.
 
 ## Run locally
 
@@ -36,11 +36,23 @@ The production-ready static files are generated in `dist/`.
 
 ## Demo areas
 
-- **Consumer journey:** payment → Vouch → simulated share → offer claim → later payment → next Vouch
+- **Main journey:** Home → Scan to Pay → payment review → payment success → optional Vouch → Home
+- **Profile:** Jia’s fictional Past Transactions and My Vouches, including a fallback Vouch action from eligible transaction details
+- **Optional Darren journey:** choose **Continue demo as Darren** after Jia shares a Café ABC Vouch, then claim and later redeem the merchant-funded offer
+- **Saved Offers:** Darren’s claimed merchant offers, kept separate from Jia’s My Vouches
 - **Merchant campaign:** fictional merchant-funded offer setup
 - **Business logic:** illustrative payment-rate comparison and merchant rationale
 
-Use the discreet **Demo** control inside the phone to move between areas without losing consumer progress. **Restart demo** requires confirmation and clears all in-memory state.
+Use the Home/Scan/Profile navigation for Jia’s main tasks. The discreet **Demo** control moves between consumer, merchant, and business areas without losing current records. **Restart demo** requires confirmation and restores the original fictional transactions, Vouches, offer, campaign, and navigation state.
+
+### Suggested click-through
+
+1. Choose **Scan to Pay** on Home.
+2. Tap the fictional QR; no camera permission is requested.
+3. Review Café ABC and choose **Pay $8.50**.
+4. Choose **Vouch this place**, select a tag, and pick a simulated share option.
+5. Choose **Done** to return Home, or **Continue demo as Darren** for the recipient and offer-redemption branch.
+6. Open **Profile** to inspect the new payment in Past Transactions and the new recommendation in My Vouches.
 
 ## Technical approach
 
@@ -55,7 +67,7 @@ The implementation source of truth and live progress checklist are in [`PROTOTYP
 
 ## Prototype limitations
 
-All people, merchants, messages, transactions, offers, accounts, and campaign results are fictional. WhatsApp, Telegram, Messages, NETS payments, link copying, offer claiming, and redemption are simulated entirely in the browser. No money moves and no external application opens.
+All people, merchants, messages, transactions, QR visuals, offers, accounts, and campaign results are fictional. QR scanning, WhatsApp, Telegram, Messages, NETS payments, link copying, offer claiming, and redemption are simulated entirely in the browser. The prototype does not access a camera, request bank details, move money, or open an external application.
 
 The offer is represented as account-linked and single-use only through temporary in-memory demo state. Refreshing the page resets the prototype.
 

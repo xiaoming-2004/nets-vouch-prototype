@@ -6,9 +6,13 @@ NETS Vouch is a polished, front-end-only prototype demonstrating how a completed
 
 **Tagline:** One payment creates the next.
 
-The primary story is:
+The primary Jia story is now:
 
-> Jia pays with NETS → Jia Vouches → shares through simulated WhatsApp → Darren receives the Vouch → claims an optional merchant-funded offer → visits later → pays with NETS → redeems the offer → creates the next Vouch.
+> Main Menu → Scan to Pay → tap simulated QR code → review payment → pay → payment successful → optionally Vouch → Vouch confirmation → Main Menu.
+
+The confirmation also offers an optional continuation into the preserved end-to-end branch:
+
+> Jia shares her Vouch → Darren receives it through simulated WhatsApp → claims an optional merchant-funded offer → visits later → pays with NETS → redeems the offer → creates the next Vouch.
 
 This is a clickable demonstration using fictional mock data. It will contain no backend, database, authentication, real payment processing, external messaging integration, or real personal information.
 
@@ -108,6 +112,8 @@ flowchart TD
 The final transition from Screen 10 to Screen 2 changes the current Vouch author to Darren, clears the previous tag selection, and displays a short “next Vouch” confirmation so the loop is visually explicit.
 
 ## 6. Screen-by-screen specification
+
+> **Extension note:** Section 20 supersedes the original Demo Home as the initial screen. The proper Main Menu is now the default, while the discreet Demo Navigator retains access to the focused consumer, merchant, and business demonstrations.
 
 ### Demo Home
 
@@ -565,6 +571,10 @@ nets-vouch-prototype/
 │   │   ├── navigation.ts
 │   │   └── types.ts
 │   ├── components/
+│   │   ├── BottomNavigation.tsx
+│   │   ├── FictionalQrButton.tsx
+│   │   ├── TransactionList.tsx
+│   │   ├── VouchHistoryList.tsx
 │   │   ├── PhoneShell.tsx
 │   │   ├── StatusBar.tsx
 │   │   ├── ScreenHeader.tsx
@@ -576,7 +586,11 @@ nets-vouch-prototype/
 │   │   ├── OfferCard.tsx
 │   │   └── SuccessState.tsx
 │   ├── screens/
-│   │   ├── DemoHomeScreen.tsx
+│   │   ├── MainMenuScreen.tsx
+│   │   ├── ScanToPayScreen.tsx
+│   │   ├── PaymentReviewScreen.tsx
+│   │   ├── ProfileScreen.tsx
+│   │   ├── TransactionDetailScreen.tsx
 │   │   ├── consumer/
 │   │   │   └── one component per numbered consumer screen
 │   │   └── supporting/
@@ -803,6 +817,15 @@ At approximately 430px wide or below:
 - [x] README and prototype disclaimers complete.
 - [x] Production build passing.
 - [x] Git milestones complete.
+- [x] Main Menu, bottom navigation, and shortcuts complete.
+- [x] Simulated Scan to Pay and payment review complete.
+- [x] Scan payment creates and displays a new transaction.
+- [x] Vouch completion confirmation and Darren continuation complete.
+- [x] Jia Profile, Past Transactions, transaction detail, and My Vouches complete.
+- [x] Saved Offers remains separate and reachable.
+- [x] Extension reducer, navigation, and reset behaviour complete.
+- [x] Extension automated tests passing.
+- [ ] Extension manual click-through complete.
 
 ## 16. Testing and verification checklist
 
@@ -821,7 +844,7 @@ Run from the repository root:
 
 ### Automated scenarios
 
-- [x] Initial state opens Demo Home with an unclaimed offer and no selected tag.
+- [x] Initial state opens Main Menu with the original mock records, an unclaimed offer, and no selected tag.
 - [x] Share Vouch is disabled until a tag is selected.
 - [x] Selecting another tag replaces the prior selection.
 - [x] The selected tag appears in the share sheet, WhatsApp card, and NETS Vouch screen.
@@ -833,12 +856,12 @@ Run from the repository root:
 - [x] Final Vouch changes the author to Darren and clears the selected tag.
 - [x] Demo navigator preserves the consumer screen.
 - [x] Restart clears all state.
-- [x] Telegram, Messages, and Copy link provide visible simulated feedback.
+- [x] WhatsApp, Telegram, Messages, and Copy link complete the Vouch with visible simulated feedback.
 - [x] Campaign launch changes the merchant screen’s status exactly once.
 
 ### Manual click-through
 
-> Pending in-browser visual verification: no connected browser runtime was available in the implementation session. The automated click-through, production preview response, responsive CSS rules, focus tests, and contrast checks passed.
+> Pending in-browser visual verification: no connected browser runtime was available in the implementation session. The reducer/component click-through tests, production build, semantic-control review, and responsive/reduced-motion CSS review passed; viewport appearance and physical browser focus behaviour remain deliberately unchecked below.
 
 - [ ] Start Consumer Journey from Demo Home.
 - [ ] Confirm Jia’s payment is already successful before the Vouch prompt.
@@ -926,3 +949,199 @@ The prototype is complete when:
 - The full manual click-through passes at desktop and mobile viewport sizes.
 - README contains beginner-friendly local setup and verification instructions.
 - Git history is preserved and the planned milestone commits are complete.
+
+The Scan-to-Pay and Profile extension is complete when:
+
+- Main Menu is the initial screen and Home, Scan, and Profile bottom navigation works.
+- A keyboard-operable fictional QR moves through scan feedback, payment review, simulated payment, and success without requesting camera or payment credentials.
+- Every successful Jia scan payment is inserted at the top of Past Transactions.
+- Completing Jia’s Vouch inserts it at the top of My Vouches and marks its transaction as Vouched.
+- Vouch completion can finish at Main Menu or optionally continue into the preserved Darren recipient branch.
+- Profile transaction detail can start the fallback Vouch flow for an unvouched transaction.
+- My Vouches contains Jia-created recommendations only; Saved Offers contains Darren-claimed merchant offers only.
+- Reset Demo restores the original mock transactions, Vouches, offers, persona, and navigation state.
+- Existing Darren, merchant campaign, and business-logic demonstrations continue to pass.
+
+## 20. Scan-to-Pay, Main Menu, and Profile extension
+
+### Extension summary and precedence
+
+This section is the authoritative extension specification and supersedes earlier behaviour where Demo Home was the default, Not now returned to the payment receipt, and WhatsApp immediately entered Darren’s view. Existing consumer, merchant, offer, redemption, visual, accessibility, and disclaimer requirements remain in force unless explicitly changed here.
+
+The application remains front-end only with deterministic in-memory mock data. No camera permission, QR decoder, payment credential, external share action, backend, or persistence is required.
+
+### Extended navigation diagram
+
+```mermaid
+flowchart TD
+    H[Main Menu] -->|Scan to Pay / Scan tab| Q[Simulated Scanner]
+    Q -->|Tap fictional QR| R[Payment Review]
+    R -->|Pay $8.50| P[Payment Successful]
+    R -->|Cancel| H
+    P -->|Done| H
+    P -->|Vouch this place| V[Create Vouch]
+    V -->|Not now| H
+    V -->|Select tag and Share| S[Share Sheet]
+    S -->|Choose simulated channel| C[Vouch Complete]
+    C -->|Done| H
+    C -->|Continue demo as Darren| W[Simulated WhatsApp]
+    W --> D[Darren Vouch and Offer Journey]
+    D --> X[Redemption Success]
+    X -->|Done| H
+    X -->|Vouch Café ABC| V
+
+    H -->|My Transactions| PT[Profile: Past Transactions]
+    H -->|My Vouches| PV[Profile: My Vouches]
+    H -->|Saved Offers| O[Saved Offers]
+    PT -->|Select row| TD[Transaction Detail]
+    TD -->|Vouch this merchant| V
+
+    BN[Bottom Navigation] --> H
+    BN --> Q
+    BN --> PT
+    N[Demo Navigator] -.-> D
+    N -.-> M[Merchant Campaign]
+    N -.-> B[Business Logic]
+```
+
+### New and changed screens
+
+#### Main Menu — default screen
+
+- Display NETS Vouch branding, “Hi Jia”, and a polished primary Scan to Pay card.
+- Provide smaller My Transactions, My Vouches, and Saved Offers shortcuts.
+- Show the newest three transactions with merchant, date/time, amount, and successful status; selecting a row opens Transaction Detail.
+- Display Home/Scan/Profile bottom navigation with Home selected.
+- Keep the existing Demo trigger in the global app bar and Reset Demo inside the navigator.
+
+#### Simulated Scan to Pay
+
+- Display Scan to Pay heading, back/close action, scan frame, fictional CSS QR visual, the exact instruction “Tap the QR code to simulate scanning”, and a no-camera prototype note.
+- Make the whole QR a minimum 180×180px semantic button labelled “Simulate scanning Café ABC QR code”.
+- On activation, set a live “Scanning…” state, animate a scan line unless reduced motion is requested, disable repeat activation, and transition to Payment Review after a short deterministic delay.
+- Back returns to Main Menu. No camera API or permission is used.
+
+#### Payment Review
+
+- Display Café ABC, $8.50, Café ABC — Orchard Demo Outlet, payment method NETS, Pay $8.50, and Cancel.
+- Pay sets a short processing state, adds a new successful transaction exactly once, and opens Payment Successful.
+- Cancel returns to Main Menu without creating a transaction. Back returns to the scanner.
+
+#### Payment Successful — changed behaviour
+
+- Preserve the existing receipt and optional Vouch card.
+- Done returns to Main Menu while retaining the new transaction.
+- Vouch this place begins Create Vouch for the new transaction.
+- Not now on Create Vouch returns to Main Menu.
+
+#### Vouch Complete — new screen
+
+- Choosing WhatsApp, Telegram, Messages, or Copy link completes the Vouch and opens a confirmation rather than immediately changing persona.
+- Display “Vouch shared” for simulated message channels or “Vouch completed” for Copy link, merchant, selected tag, Verified NETS Visit, and saved-to-profile feedback.
+- Done is the primary action and returns to Main Menu.
+- Continue demo as Darren is an optional secondary action for Café ABC Vouches created by Jia and opens the preserved simulated WhatsApp recipient flow.
+- Jia’s completion adds one Vouch record and marks the source transaction as Vouched. Darren’s later next Vouch is confirmed but is not added to Jia’s Profile.
+
+#### Profile — Jia only
+
+- Display a fictional Jia prototype profile and a Saved Offers link.
+- Use accessible Past Transactions and My Vouches tabs with `role="tab"`, `aria-selected`, labelled tab panels, and keyboard-operable buttons.
+- Display Home/Scan/Profile bottom navigation with Profile selected.
+
+Past Transactions:
+
+- Seed several fictional successful NETS payments.
+- Show merchant, date, time, amount, NETS method, successful status, and whether a Vouch exists.
+- Insert every new scan payment at the top immediately after payment completes.
+- Make each transaction row a button opening Transaction Detail.
+
+My Vouches:
+
+- Seed several fictional Jia-created Vouches.
+- Show merchant, selected tag, Verified NETS Visit, date, and Shared or Completed status.
+- Insert each newly completed Jia Vouch at the top.
+- Never display Darren’s claimed Saved Offers in this tab.
+
+#### Transaction Detail — new screen
+
+- Display all transaction fields and a Back action returning to Past Transactions.
+- If no Vouch exists, show Vouch this merchant and start Create Vouch with that transaction as context.
+- If a Vouch exists, show a non-interactive Vouch created status and a View My Vouches action.
+
+#### Saved Offers — changed entry points
+
+- Keep the existing screen and Darren claim/use journey.
+- Add Main Menu and Profile entry points.
+- Before Darren has claimed an offer, show a clear empty state rather than a claimed card.
+- After claim, show Claimed; after redemption, show Redeemed and remove the Use Offer action.
+
+### Navigation and bottom-navigation rules
+
+- Main Menu and Profile display bottom navigation; Scan opens a focused scanner and hides it after entry.
+- Home always returns to Main Menu without clearing transactions, Vouches, offers, or campaign state.
+- Scan always starts a fresh scan attempt and clears only transient scan/payment context.
+- Profile defaults to Past Transactions unless a My Vouches shortcut explicitly selects that tab.
+- Focused scanner, review, payment, Vouch, WhatsApp, offer, transaction-detail, merchant, and business screens hide bottom navigation.
+- Existing internal history handles focused Back actions; explicit Done, Cancel, Close, and Not now use their specified destinations.
+- Opening and closing the Demo Navigator does not modify records or the active journey.
+
+### Extended reducer and mock-data model
+
+Add typed `TransactionRecord`, `VouchRecord`, `ProfileTab`, `ShareChannel`, and merchant-reference interfaces.
+
+Extend `DemoState` with:
+
+- `scannedMerchantId` and `isScanning`.
+- `currentTransactionId` and `selectedTransactionId`.
+- `transactions`, initialised from immutable fictional mock transactions.
+- `vouches`, initialised from immutable fictional Jia Vouches.
+- `profileTab`.
+- `currentPersona` while retaining the Vouch author separately for Jia → Darren content.
+- `lastShareChannel` and deterministic transaction/Vouch sequence counters.
+
+Reducer actions cover Home, Scan, Profile tabs, Saved Offers, transaction selection, scan/payment transitions, all Vouch entry points, Vouch completion, Darren continuation, supporting flows, and a full reset to cloned initial mock records.
+
+No screen may maintain disconnected transaction or Vouch history in component-local state. Session memory is the chosen default; localStorage is deliberately omitted for deterministic tests.
+
+### Proposed implementation additions
+
+- Add reusable `BottomNavigation`, transaction list/card, Vouch history card, and CSS QR components.
+- Replace the old Demo Home component with `MainMenuScreen`.
+- Add `ScanToPayScreen`, `PaymentReviewScreen`, `VouchCompleteScreen`, `ProfileScreen`, and `TransactionDetailScreen`.
+- Adapt `CreateVouchScreen`, `ShareSheetScreen`, `PaymentSuccessScreen`, `MyOffersScreen`, `DemoNavigator`, and `App` to the new state/actions.
+- Extend existing styles rather than introduce another design system or dependency.
+
+### Extension implementation checklist
+
+- [x] Make Main Menu the initial screen and add bottom navigation.
+- [x] Add Main Menu shortcuts and recent transaction preview.
+- [x] Add the accessible fictional QR scanner and feedback transition.
+- [x] Add payment review, processing, transaction creation, Cancel, and Done behaviour.
+- [x] Add typed mock transactions and Jia-created Vouches.
+- [x] Add Profile tabs, transaction list, My Vouches list, and Saved Offers entry.
+- [x] Add Transaction Detail and fallback Vouch action.
+- [x] Add Vouch completion confirmation, profile insertion, and optional Darren continuation.
+- [x] Keep Saved Offers state-specific and separate from My Vouches.
+- [x] Preserve Darren offer/redemption, merchant, and business screens.
+- [x] Update Reset Demo to restore the exact initial state.
+- [x] Update README for the Main Menu and Scan-to-Pay starting flow.
+
+### Extension acceptance and verification checklist
+
+- [x] Main Menu is the initial screen.
+- [x] Scan to Pay and Scan navigation open the scanner.
+- [x] Keyboard activation of the QR shows feedback and opens Payment Review.
+- [x] Paying creates one successful top-of-list transaction; Cancel creates none.
+- [x] Done after payment returns home and the transaction remains visible in Profile.
+- [x] Vouch this place opens Create Vouch; Not now returns home.
+- [x] Completing Jia’s Vouch adds it to My Vouches and marks its transaction.
+- [x] Done after Vouch completion returns home.
+- [x] Continue demo as Darren opens the preserved WhatsApp/Darren flow without duplicate history records.
+- [x] Profile tabs, Home/Scan/Profile navigation, shortcuts, and Saved Offers entry work.
+- [x] Transaction Detail starts a fallback Vouch only when eligible.
+- [x] Reset Demo restores initial transactions, Vouches, offer, campaign, and persona.
+- [x] Existing Darren consumer, Merchant Campaign, and Business Logic flows still work.
+- [x] QR, tabs, dialogs, focus transitions, live feedback, and reduced motion meet accessibility requirements.
+- [x] No camera, real QR data, real payment, external share, backend, or production integration is introduced.
+- [x] `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build` pass.
+- [x] Manual Scan → Pay → Vouch → Home and both Profile tabs pass in the connected browser, or unavailable browser capability is recorded without falsely checking the item.

@@ -3,10 +3,11 @@ import type { Author, VouchTagId } from '../../app/types'
 import { Button } from '../../components/Button'
 import { ScreenHeader } from '../../components/ScreenHeader'
 import { VouchTagSelector } from '../../components/VouchTagSelector'
-import { merchant, vouchTags } from '../../data/mockData'
+import { vouchTags } from '../../data/mockData'
 
 interface CreateVouchScreenProps {
   author: Author
+  merchantName: string
   cycleNumber: number
   selectedTag: VouchTagId | null
   onSelect: (tag: VouchTagId) => void
@@ -17,6 +18,7 @@ interface CreateVouchScreenProps {
 
 export function CreateVouchScreen({
   author,
+  merchantName,
   cycleNumber,
   selectedTag,
   onSelect,
@@ -38,10 +40,10 @@ export function CreateVouchScreen({
       ) : null}
 
       <section className="merchant-intro" aria-labelledby="vouch-merchant-title">
-        <div className="merchant-avatar" aria-hidden="true">C</div>
+        <div className="merchant-avatar" aria-hidden="true">{merchantName.charAt(0)}</div>
         <div>
           <p className="eyebrow">{author}’s verified visit</p>
-          <h2 id="vouch-merchant-title">Vouch for {merchant.name}</h2>
+          <h2 id="vouch-merchant-title">Vouch for {merchantName}</h2>
           <p>Pick the one thing you’d tell a friend.</p>
         </div>
       </section>

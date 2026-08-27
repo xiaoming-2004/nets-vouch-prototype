@@ -1,17 +1,18 @@
 import { ArrowRight, CreditCard, Share2 } from 'lucide-react'
-import { payments, merchant } from '../../data/mockData'
 import { Button } from '../../components/Button'
 import { SuccessState } from '../../components/SuccessState'
 
 interface PaymentSuccessScreenProps {
+  merchantName: string
+  amount: string
   onVouch: () => void
   onDone: () => void
 }
 
-export function PaymentSuccessScreen({ onVouch, onDone }: PaymentSuccessScreenProps) {
+export function PaymentSuccessScreen({ merchantName, amount, onVouch, onDone }: PaymentSuccessScreenProps) {
   return (
     <div className="screen screen--receipt">
-      <SuccessState title="Payment Successful" merchant={merchant.name} amount={payments.jia.displayAmount} />
+      <SuccessState title="Payment Successful" merchant={merchantName} amount={amount} />
       <div className="payment-method">
         <CreditCard size={18} aria-hidden="true" />
         <span>Paid with NETS</span>

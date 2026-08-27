@@ -1,18 +1,18 @@
 import { useEffect, useRef } from 'react'
 import { Copy, MessageCircle, MessagesSquare, Send, Share2, X } from 'lucide-react'
-import type { Author, VouchTagId } from '../../app/types'
+import type { Author, ShareChannel, VouchTagId } from '../../app/types'
 import { VerifiedVisitBadge } from '../../components/VerifiedVisitBadge'
-import { merchant, vouchTags } from '../../data/mockData'
+import { vouchTags } from '../../data/mockData'
 
 interface ShareSheetScreenProps {
   author: Author
+  merchantName: string
   selectedTag: VouchTagId
   onClose: () => void
-  onWhatsApp: () => void
-  onSimulatedOption: (label: string) => void
+  onShare: (channel: ShareChannel) => void
 }
 
-export function ShareSheetScreen({ author, selectedTag, onClose, onWhatsApp, onSimulatedOption }: ShareSheetScreenProps) {
+export function ShareSheetScreen({ author, merchantName, selectedTag, onClose, onShare }: ShareSheetScreenProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
   const selectedLabel = vouchTags.find((tag) => tag.id === selectedTag)?.label ?? 'Vouch Pick'
@@ -56,24 +56,24 @@ export function ShareSheetScreen({ author, selectedTag, onClose, onWhatsApp, onS
           </div>
           <article className="share-preview">
             <div className="share-preview__brand"><span>NETS</span> Vouch</div>
-            <p className="share-preview__title"><strong>{author}</strong> Vouched for {merchant.name}</p>
+            <p className="share-preview__title"><strong>{author}</strong> Vouched for {merchantName}</p>
             <span className="vouch-tag-chip">{selectedLabel}</span>
             <VerifiedVisitBadge />
           </article>
           <div className="share-options" aria-label="Share options">
-            <button type="button" onClick={onWhatsApp}>
+            <button type="button" onClick={() => onShare('WhatsApp')}>
               <span className="share-app share-app--whatsapp"><MessageCircle size={24} aria-hidden="true" /></span>
               <span>WhatsApp</span>
             </button>
-            <button type="button" onClick={() => onSimulatedOption('Telegram sharing is simulated in this demo')}>
+            <button type="button" onClick={() => onShare('Telegram')}>
               <span className="share-app share-app--telegram"><Send size={23} aria-hidden="true" /></span>
               <span>Telegram</span>
             </button>
-            <button type="button" onClick={() => onSimulatedOption('Messages sharing is simulated in this demo')}>
+            <button type="button" onClick={() => onShare('Messages')}>
               <span className="share-app share-app--messages"><MessagesSquare size={23} aria-hidden="true" /></span>
               <span>Messages</span>
             </button>
-            <button type="button" onClick={() => onSimulatedOption('Demo link copied')}>
+            <button type="button" onClick={() => onShare('Copy link')}>
               <span className="share-app share-app--copy"><Copy size={22} aria-hidden="true" /></span>
               <span>Copy link</span>
             </button>
