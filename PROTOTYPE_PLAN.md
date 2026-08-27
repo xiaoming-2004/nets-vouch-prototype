@@ -802,7 +802,7 @@ At approximately 430px wide or below:
 - [ ] Manual click-through passing.
 - [x] README and prototype disclaimers complete.
 - [x] Production build passing.
-- [ ] Git milestones complete.
+- [x] Git milestones complete.
 
 ## 16. Testing and verification checklist
 
@@ -879,7 +879,7 @@ Commits should be small, coherent, and made without rewriting the existing repos
 - [x] `feat: add offer claim payment and vouch loop`
 - [x] `feat: add merchant and business demo screens`
 - [x] `test: verify flow accessibility and responsive behavior`
-- [ ] `docs: finalize prototype usage and progress`
+- [x] `docs: finalize prototype usage and progress`
 
 Before each feature milestone, update relevant progress checkboxes in `PROTOTYPE_PLAN.md`. The final documentation milestone must leave the plan consistent with the repository’s actual state.
 
