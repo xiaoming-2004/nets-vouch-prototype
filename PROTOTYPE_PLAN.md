@@ -31,7 +31,7 @@ Repository starting point:
 2. **Recommendation and incentive remain separate.**
    - Jia’s Vouch is the trusted recommendation.
    - Café ABC’s offer is an optional, merchant-funded conversion mechanism.
-3. **No referrer reward.** Jia receives no reward, points, cashback, or other benefit.
+3. **Will get referrer reward.** Jia will only receive merchant rewards only if Darren successfully paid and claimed his reward.
 4. **Claim now, use later.** Darren saves the offer to his simulated NETS account and redeems it only during a later eligible payment.
 5. **Single-use and account-linked.** The prototype state must prevent a claimed offer from being claimed twice or a redeemed offer from being reused.
 6. **No promo code.** The offer is represented as an account-linked entitlement, never as a reusable code.
