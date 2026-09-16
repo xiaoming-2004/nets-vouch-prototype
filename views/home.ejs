@@ -1,105 +1,15 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta name="description" content="Jia's NETS Vouch AI Smart Match">
-    <meta name="theme-color" content="#082f5b">
-    <title>Home | NETS Vouch AI</title>
-    <link rel="stylesheet" href="/css/style.css">
-  </head>
-  <body>
-    <main class="prototype-stage">
-      <section class="phone-shell" aria-label="NETS Vouch AI prototype">
-        <div class="status-bar" aria-hidden="true">
-          <span>9:41</span>
-          <span class="status-bar__island"></span>
-          <span class="status-bar__signals">● ◢ ▰</span>
-        </div>
-        <header class="app-bar smart-home-bar">
-          <div class="wordmark" aria-label="NETS Vouch AI">
-            <span class="wordmark__nets">NETS</span>
-            <span class="wordmark__vouch">Vouch AI</span>
-          </div>
-          <a class="smart-home-avatar" href="/profile" aria-label="Open Jia's profile"><%= user.name.charAt(0) %></a>
-        </header>
-        <div class="phone-viewport phone-viewport--home">
-          <div class="home-layout">
-            <div class="home-scroll">
-              <div class="screen smart-home-screen">
-                <header class="smart-home-intro">
-                  <p>Good afternoon, <%= user.name %> <span aria-hidden="true">👋</span></p>
-                  <h1>Lunch in 10 minutes?</h1>
-                </header>
-                <% if (journey === 'match') { %>
-                  <section id="smart-match" class="smart-match-section" aria-labelledby="smart-match-title">
-                    <p id="smart-match-title" class="smart-match-label">Your Smart Match</p>
-                    <% if (recommendation) { %>
-                      <div class="smart-match-region" aria-live="polite" aria-busy="false">
-                        <%- include('smart-match-card', { recommendation: recommendation, campaign: campaign, matchReasons: matchReasons, source: 'local-fallback' }) %>
-                      </div>
-                    <% } else { %>
-                      <div class="smart-match-region" data-smart-match data-loading-message="<%= matchingAgain ? 'Finding something better...' : 'Finding your next spot...' %>" aria-live="polite" aria-busy="true">
-                        <div class="smart-match-loading">
-                          <div class="smart-match-loading__visual" aria-hidden="true"><span></span><span></span><span></span></div>
-                          <h2><%= matchingAgain ? 'Finding something better...' : 'Finding your next spot...' %></h2>
-                          <p data-loading-detail><%= matchingAgain ? 'Using your feedback' : 'Checking what fits right now' %></p>
-                        </div>
-                      </div>
-                    <% } %>
-                  </section>
-                <% } %>
-
-                <% if (journey === 'payment') { %>
-                  <section class="home-journey-card">
-                    <p class="eyebrow">Continue your order</p>
-                    <h2><%= order.itemName %></h2>
-                    <p><%= order.merchantName %> · $<%= order.amount.toFixed(2) %></p>
-                    <a class="button button--full" href="/payment">Continue to payment</a>
-                  </section>
-                <% } %>
-
-                <% if (journey === 'order') { %>
-                  <section class="home-journey-card">
-                    <p class="eyebrow"><%= order.status === 'READY' ? 'Ready for collection' : order.status === 'PREPARING' ? 'Your lunch is being prepared' : 'Payment successful' %></p>
-                    <h2><%= order.itemName %></h2>
-                    <p><%= order.merchantName %> · <%= order.status === 'READY' ? '8 min walk' : "We'll let you know when it's ready." %></p>
-                    <a class="button button--full" href="/order"><%= order.status === 'READY' ? 'View order' : 'Track order' %></a>
-                  </section>
-                <% } %>
-
-                <% if (journey === 'vouch') { %>
-                  <section class="home-journey-card home-journey-card--complete">
-                    <span class="success-state__icon" aria-hidden="true">✓</span>
-                    <p class="eyebrow">Collected</p>
-                    <h2>$<%= order.cashbackReleased ? campaign.rewardAmount.toFixed(2) : '0.00' %> cashback received</h2>
-                    <p>Enjoyed <%= order.itemName %>?</p>
-                    <a class="button button--full" href="/vouch">Vouch</a>
-                    <form method="POST" action="/vouch"><button class="button button--ghost button--full" type="submit" name="action" value="skip">Not now</button></form>
-                  </section>
-                <% } %>
-
-                <% if (journey === 'complete') { %>
-                  <section class="home-journey-card home-journey-card--complete">
-                    <span class="success-state__icon" aria-hidden="true">✓</span>
-                    <p class="eyebrow">Journey complete</p>
-                    <h2>Your cashback is ready</h2>
-                    <p>Vouch Cashback · $<%= cashbackBalance.toFixed(2) %> available</p>
-                    <a class="button button--full" href="/home?new=1">Find a new match</a>
-                  </section>
-                <% } %>
-              </div>
-            </div>
-            <nav class="bottom-navigation" aria-label="Primary navigation">
-              <a class="bottom-navigation__item bottom-navigation__item--active" href="/home" aria-current="page"><span aria-hidden="true">⌂</span><span>Home</span></a>
-              <a class="bottom-navigation__item" href="/scan"><span aria-hidden="true">⌗</span><span>Scan</span></a>
-              <a class="bottom-navigation__item" href="/profile"><span aria-hidden="true">○</span><span>Profile</span></a>
-            </nav>
-          </div>
-        </div>
-        <div class="home-indicator" aria-hidden="true"></div>
-      </section>
-    </main>
-    <script src="/js/script.js"></script>
-  </body>
-</html>
+<%- include('partials/start', { title: 'Home' }) %>
+<header class="greeting"><p>Good afternoon, <%= user.name %> 👋</p><h1><%= order ? 'Your next moment.' : 'Lunch in 10 minutes?' %></h1></header>
+<% if (order) { %>
+<%- include('partials/order-card', { order: order, transaction: transaction, onHome: true }) %>
+<% } else { %>
+<section id="smart-match"><p class="eyebrow">Your Smart Match</p>
+<div data-match-region aria-live="polite" aria-busy="<%= recommendation ? 'false' : 'true' %>">
+<% if (recommendation) { %><%- include('smart-match-card') %><% } else { %>
+<div class="matching" data-load-match><div class="matching-dots" aria-hidden="true"><i></i><i></i><i></i></div><h2><%= matchingAgain ? 'Finding something better...' : 'Finding your next spot...' %></h2><p><%= matchingAgain ? 'Using your feedback' : 'Checking what fits right now' %></p></div>
+<noscript><a class="button" href="/smart-match/static">Find my match</a></noscript>
+<% } %>
+</div></section>
+<% } %>
+<a class="scan-invite" href="/scan"><span aria-hidden="true">⌗</span><span><small>Already at a merchant?</small><strong>Scan to pay</strong></span><span aria-hidden="true">→</span></a>
+<%- include('partials/end', { active: 'home' }) %>

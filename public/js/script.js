@@ -1,66 +1,118 @@
-console.log('NETS Vouch AI Express prototype loaded');
-
-const resetForms = document.querySelectorAll('[data-confirm-reset]');
-
-resetForms.forEach(function(form) {
-  form.addEventListener('submit', function(event) {
-    const confirmed = window.confirm('Reset the complete Open House demo for the next visitor?');
-    if (!confirmed) event.preventDefault();
-  });
-});
-
-const smartMatchRegion = document.querySelector('[data-smart-match]');
-
-if (smartMatchRegion) {
-  const minimumDisplayTime = new Promise(function(resolve) {
-    window.setTimeout(resolve, 2000);
-  });
-
-  const recommendationRequest = fetch('/smart-match/result', {
-    headers: { 'X-Requested-With': 'smart-match' }
-  }).then(function(response) {
-    if (!response.ok) throw new Error('Smart Match could not be loaded');
-    return response.text();
-  });
-
-  Promise.all([recommendationRequest, minimumDisplayTime])
-    .then(function(results) {
-      smartMatchRegion.innerHTML = results[0];
-      smartMatchRegion.setAttribute('aria-busy', 'false');
-    })
-    .catch(function() {
-      smartMatchRegion.innerHTML =
-        '<section class="smart-match-empty smart-match-reveal">' +
-        '<span aria-hidden="true">↻</span>' +
-        '<h2>Smart Match needs another go.</h2>' +
-        '<p>Your Home page is still available.</p>' +
-        '<a class="button button--full" href="/home#smart-match">Try again</a>' +
-        '</section>';
-      smartMatchRegion.setAttribute('aria-busy', 'false');
-    })
+// UI only. Preferences, payments and decisions belong to the server session.
+function wait(milliseconds) {
+  return new Promise(function(resolve) { window.setTimeout(resolve, milliseconds); });
 }
 
-const singleSubmitForms = document.querySelectorAll('[data-single-submit]');
+const matchRegion = document.querySelector('[data-match-region]');
+async function loadMatch(again) {
+  if (!matchRegion) return;
+  matchRegion.setAttribute('aria-busy', 'true');
+  matchRegion.innerHTML = '<div class="matching"><div class="matching-dots" aria-hidden="true"><i></i><i></i><i></i></div><h2>' +
+    (again ? 'Finding something better...' : 'Finding your next spot...') +
+    '</h2><p>' + (again ? 'Using your feedback' : 'Checking what fits right now') + '</p></div>';
+  try {
+    const results = await Promise.all([
+      fetch('/smart-match/result').then(function(response) {
+        if (!response.ok) throw new Error('Unable to load match');
+        return response.text();
+      }),
+      wait(1800)
+    ]);
+    matchRegion.innerHTML = results[0];
+  } catch (error) {
+    matchRegion.innerHTML = '<section class="card"><h2>Let’s try that again.</h2><a class="button" href="/home">Return Home</a></section>';
+  }
+  matchRegion.setAttribute('aria-busy', 'false');
+}
+if (document.querySelector('[data-load-match]')) loadMatch(location.search.includes('matching=again'));
 
-singleSubmitForms.forEach(function(form) {
-  form.addEventListener('submit', function() {
-    const submitButton = form.querySelector('button[type="submit"]');
-    if (!submitButton) return;
-    const submitText = submitButton.getAttribute('data-submit-text');
-    if (submitText) submitButton.textContent = submitText;
-    submitButton.disabled = true;
-  });
-});
-
-const autoSubmitForms = document.querySelectorAll('[data-auto-submit]');
-
-autoSubmitForms.forEach(function(form) {
-  const reasonInputs = form.querySelectorAll('input[type="radio"]');
-  reasonInputs.forEach(function(input) {
-    input.addEventListener('change', function() {
-      if (form.dataset.submitting) return;
-      form.dataset.submitting = 'true';
-      form.submit();
+// A reason button both selects and submits feedback. No extra confirmation.
+document.addEventListener('submit', async function(event) {
+  const form = event.target;
+  if (!form.matches('[data-feedback]')) return;
+  event.preventDefault();
+  if (form.dataset.busy) return;
+  const data = new FormData(form);
+  data.set('reason', event.submitter.value);
+  form.dataset.busy = 'true';
+  try {
+    const response = await fetch(form.action, {
+      method: 'POST', headers: { 'X-Requested-With': 'smart-match' },
+      body: new URLSearchParams(data)
     });
-  });
+    if (!response.ok) throw new Error('Feedback state changed');
+    await loadMatch(true);
+  } catch (error) { window.location.assign('/home'); }
 });
+
+const paymentForm = document.querySelector('[data-payment]');
+if (paymentForm) {
+  const amountInput = paymentForm.querySelector('[name="amount"]');
+  const checkbox = paymentForm.querySelector('[name="useCashback"]');
+  function updateTotal() {
+    const amount = Number(amountInput ? amountInput.value : paymentForm.dataset.amount);
+    const valid = Number.isFinite(amount) && amount > 0 && amount <= 1000;
+    const cents = valid ? Math.round(amount * 100) : 0;
+    const used = checkbox.checked ? Math.min(Math.round(Number(paymentForm.dataset.balance) * 100), cents) : 0;
+    const paid = (cents - used) / 100;
+    paymentForm.querySelector('[data-cashback-used]').textContent = '−$' + (used / 100).toFixed(2);
+    paymentForm.querySelector('[data-nets-total]').textContent = '$' + paid.toFixed(2);
+    paymentForm.querySelector('[data-pay-button]').textContent = valid ? 'Pay $' + paid.toFixed(2) : 'Pay';
+  }
+  paymentForm.addEventListener('input', updateTotal);
+  updateTotal();
+}
+
+// Capture the clicked action BEFORE disabling controls. Keeps Vouch/Skip values intact.
+document.addEventListener('submit', function(event) {
+  const form = event.target;
+  if (form.matches('[data-confirm-reset]') && !window.confirm('Reset this demo for the next visitor?')) {
+    event.preventDefault(); return;
+  }
+  if (!form.matches('[data-single-submit], [data-payment], [data-scan]')) return;
+  event.preventDefault();
+  if (form.dataset.busy) return;
+  if (!form.reportValidity()) return;
+  if (form.matches('[data-payment]')) {
+    const input = form.querySelector('[name="amount"]');
+    if (input && (!/^\d+(\.\d{1,2})?$/.test(input.value.trim()) || Number(input.value) > 1000 || Number(input.value) <= 0)) {
+      input.setCustomValidity('Enter $0.01–$1,000 with up to two decimal places.');
+      input.reportValidity();
+      input.addEventListener('input', function() { input.setCustomValidity(''); }, { once: true });
+      return;
+    }
+  }
+  form.dataset.busy = 'true';
+  if (event.submitter && event.submitter.name) {
+    const action = document.createElement('input');
+    action.type = 'hidden'; action.name = event.submitter.name; action.value = event.submitter.value;
+    form.appendChild(action);
+  }
+  form.querySelectorAll('button[type="submit"]').forEach(function(button) { button.disabled = true; });
+  let delay = 0;
+  if (form.matches('[data-payment], [data-scan]')) {
+    form.classList.add('is-processing');
+    const status = form.querySelector('.form-status');
+    status.textContent = form.matches('[data-scan]') ? 'Scanning...' : 'Processing NETS payment...';
+    delay = form.matches('[data-scan]') ? 900 : 800;
+  }
+  window.setTimeout(function() { HTMLFormElement.prototype.submit.call(form); }, delay);
+});
+
+// A cached page must not leave its buttons disabled when the user returns.
+window.addEventListener('pageshow', function(event) {
+  if (event.persisted) window.location.reload();
+});
+
+// Reflect merchant readiness without fake preparation timers.
+const orderCard = document.querySelector('[data-order-id]');
+if (orderCard && ['PAID', 'PREPARING'].includes(orderCard.dataset.orderStatus)) {
+  window.setInterval(async function() {
+    if (document.hidden) return;
+    try {
+      const response = await fetch('/order/state');
+      const state = await response.json();
+      if (state.id !== orderCard.dataset.orderId || state.status !== orderCard.dataset.orderStatus) location.reload();
+    } catch (error) { /* The next poll can recover from temporary loss of connection. */ }
+  }, 4000);
+}

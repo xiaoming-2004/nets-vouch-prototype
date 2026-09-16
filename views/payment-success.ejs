@@ -1,63 +1,13 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta name="description" content="Simulated NETS payment success">
-    <meta name="theme-color" content="#082f5b">
-    <title>Payment Successful | NETS Vouch AI</title>
-    <link rel="stylesheet" href="/css/style.css">
-  </head>
-  <body>
-    <main class="prototype-stage">
-      <section class="phone-shell" aria-label="NETS Vouch AI prototype">
-        <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
-        <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div></header>
-        <div class="phone-viewport">
-          <div class="screen scan-pay-screen">
-            <ol class="scan-pay-steps" aria-label="Scan-to-pay steps">
-              <li class="is-complete"><span>✓</span>Scan</li>
-              <li class="is-complete"><span>✓</span>Pay</li>
-              <li class="is-complete"><span>✓</span>Done</li>
-            </ol>
-
-            <section class="quick-pay-success">
-              <span class="success-state__icon" aria-hidden="true">✓</span>
-              <p class="eyebrow">NETS payment</p>
-              <h1>Payment successful</h1>
-              <p><%= payment.merchantName %> · <%= payment.source === 'scan' ? 'Walk-in purchase' : payment.itemName %></p>
-              <strong class="success-state__amount">$<%= payment.amount.toFixed(2) %></strong>
-            </section>
-
-            <% if (payment.cashbackUsed > 0) { %>
-              <div class="payment-breakdown payment-breakdown--receipt">
-                  <div><span><%= payment.source === 'scan' ? 'Purchase amount' : 'Order total' %></span><strong>$<%= payment.orderAmount.toFixed(2) %></strong></div>
-                <div><span>Vouch Cashback used</span><strong>-$<%= payment.cashbackUsed.toFixed(2) %></strong></div>
-                <div><span>Paid with NETS</span><strong>$<%= payment.netsPaid.toFixed(2) %></strong></div>
-                <div class="payment-breakdown__total"><span>Remaining cashback</span><strong>$<%= cashbackBalance.toFixed(2) %></strong></div>
-              </div>
-            <% } %>
-
-            <% if (payment.rewardAwarded > 0) { %>
-              <div class="cashback-earned"><span aria-hidden="true">$</span><div><strong>+$<%= payment.rewardAwarded.toFixed(2) %> Vouch Cashback</strong><span><%= payment.source === 'scan' ? 'Released after this successful NETS payment.' : 'Released after collection.' %></span></div></div>
-            <% } else if (payment.eligible && order && !order.collected) { %>
-              <div class="cashback-earned"><span aria-hidden="true">$</span><div><strong>$<%= rewardAmount.toFixed(2) %> cashback</strong><span>Unlocks after collection.</span></div></div>
-            <% } else if (!payment.eligible) { %>
-              <div class="cashback-not-awarded"><strong>Cashback not available</strong><span>This payment was not eligible for the merchant reward.</span></div>
-            <% } %>
-
-            <div class="quick-pay-finish">
-              <% if (order) { %><a class="button button--full" href="/order">View order status</a><% } %>
-              <% if (transaction && transaction.eligible && transaction.vouchDecision === 'pending') { %><div class="home-journey-card home-journey-card--complete"><p class="eyebrow">Payment successful ✓</p><h2>Enjoyed this place?</h2><p>Vouch for <%= transaction.merchantName %></p><a class="button button--full" href="/vouch">Vouch 👍</a><form method="POST" action="/vouch"><button class="button button--ghost button--full" type="submit" name="action" value="skip">Not now</button></form></div><% } %>
-              <a class="button button--full" href="/home">Done</a>
-              <% if (transaction) { %><a class="back-home-link" href="/transactions/<%= transaction.id %>">View transaction</a><% } %>
-            </div>
-          </div>
-          <%- include('partials/jia-nav', { active: 'home' }) %>
-        </div>
-        <div class="home-indicator" aria-hidden="true"></div>
-      </section>
-    </main>
-    <script src="/js/script.js"></script>
-  </body>
-</html>
+<%- include('partials/start', { title: 'Payment successful' }) %>
+<section class="receipt"><div class="success-mark" aria-hidden="true">✓</div><h1>Payment successful</h1><h2><%= transaction.merchantName %></h2>
+<% if (transaction.source === 'smart-match') { %>
+<p><%= transaction.itemName %></p><p>The merchant has your order.</p>
+<% if (transaction.promisedReward > 0 && !transaction.rewardReleased) { %><p class="reward">$<%= transaction.promisedReward.toFixed(2) %> cashback</p><p>Unlocks after collection.</p><% } %>
+<% if (currentOrderMatches && !transaction.collected) { %><a class="button" href="/order">Track order</a><% } else { %><a class="button" href="/home">Done</a><% } %>
+<% } else { %>
+<dl class="receipt-lines"><div><dt>Purchase</dt><dd>$<%= transaction.purchaseAmount.toFixed(2) %></dd></div><div><dt>Vouch Cashback used</dt><dd>−$<%= transaction.cashbackUsed.toFixed(2) %></dd></div><div><dt>Paid with NETS</dt><dd>$<%= transaction.netsPaid.toFixed(2) %></dd></div></dl>
+<% if (transaction.cashbackAwarded > 0) { %><p class="reward">+$<%= transaction.cashbackAwarded.toFixed(2) %> Vouch Cashback earned</p><% } %>
+<% if (canVouch && transaction.vouchDecision === 'pending') { %><%- include('partials/vouch-prompt', { transaction: transaction }) %>
+<% } else { %><form method="POST" action="/transactions/<%= transaction.id %>/done"><button class="button" type="submit">Done</button></form><% } %>
+<% } %></section>
+<%- include('partials/end', { active: transaction.source === 'scan' ? 'scan' : 'home' }) %>

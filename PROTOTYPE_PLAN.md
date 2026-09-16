@@ -1,158 +1,105 @@
 # NETS Vouch AI — Open House Prototype Plan
 
-This is the canonical product and implementation plan for the Republic Polytechnic Open House prototype.
+Canonical direction, updated for the latest consumer UX brief.
 
-## Product objective
+## Objective
 
-Demonstrate the main understandable journey:
+Show NETS before, during and after payment: Smart Match, simulated payment/cashback, and optional Payment-Verified Vouch. Keep CommonJS Express, EJS, session objects, HTML forms, CSS and small browser scripts. Backend logic stays in app.js.
 
-**MATCH → ACCEPT → PAY WITH NETS → MERCHANT FULFILS → COLLECT → VERIFY**
+## Two distinct journeys
 
-The prototype is a C237-style Node.js, Express, EJS and `express-session` application. It simulates a simple collection order, not a full restaurant, kitchen, delivery or POS application.
+### A — Smart Match / collection preorder
 
-## Pitch alignment
+Home → one persistent match → Accept → review and Pay → Track order → merchant Preparing / Ready → Collect → cashback released → Vouch or Not now → completed Home → Find my next match.
 
-- **Proactive Smart Match:** Jia receives one relevant participating merchant offer without starting a chatbot conversation.
-- **Adaptive Learning:** acceptance, rejection, reason, scan, claim and payment outcomes are recorded as future learning signals.
-- **Measurable Promotions:** Felicia sees an aggregated attribution path from recommendation to eligible simulated NETS payment.
-- **Rules, AI, user:** rules decide what is possible, simulated Smart Match decides what is relevant, and Jia makes the final decision.
+Home always shows the next meaningful order action. Ready orders can be collected directly on Home. Rejection is an inline four-reason sheet with one-tap submission and a short matching transition. Visiting Home must not change the selected merchant.
 
-## Primary Open House journey
+### B — Standalone Scan to Pay
 
-1. Jia opens directly to Home; recommendation preferences are already enabled.
-2. Smart Match uses Jia's Profile Settings to recommend Felicia's participating offer.
-3. Jia accepts or rejects it and may receive the Chicken Porridge alternative.
-4. Jia visits Felicia and simulates scanning the merchant campaign QR.
-5. The server verifies the merchant, campaign, timing and daily cap.
-6. Jia claims a temporary, single-use promotional Vouch.
-7. Jia completes a simulated NETS payment.
-8. The server verifies the session, merchant, claim, payment amount and campaign.
-9. Eligible payment unlocks the reward exactly once.
-10. Jia may create a Payment-Verified Vouch.
-11. Felicia sees the attributed result in aggregated campaign analytics.
-12. A student helper resets the demo.
+Scan → select a fictional merchant QR and tap Scan → enter purchase amount, optionally use cashback, and Pay on one screen → receipt and immediate eligible cashback → Vouch or Not now → Done.
 
-## Implemented foundation retained
+Scan never creates an order and never requires Smart Match, preparation or collection. The QR identifies a merchant, not a verified payment. Scan uses the entered amount, not a recommendation price.
 
-- CommonJS Express/EJS application and session state.
-- Jia Profile Settings for dietary preference, budget, walking distance and notifications.
-- Home page, Smart Recommendation and matching explanation.
-- Four validated rejection reasons and Chicken Porridge alternative.
-- Seeded Toast & Co. and Hawker 88 transactions.
-- Profile, transaction details, responsive NETS-inspired UI and reset control.
-- `getSmartRecommendation()` as the future AI boundary.
+These journeys deliberately replace the earlier QR-claim-only plan. No temporary promotional claim screen is needed in this version.
 
-## Consumer functionality
+## Implemented consumer experience
 
-### Profile Settings
+- Home opens directly; dietary, budget, walking distance and notification preferences live in Profile.
+- Five fictional participating merchants have separate campaigns and dynamic merchant/outlet labels.
+- Smart Match filters preferences, availability and rejected merchants, then uses simple simulated ranking.
+- Optional server-side Google Places discovery remains separate from campaign participation. Offline demo merchants work without a key.
+- Rejection records Too far, Costs too much, Not in the mood or Ate this recently. No extra submit step.
+- Existing cashback can offset either purchase; only successful payment deducts it.
+- Transaction-specific receipts and Vouch decisions prevent previous payments hijacking later journeys.
+- Bottom navigation remains exactly Home, Scan, Profile.
+- Profile contains preferences, balance, rewards, social Vouches and NETS activity.
+- New sessions start with zero cashback, zero transactions and zero social Vouches.
 
-Jia opens directly to Home. Recommendation preferences are managed under Profile using dietary preference, budget, maximum walking distance and notifications. The Open House prototype does not show Basic Mode, Personalised Mode or startup privacy configuration.
+## State ownership
 
-### Recommendation and feedback
+Under req.session.demo:
 
-The recommendation shows merchant, item, estimated price, dietary information, optional distance, campaign reward, Payment-Verified Vouch count and a matching reason. Rejection reasons are Too far, Costs too much, Not in the mood and Ate this recently.
+- user, profile, cashbackBalance
+- nearbyMerchants, selectedMerchantId, rejectedMerchantIds, recommendationFeedback, shownMerchantIds
+- currentOrder: its own ID, merchant/item, amount, payment, status and Vouch decision
+- currentScanPayment: its own ID, merchant, entered amount, payment and Vouch decision
+- transactions: permanent-for-session records identified by transaction ID and source
+- paymentVerifiedVouches, promotionalRedemptions
+- campaigns: one per merchant, each with timing, cap, reward and aggregate metrics
+- simple order, scan, transaction and Vouch counters
 
-### Merchant QR and campaign claim
+Order status: PENDING_PAYMENT → PAID → PREPARING → READY → COLLECTED.
+Scan status: MERCHANT_FOUND → PAID → COMPLETE. Amount entry and review share one screen.
 
-The simulated QR identifies Felicia and campaign `felicia-lunch-vouch`; it does not verify payment. A valid scan checks campaign status, current time, daily cap and previous redemption. A claim lasts ten minutes, is bound to Jia's session and is single-use.
+There is no global latestPayment, activeClaim or journeyComplete. Vouch decisions belong to transactions and are mirrored only onto the matching current journey.
 
-Availability states are Vouch Available, Vouch Currently Unavailable, Campaign Ended, Fully Redeemed Today and Already Redeemed.
+## Payment and reward rules
 
-### Simulated payment and reward
+- Purchase amount must be positive, at most $1,000, with at most two decimals.
+- Server calculates cashback offset and NETS remainder in cents. Client totals are not trusted.
+- At least $1 must actually be paid with simulated NETS for a Payment-Verified Vouch and campaign reward eligibility.
+- Campaign reward additionally requires active status, valid Singapore timing and remaining daily cap.
+- A fully cashback-funded payment is allowed, but does not create NETS-verified social proof or earn a new campaign reward.
+- Eligible rewards reserve campaign capacity at payment. Smart Match credits the promised reward once after collection; Scan credits it once immediately.
+- Campaign edits after payment cannot change a previously promised collection reward.
+- No ratings or written reviews. One transaction permits at most one social Vouch; Skip is remembered.
+- Public social Vouch content never includes the amount.
 
-Chicken Rice costs $7.50 and Chicken Porridge costs $6.90. The fixed system requirement is an eligible simulated NETS payment of at least $1.00. There is no merchant-configurable minimum spend. Both recommendations may qualify.
+## Merchant helper view
 
-Eligible payment must match the Jia session, Felicia, campaign and unused claim, and occur while the claim and campaign remain valid. A successful eligible payment creates one transaction, one promotional redemption, one reward and one set of metrics. Repeated POST requests must not duplicate them.
+Profile's discreet Open House controls open the merchant view. Select the actual merchant to edit Campaign, advance Orders, or inspect aggregated Results. Merchant transitions only allow PAID → PREPARING → READY for the matching merchant and order ID.
 
-### Vouches and transactions
-
-My Vouches separates redeemed promotional Vouches from optional Payment-Verified Vouches. Public Payment-Verified Vouches contain user, merchant, transaction identifier, date and simulated verification status, but no payment amount. Transaction history combines seeded and new simulated records.
-
-## Merchant functionality
-
-Felicia has only two tabs:
-
-- **Campaign:** reward amount, start/end time, daily cap, active status, availability, redemptions remaining and campaign QR identifier.
-- **Results:** recommendations shown/accepted, QR scans, claims, eligible payments, attributed value, reward cost and recommendation-to-payment conversion.
-
-Seeded metrics are labelled **Illustrative Prototype Data**. Merchant results are aggregated and never reveal Jia's private settings or individual spending history.
-
-## Session model
-
-`req.session.demo` contains simple objects and arrays:
-
-- `user`, `profile`
-- selected, accepted and rejected recommendation identifiers
-- rejection reason and metric flags
-- `campaign`, `qrScan`, `activeClaim`
-- `promotionalRedemptions`, `transactions`, `latestPayment`
-- `currentOrder` with order number, item, amount, fulfilment status, payment and collection flags
-- `paymentVerifiedVouches`, `metrics`
-- simple scan, claim, transaction and Vouch counters
-
-There is no `currentOrder`, order number, kitchen status or collection state.
+This is a simulated collection handoff, not POS integration, delivery or a full kitchen system. Results are prototype-only session statistics, never real pilot claims.
 
 ## Routes
 
-- Home: `GET /home`
-- Profile settings: `GET/POST /profile`
-- Recommendation: `GET /recommendation`, `GET/POST /recommendation/reject`, `POST /recommendation/accept`
-- QR and claim: `GET/POST /scan`, `GET/POST /claim`
-- Payment: `GET/POST /payment`, `GET /payment-success`
-- Vouch: `GET/POST /vouch`
-- Profile: `GET /profile`, `GET /transactions/:id`
-- Merchant: `GET /merchant`, `POST /merchant/offer`
-- Preorder: `GET /order`, `POST /merchant/start-preparing`, `POST /merchant/mark-ready`, `POST /collection`
-- Reset: `POST /reset-demo`
+- GET /, /home, /smart-match/result; /smart-match/static is the no-JavaScript fallback.
+- POST /recommendation/reject, /recommendation/accept, /recommendation/next, /recommendation/try-again, /recommendation/widen-distance.
+- GET/POST /payment: Smart Match order only.
+- GET/POST /scan, GET/POST /scan/payment, POST /scan/cancel: standalone Scan only.
+- GET /payment-success/:id: explicit historical transaction receipt.
+- GET /order, GET /order/state, POST /collection.
+- GET/POST /vouch/:id, GET /vouch/:id/success, POST /transactions/:id/done.
+- GET/POST /profile, GET /transactions/:id.
+- GET /merchant, POST /merchant/offer, /merchant/start-preparing, /merchant/mark-ready.
+- POST /reset-demo.
 
-## Privacy and integrity
+Legacy GET shortcuts redirect safely. Forms carry journey IDs; old forms cannot pay a different new journey.
 
-- The prototype does not claim production access to transaction history or personalisation APIs.
-- Do not claim bank-statement access, production consent or real NETS APIs.
-- Do not expose public spending history or individual spending to merchants.
-- Do not publish payment amounts on Payment-Verified Vouches.
-- Merchant results remain aggregated.
-- QR identifies the campaign but does not prove payment.
-- Only an eligible simulated payment unlocks a reward.
-- A Payment-Verified Vouch proves a simulated eligible transaction occurred, not product quality.
-- Jia approves the recommendation, claim and payment.
+## Integrity and privacy
 
-## Simulated versus future capability
+State-changing routes validate prerequisites and use Post/Redirect/Get. Successful payment, collection, reward and Vouch creation are idempotent. Requests in the same demo session are serialized to prevent simultaneous requests spending the same balance or duplicating rewards.
 
-Smart Match, QR scanning, NETS payment, verification, cashback, transaction history and campaign analytics are simulated. Future production work may add NETS APIs, real settlement, merchant onboarding, authentication, persistent storage, consent management, notifications and an AI ranking API.
+No bank access, production NETS connection, real cashback payout, real camera scanner or real merchant partnership is claimed. Merchant analytics are aggregated. All demo merchants are fictional. All actions require user approval; social proof indicates a simulated eligible transaction, not product quality.
 
-The future AI integration point remains `getSmartRecommendation(profile, feedback, eligibleCampaigns)`. Backend rules must filter dietary, budget, distance and campaign conflicts before any future AI ranks offers.
+## Verification and Definition of Done
 
-## Agile delivery record
+Automated stateful tests cover both complete journeys, preferences and rejection, exact cashback arithmetic, merchant readiness, premature/duplicate actions, transaction-specific Vouches, direct route guards, navigation, reset and repeat journeys. Browser checks cover loading, inline feedback, Scan amount/totals, payment transitions, collection and Vouch.
 
-1. **Campaign, timing and cap:** replace order management with campaign controls and availability states. No fulfilment or merchant minimum-spend configuration.
-2. **QR verification:** connect accepted recommendation to Felicia's simulated QR. No camera or payment proof from QR.
-3. **Promotional claim:** create a ten-minute, single-use claim. No reward before payment.
-4. **Payment verification:** match a simulated NETS payment to the active claim using the fixed $1.00 rule. No production NETS API.
-5. **Reward record:** award and attribute cashback exactly once. No real settlement.
-6. **Merchant fulfilment:** simulate paid order handoff, preparation, readiness and collection. No delivery, inventory or POS integration.
-7. **Payment-Verified Vouch:** support Create or Skip and separate My Vouches lists. No ratings or public amount.
-8. **Merchant analytics:** display aggregated attribution and illustrative metrics. No item-level receipt or individual consumer analytics.
-9. **Open House polish:** reset all state, complete navigation, direct-route guards, responsive UI and clear simulation labels. No authentication or database.
+Done means both journeys work independently, then consecutively in either order; no stale receipt redirects; no duplicate transactions/rewards/Vouches; dynamic merchant details; no broken visible links; safe invalid state handling; and reset ready for the next visitor.
 
-## Acceptance and test checklist
+## Boundaries and future work
 
-- Complete Chicken Rice and rejected-to-Chicken-Porridge journeys.
-- Verify direct-to-Home startup and saved Profile Settings for every dietary option.
-- Verify invalid rejection reasons and QR identifiers are rejected.
-- Verify inactive, early, ended and capped campaigns cannot create claims.
-- Verify direct claim, payment, success and Vouch URLs are guarded.
-- Verify invalid fulfilment transitions, duplicate payment, duplicate collection and duplicate cashback are ignored.
-- Verify expired and reused claims cannot earn rewards.
-- Verify repeated scan, claim, payment and Vouch POST requests are idempotent.
-- Verify transaction, My Vouches and Felicia metrics update once.
-- Verify reset restores defaults, seeds and counters.
-- Verify every visible control has a working route.
+In-memory state is intentionally for a single-process Open House demo and resets on server restart. No authentication, database, production payment/QR/POS integration, delivery, notifications service or real AI is included. The notification preference is stored only.
 
-## Out of scope
-
-Delivery, live queue/inventory, kitchen integration, detailed POS handoff, item-level receipt management, real camera scanning, real NETS verification, real cashback payout, real partnerships, production transaction access, production AI, authentication, database, React, TypeScript, Vite, Prisma, Firebase, Supabase, SQL and layered enterprise architecture.
-
-## Definition of Done
-
-The prototype is ready when both the preorder and QR-to-payment journeys work, rewards and Vouches are protected from duplication, Felicia sees aggregated attributed results, Reset Demo restores the initial state, invalid states are safe, simulation labels are accurate, no visible control is broken, and a student helper can run the full demonstration without editing code.
+getSmartRecommendation() remains the future AI ranking boundary. Production rollout would require secure identity, durable transactional storage, consent, provider verification and settlement. These are outside this prototype task.

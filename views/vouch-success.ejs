@@ -1,13 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"><title>Vouch Saved | NETS Vouch AI</title><link rel="stylesheet" href="/css/style.css"></head>
-  <body><main class="prototype-stage"><section class="phone-shell">
-    <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
-    <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div></header>
-    <div class="phone-viewport"><div class="screen screen--post-meal">
-      <section class="quick-pay-success"><span class="success-state__icon" aria-hidden="true">✓</span><p class="eyebrow">Payment-Verified</p><h1>Vouched!</h1><p>You paid with NETS at <strong><%= merchant %></strong>.</p></section>
-      <div class="verified-definition"><span aria-hidden="true">✓</span><span><strong>Your payment amount stays private.</strong>Your Vouch helps the next person choose.</span></div>
-      <div class="screen-actions screen-actions--bottom"><a class="button button--full" href="/home">Done</a><a class="back-home-link" href="/profile?tab=vouches">View my Vouches</a></div>
-    </div><%- include('partials/jia-nav', { active: 'home' }) %></div><div class="home-indicator" aria-hidden="true"></div>
-  </section></main><script src="/js/script.js"></script></body>
-</html>
+<%- include('partials/start', { title: 'Vouched' }) %>
+<section class="receipt"><div class="success-mark" aria-hidden="true">✓</div><h1>Vouched ✓</h1><p class="eyebrow">Payment-Verified</p><h2><%= transaction.merchantName %></h2><p>You paid with NETS at this merchant.</p><p>Your payment amount stays private.</p>
+<form method="POST" action="/transactions/<%= transaction.id %>/done"><button class="button" type="submit">Done</button></form></section>
+<%- include('partials/end', { active: transaction.source === 'scan' ? 'scan' : 'home' }) %>

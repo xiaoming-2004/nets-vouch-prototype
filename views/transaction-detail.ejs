@@ -1,15 +1,5 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"><title>Transaction Detail | NETS Vouch AI</title><link rel="stylesheet" href="/css/style.css"></head>
-  <body><main class="prototype-stage"><section class="phone-shell">
-    <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
-    <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div><span class="prototype-label">Prototype</span></header>
-    <div class="phone-viewport"><div class="screen screen--transaction-detail">
-      <header class="recommendation-heading"><a class="icon-button" href="/profile?tab=transactions">←</a><div><p class="eyebrow">Past transaction</p><h1>Transaction Detail</h1></div></header>
-      <div class="transaction-detail-hero"><span class="merchant-monogram"><%= transaction.merchantName.charAt(0) %></span><h2><%= transaction.merchantName %></h2><p class="transaction-detail-hero__amount"><%= transaction.displayAmount %></p><span class="success-label">✓ Successful</span></div>
-      <dl class="transaction-detail-list"><div><dt>⌖ Outlet</dt><dd><%= transaction.outlet %></dd></div><div><dt>◷ Date and time</dt><dd><%= transaction.date %><small><%= transaction.time %></small></dd></div><div><dt>▣ Payment method</dt><dd><%= transaction.paymentMethod %></dd></div><div><dt>Order total</dt><dd>$<%= (transaction.orderAmount || transaction.amount).toFixed(2) %></dd></div><div><dt>Vouch Cashback used</dt><dd>-$<%= (transaction.cashbackUsed || 0).toFixed(2) %></dd></div><div><dt>Paid with NETS</dt><dd>$<%= (transaction.netsPaid || transaction.amount).toFixed(2) %></dd></div><div><dt>● Vouch</dt><dd><%= transaction.vouchCreated ? 'Created' : 'Not created' %></dd></div><div><dt>$ Cashback earned</dt><dd>$<%= transaction.cashbackAwarded.toFixed(2) %></dd></div></dl>
-      <div class="transaction-vouch-cta"><span>●</span><div><h2><%= transaction.vouchCreated ? 'Vouch created' : 'Payment record' %></h2><p><%= transaction.vouchCreated ? 'This Payment-Verified Vouch is saved in My Vouches.' : 'A Vouch is optional after an eligible attributed payment.' %></p></div></div>
-      <div class="screen-actions screen-actions--bottom"><% if (transaction.vouchCreated) { %><a class="button button--secondary button--full" href="/profile?tab=vouches">View My Vouches</a><% } %><a class="back-home-link" href="/profile?tab=transactions">Back to transactions</a></div>
-    </div></div><div class="home-indicator" aria-hidden="true"></div>
-  </section></main><script src="/js/script.js"></script></body>
-</html>
+<%- include('partials/start', { title: 'Transaction' }) %>
+<a class="back" href="/profile?tab=transactions">← NETS Activity</a><p class="eyebrow"><%= transaction.source === 'scan' ? 'In-store payment' : 'Smart Match collection order' %></p><h1><%= transaction.merchantName %></h1><p>Successful ✓</p>
+<dl class="receipt-lines card"><div><dt>Purchase</dt><dd>$<%= transaction.purchaseAmount.toFixed(2) %></dd></div><div><dt>Cashback used</dt><dd>−$<%= transaction.cashbackUsed.toFixed(2) %></dd></div><div><dt>Paid with NETS</dt><dd>$<%= transaction.netsPaid.toFixed(2) %></dd></div><div><dt>Cashback earned</dt><dd>$<%= transaction.cashbackAwarded.toFixed(2) %></dd></div><div><dt>Merchant outlet</dt><dd><%= transaction.outlet %></dd></div><div><dt>Date / time</dt><dd><%= transaction.date %><br><%= transaction.time %></dd></div><div><dt>Transaction</dt><dd><%= transaction.id %></dd></div><div><dt>Vouch</dt><dd><%= transaction.vouchDecision %></dd></div></dl>
+<% if (transaction.vouchDecision === 'pending' && (transaction.source === 'scan' || transaction.collected)) { %><a class="button" href="/vouch/<%= transaction.id %>">Vouch this spot</a><% } %>
+<%- include('partials/end', { active: 'profile' }) %>

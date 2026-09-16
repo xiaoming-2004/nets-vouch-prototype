@@ -1,0 +1,17 @@
+<section class="card journey-card" data-order-id="<%= order.id %>" data-order-status="<%= order.status %>">
+<% if (order.status === 'PENDING_PAYMENT') { %>
+<p class="eyebrow">Pick up at the merchant</p><h1>Your order is ready to confirm</h1><p><%= order.merchantName %></p><p><%= order.itemName %> · $<%= order.orderAmount.toFixed(2) %></p><a class="button" href="/payment">Continue to payment</a>
+<% } else if (order.status === 'PAID' || order.status === 'PREPARING') { %>
+<div class="status-orbit" aria-hidden="true">◷</div><h1>Preparing your order</h1><p><%= order.merchantName %></p><p>We'll let you know when it's ready.</p><% if (onHome) { %><a class="button" href="/order">View status</a><% } %>
+<% } else if (order.status === 'READY') { %>
+<div class="success-mark" aria-hidden="true">✓</div><h1>Ready for collection</h1><p><%= order.merchantName %></p><p><%= order.distanceMinutes %> min walk · <%= order.itemName %></p>
+<form method="POST" action="/collection" data-single-submit><input type="hidden" name="journeyId" value="<%= order.id %>"><button class="button" type="submit">Collect</button></form>
+<% } else if (order.vouchDecision === 'pending') { %>
+<div class="success-mark" aria-hidden="true">✓</div><h1>Collected</h1>
+<% if (transaction.cashbackAwarded > 0) { %><p class="reward">+$<%= transaction.cashbackAwarded.toFixed(2) %> Vouch Cashback</p><% } %>
+<%- include('vouch-prompt', { transaction: transaction }) %>
+<% } else { %>
+<div class="success-mark" aria-hidden="true">✓</div><p class="eyebrow">Journey complete</p><h1><%= order.vouchDecision === 'created' ? 'Thanks for the Vouch' : 'Enjoy your day' %></h1><p>Your payment and rewards are saved in Profile.</p>
+<form method="POST" action="/recommendation/next" data-single-submit><button class="button" type="submit">Find my next match</button></form>
+<% } %>
+</section>

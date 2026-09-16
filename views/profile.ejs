@@ -1,61 +1,23 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"><title>Jia Profile | NETS Vouch AI</title><link rel="stylesheet" href="/css/style.css"></head>
-  <body><main class="prototype-stage"><section class="phone-shell">
-    <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
-    <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div><span class="prototype-label">Profile</span></header>
-    <div class="phone-viewport phone-viewport--home"><div class="home-layout"><div class="home-scroll"><div class="screen screen--profile">
-      <header class="profile-header"><span class="profile-header__avatar" aria-hidden="true">J</span><div><p class="eyebrow">Your profile</p><h1><%= user.name %></h1><p>Make Smart Match feel like you.</p></div></header>
-      <nav class="profile-tabs" aria-label="Profile sections">
-        <a class="<%= tab === 'settings' ? 'is-active' : '' %>" href="/profile?tab=settings">Preferences</a>
-        <a class="<%= tab === 'transactions' ? 'is-active' : '' %>" href="/profile?tab=transactions">Activity</a>
-        <a class="<%= tab === 'vouches' ? 'is-active' : '' %>" href="/profile?tab=vouches">Vouches</a>
-      </nav>
-
-      <% if (tab === 'settings') { %>
-        <section class="profile-panel cashback-balance-panel"><div class="profile-panel__heading"><h2>Vouch Cashback</h2><p>Use this on a future NETS payment.</p></div><strong class="cashback-balance">$<%= cashbackBalance.toFixed(2) %></strong><span class="cashback-balance-label">available</span></section>
-        <section class="profile-panel profile-settings"><div class="profile-panel__heading"><h2>Preferences</h2><p>Choose what works for you.</p></div>
-          <% if (settingsError) { %><p class="form-error">Please choose valid profile settings and try again.</p><% } %>
-          <form method="POST" action="/profile">
-            <label>Dietary Preference
-              <select name="dietaryPreference" required>
-                <% dietaryPreferenceOptions.forEach(function(option) { %>
-                  <option value="<%= option.value %>" <%= profile.dietaryPreference === option.value ? 'selected' : '' %>><%= option.label %></option>
-                <% }); %>
-              </select>
-            </label>
-            <label>Budget ($)
-              <input type="number" name="budget" min="1" max="100" step="0.50" value="<%= profile.budget.toFixed(2) %>" required>
-            </label>
-            <label>Maximum walking distance (minutes)
-              <input type="number" name="maxDistanceMinutes" min="1" max="60" step="1" value="<%= profile.maxDistanceMinutes %>" required>
-            </label>
-            <label class="profile-notification-setting"><span><strong>Notifications</strong><small>Helpful prototype reminders</small></span><input type="checkbox" name="notifications" <%= profile.notifications ? 'checked' : '' %>></label>
-            <button class="button button--full" type="submit">Save Profile Settings</button>
-          </form>
-        </section>
-      <% } %>
-
-      <% if (tab === 'transactions') { %>
-        <section class="profile-panel"><div class="profile-panel__heading"><h2>NETS Activity</h2><p>Your recent payments.</p></div><div class="transaction-list">
-          <% if (transactions.length === 0) { %><p class="empty-list">Your NETS activity will appear here.</p><% } %>
-          <% transactions.forEach(function(transaction) { %><a class="transaction-row" href="/transactions/<%= transaction.id %>"><span class="transaction-row__mark"><%= transaction.merchantName.charAt(0) %></span><span class="transaction-row__copy"><strong><%= transaction.merchantName %></strong><small><%= transaction.date %> · <%= transaction.time %></small><span class="transaction-row__meta"><span>✓ <%= transaction.status %></span><span class="transaction-vouch <%= transaction.vouchCreated ? 'transaction-vouch--yes' : '' %>"><%= transaction.vouchCreated ? 'Vouch created' : 'No Vouch' %></span></span></span><span class="transaction-row__amount"><strong><%= transaction.displayAmount %></strong><small>NETS</small></span><span>›</span></a><% }); %>
-        </div></section>
-      <% } %>
-
-      <% if (tab === 'vouches') { %>
-        <section class="profile-panel"><div class="profile-panel__heading"><h2>Redeemed Vouches</h2><p>Rewards you have unlocked.</p></div><div class="vouch-history-list">
-          <% if (promotionalRedemptions.length === 0) { %><p class="empty-list">Your redeemed Vouches will appear here.</p><% } %>
-          <% promotionalRedemptions.forEach(function(redemption) { %><article class="vouch-history-card"><div class="vouch-history-card__mark">$</div><div class="vouch-history-card__copy"><div class="vouch-history-card__topline"><h3><%= redemption.merchantName %></h3><span class="history-status history-status--completed"><%= redemption.status %></span></div><div class="badge-row"><span class="vouch-tag-chip">$<%= redemption.rewardAmount.toFixed(2) %> reward</span><span class="verified-chip">✓ Payment linked</span></div><p><%= redemption.itemName %> · <%= redemption.date %></p></div></article><% }); %>
-        </div></section>
-        <section class="profile-panel"><div class="profile-panel__heading"><h2>Payment-Verified Vouches</h2><p>Vouches you create after paying with NETS.</p></div><div class="vouch-history-list">
-          <% if (paymentVerifiedVouches.length === 0) { %><p class="empty-list">No Payment-Verified Vouches yet.</p><% } %>
-          <% paymentVerifiedVouches.forEach(function(vouch) { %><article class="vouch-history-card"><div class="vouch-history-card__mark"><%= vouch.merchantName.charAt(0) %></div><div class="vouch-history-card__copy"><div class="vouch-history-card__topline"><h3><%= vouch.merchantName %></h3><span class="history-status history-status--completed"><%= vouch.status %></span></div><div class="badge-row"><span class="verified-chip">✓ Payment-Verified</span></div><p>◷ <%= vouch.date %></p></div></article><% }); %>
-        </div></section>
-      <% } %>
-
-      <form class="reset-demo-form" method="POST" action="/reset-demo" data-confirm-reset><button type="submit">Reset Demo</button></form>
-    </div></div><nav class="bottom-navigation"><a class="bottom-navigation__item" href="/home"><span>⌂</span><span>Home</span></a><a class="bottom-navigation__item" href="/scan"><span>▣</span><span>Scan</span></a><a class="bottom-navigation__item bottom-navigation__item--active" href="/profile"><span>○</span><span>Profile</span></a></nav></div></div>
-    <div class="home-indicator" aria-hidden="true"></div>
-  </section></main><script src="/js/script.js"></script></body>
-</html>
+<%- include('partials/start', { title: 'Profile' }) %>
+<p class="eyebrow">Your space</p><h1><%= user.name %></h1>
+<section class="balance-card"><span>Vouch Cashback</span><strong>$<%= cashbackBalance.toFixed(2) %></strong><small>Available for your next payment</small></section>
+<nav class="tabs" aria-label="Profile sections"><a href="/profile" <%- tab === 'settings' ? 'aria-current="page"' : '' %>>Preferences</a><a href="/profile?tab=vouches" <%- tab === 'vouches' ? 'aria-current="page"' : '' %>>My Vouches</a><a href="/profile?tab=transactions" <%- tab === 'transactions' ? 'aria-current="page"' : '' %>>NETS Activity</a></nav>
+<% if (tab === 'settings') { %>
+<% if (settingsError) { %><p class="error">Please choose valid settings.</p><% } %>
+<form method="POST" action="/profile" class="card form-stack">
+<label class="field">Dietary preference<select name="dietaryPreference"><% dietaryPreferenceOptions.forEach(function(option) { %><option value="<%= option.value %>" <%= profile.dietaryPreference === option.value ? 'selected' : '' %>><%= option.label %></option><% }); %></select></label>
+<label class="field">Budget ($)<input type="number" name="budget" value="<%= profile.budget.toFixed(2) %>" min="1" max="100" step=".01" required></label>
+<label class="field">Maximum walk (minutes)<input type="number" name="maxDistanceMinutes" value="<%= profile.maxDistanceMinutes %>" min="1" max="60" required></label>
+<label class="cashback-toggle"><span>Notifications<small>In-app readiness updates</small></span><input type="checkbox" name="notifications" <%= profile.notifications ? 'checked' : '' %>></label>
+<button class="button" type="submit">Save preferences</button></form>
+<% } else if (tab === 'transactions') { %>
+<h2>NETS Activity</h2><% if (!transactions.length) { %><p class="card">Your payments will appear here.</p><% } %>
+<div class="list"><% transactions.forEach(function(transaction) { %><a class="activity-row" href="/transactions/<%= transaction.id %>"><span class="monogram"><%= transaction.merchantName.charAt(0) %></span><span><strong><%= transaction.merchantName %></strong><small><%= transaction.date %> · <%= transaction.time %></small></span><b>$<%= transaction.netsPaid.toFixed(2) %></b></a><% }); %></div>
+<% } else { %>
+<h2>Payment-Verified Vouches</h2><% if (!paymentVerifiedVouches.length) { %><p class="card">Your first Vouch starts with a NETS payment.</p><% } %>
+<% paymentVerifiedVouches.forEach(function(vouch) { %><article class="card"><span class="eyebrow">Payment-Verified ✓</span><h3><%= vouch.merchantName %></h3><p><%= vouch.date %> · <%= vouch.user %></p><small>Transaction <%= vouch.transactionId %> · Simulated verification</small></article><% }); %>
+<h2>Cashback earned</h2><% if (!promotionalRedemptions.length) { %><p>No rewards earned yet.</p><% } %>
+<% promotionalRedemptions.forEach(function(redemption) { %><article class="card"><h3><%= redemption.merchantName %></h3><p class="reward">+$<%= redemption.rewardAmount.toFixed(2) %></p><small><%= redemption.date %></small></article><% }); %>
+<% } %>
+<details class="demo-controls"><summary>Open House controls</summary><a class="text-button" href="/merchant?tab=orders">Merchant view</a><form method="POST" action="/reset-demo" data-confirm-reset><button class="text-button" type="submit">Reset Demo</button></form></details>
+<%- include('partials/end', { active: 'profile' }) %>

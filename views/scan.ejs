@@ -1,67 +1,11 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta name="description" content="Simulated NETS Vouch scan-to-pay">
-    <meta name="theme-color" content="#082f5b">
-    <title>Scan to Pay | NETS Vouch AI</title>
-    <link rel="stylesheet" href="/css/style.css">
-  </head>
-  <body>
-    <main class="prototype-stage">
-      <section class="phone-shell" aria-label="NETS Vouch AI prototype">
-        <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
-        <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div></header>
-        <div class="phone-viewport">
-          <div class="screen scan-pay-screen">
-            <header class="recommendation-heading">
-              <a class="icon-button" href="/home" aria-label="Back to Home">←</a>
-              <div><p class="eyebrow">Walk-in payment</p><h1>Scan to Pay</h1></div>
-            </header>
-
-              <% if (!scanPayment) { %>
-                <section class="scan-pay-card">
-                  <div class="scan-pay-qr scan-pay-qr--idle" aria-hidden="true"><span class="scan-pay-qr__code">▦</span><span class="scan-pay-qr__line"></span></div>
-                  <h2>Scan a participating merchant's NETS Vouch QR</h2>
-                  <p class="scan-pay-note">The QR identifies the merchant. Your NETS payment verifies the purchase.</p>
-                  <form method="POST" action="/scan" data-single-submit>
-                    <input type="hidden" name="merchantId" value="green-bowl">
-                    <button class="button button--full" type="submit" data-submit-text="Scanning...">Scan QR</button>
-                  </form>
-                </section>
-              <% } else if (scanPayment.state === 'identified') { %>
-                <section class="scan-pay-card">
-                  <div class="success-state__icon" aria-hidden="true">✓</div>
-                  <p class="eyebrow">Merchant found</p>
-                  <h2><%= scanPayment.merchantName %></h2>
-                  <p><%= scanPayment.outlet %></p>
-                  <form method="POST" action="/scan/continue" class="screen-actions">
-                    <button class="button button--full" type="submit">Continue</button>
-                  </form>
-                </section>
-              <% } else if (scanPayment.state === 'amount') { %>
-                <section class="scan-pay-card">
-                  <p class="eyebrow">Merchant identified</p>
-                  <h2><%= scanPayment.merchantName %></h2>
-                  <p><%= scanPayment.outlet %></p>
-                  <form method="POST" action="/scan/amount" class="screen-actions">
-                    <label>Amount
-                      <span class="currency-input"><span>$</span><input type="text" name="amount" inputmode="decimal" placeholder="0.00" required autofocus></span>
-                    </label>
-                    <% if (cashbackBalance > 0) { %>
-                      <label class="cashback-toggle"><span><strong>Use Vouch Cashback</strong><small>$<%= cashbackBalance.toFixed(2) %> available</small></span><input type="checkbox" name="useCashback"></label>
-                    <% } %>
-                    <button class="button button--full" type="submit">Continue</button>
-                  </form>
-                </section>
-              <% } %>
-          </div>
-          <%- include('partials/jia-nav', { active: 'scan' }) %>
-        </div>
-        <div class="home-indicator" aria-hidden="true"></div>
-      </section>
-    </main>
-    <script src="/js/script.js"></script>
-  </body>
-</html>
+<%- include('partials/start', { title: 'Scan to Pay' }) %>
+<p class="eyebrow">Already found your spot?</p><h1>Scan to Pay</h1><p>Point your camera at a participating merchant QR.</p>
+<% if (error) { %><p class="error" role="alert">That QR wasn't recognised. Try a participating merchant.</p><% } %>
+<form method="POST" action="/scan" data-scan>
+<div class="qr-frame" aria-hidden="true"><span>▦</span><i></i></div>
+<label class="field">Demo merchant
+<select name="merchantId"><% merchants.forEach(function(merchant) { %><option value="<%= merchant.id %>" <%= merchant.id === 'green-bowl' ? 'selected' : '' %>><%= merchant.merchantName %></option><% }); %></select></label>
+<button class="button" type="submit">Scan QR</button><p class="form-status" role="status"></p>
+</form>
+<p class="subtle">Simulated scan · No camera needed</p>
+<%- include('partials/end', { active: 'scan' }) %>

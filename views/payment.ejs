@@ -1,62 +1,21 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta name="description" content="Simulated NETS payment confirmation">
-    <meta name="theme-color" content="#082f5b">
-    <title>Confirm Payment | NETS Vouch AI</title>
-    <link rel="stylesheet" href="/css/style.css">
-  </head>
-  <body>
-    <main class="prototype-stage">
-      <section class="phone-shell" aria-label="NETS Vouch AI prototype">
-        <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
-        <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div></header>
-        <div class="phone-viewport">
-          <div class="screen scan-pay-screen">
-            <header class="recommendation-heading">
-              <a class="icon-button" href="/home" aria-label="Cancel payment">×</a>
-              <div><p class="eyebrow"><%= order ? 'Order review' : 'QR verified' %></p><h1><%= order ? 'Review your order' : 'Confirm payment' %></h1></div>
-            </header>
-
-            <% if (order) { %>
-              <ol class="scan-pay-steps" aria-label="Order steps"><li class="is-active"><span>1</span>Review</li><li><span>2</span>Pay</li><li><span>3</span>Collect</li></ol>
-            <% } else { %>
-              <ol class="scan-pay-steps" aria-label="Scan-to-pay steps"><li class="is-complete"><span>✓</span>Scan</li><li class="is-active"><span>2</span>Pay</li><li><span>3</span>Done</li></ol>
-            <% } %>
-
-            <section class="quick-pay-card">
-              <div class="quick-pay-card__merchant">
-                <span class="merchant-monogram" aria-hidden="true"><%= merchant.name.charAt(0) %></span>
-                <div><small><%= order ? 'Collecting from merchant' : 'Paying' %></small><h2><%= merchant.name %></h2><p><%= order ? recommendation.itemName : 'Walk-in purchase' %></p></div>
-              </div>
-              <div class="quick-pay-card__amount"><span><%= scan ? 'Purchase amount' : 'Order total' %></span><strong>$<%= recommendation.price.toFixed(2) %></strong></div>
-              <% if (cashbackBalance > 0 && (order || scan)) { %>
-                <label class="cashback-toggle">
-                  <span><strong>Vouch Cashback</strong><small>$<%= cashbackBalance.toFixed(2) %> available</small></span>
-                  <input type="checkbox" name="useCashback" form="payment-form" <%= breakdown.cashbackUsed > 0 ? 'checked' : '' %> <%= scan ? 'disabled' : '' %>>
-                </label>
-                <div class="payment-breakdown">
-                  <div><span><%= scan ? 'Purchase amount' : 'Order total' %></span><strong>$<%= recommendation.price.toFixed(2) %></strong></div>
-                  <div><span>Vouch Cashback</span><strong>-$<%= breakdown.cashbackUsed.toFixed(2) %></strong></div>
-                  <div class="payment-breakdown__total"><span>Pay with NETS</span><strong>$<%= breakdown.amountToPay.toFixed(2) %></strong></div>
-                </div>
-              <% } %>
-              <% if (scan) { %><div class="quick-pay-card__vouch"><span aria-hidden="true">✓</span><div><strong>Campaign checked after payment</strong><small>Eligible Green Bowl payments earn cashback immediately.</small></div></div><% } else { %><div class="quick-pay-card__vouch"><span aria-hidden="true">✓</span><div><strong>$<%= campaign.rewardAmount.toFixed(2) %> merchant cashback</strong><small>Released after eligible NETS payment and collection</small></div></div><% } %>
-              <% if (order) { %><p class="verification-note">Collection from merchant. No delivery.</p><% } %>
-            </section>
-
-            <form id="payment-form" class="quick-pay-action" method="POST" action="/payment" data-single-submit>
-              <button class="button button--full" type="submit" data-submit-text="Processing..."><%= breakdown.amountToPay !== recommendation.price ? 'Pay $' + breakdown.amountToPay.toFixed(2) : 'Pay with NETS · $' + recommendation.price.toFixed(2) %></button>
-              <p>Pay securely with NETS.</p>
-            </form>
-          </div>
-          <%- include('partials/jia-nav', { active: 'home' }) %>
-        </div>
-        <div class="home-indicator" aria-hidden="true"></div>
-      </section>
-    </main>
-    <script src="/js/script.js"></script>
-  </body>
-</html>
+<%- include('partials/start', { title: scan ? 'Scan to Pay' : 'Review order' }) %>
+<a class="back" href="/home">← Home</a><p class="eyebrow"><%= scan ? 'Merchant found ✓' : 'Collection order' %></p><h1><%= scan ? 'How much are you paying?' : 'Review your order' %></h1>
+<div class="merchant-heading"><span class="monogram"><%= journey.merchantName.charAt(0) %></span><div><h2><%= journey.merchantName %></h2><p><%= scan ? journey.outlet : journey.itemName %></p></div></div>
+<% if (error) { %><p class="error" role="alert"><%= error %></p><% } %>
+<form method="POST" action="<%= scan ? '/scan/payment' : '/payment' %>" data-payment data-balance="<%= cashbackBalance %>" data-amount="<%= scan ? '' : journey.orderAmount %>">
+<input type="hidden" name="journeyId" value="<%= journey.id %>">
+<section class="card">
+<% if (scan) { %>
+<label class="field">Purchase amount
+<span class="amount-input"><span>$</span><input name="amount" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" maxlength="7" placeholder="0.00" required aria-label="Purchase amount in dollars" value="<%= journey.enteredAmount || '' %>"></span></label>
+<% } else { %><div class="total"><span>Order total</span><strong>$<%= journey.orderAmount.toFixed(2) %></strong></div><p>Collection at <%= journey.outlet %></p><% } %>
+<label class="cashback-toggle"><span><strong>Use Vouch Cashback</strong><small>$<%= cashbackBalance.toFixed(2) %> available</small></span><input type="checkbox" name="useCashback" <%= cashbackBalance > 0 ? '' : 'disabled' %>></label>
+<div class="line"><span>Cashback used</span><strong data-cashback-used>−$0.00</strong></div>
+<div class="total"><span>Pay with NETS</span><strong data-nets-total>$<%= scan ? '0.00' : journey.orderAmount.toFixed(2) %></strong></div>
+<% if (campaign) { %><p class="reward-note">Earn $<%= campaign.rewardAmount.toFixed(2) %> Vouch Cashback <%= scan ? 'after payment' : 'after collection' %>.</p><small>At least $1 must be paid with NETS. Subject to campaign availability.</small><% } %>
+</section>
+<button class="button" type="submit" data-pay-button>Pay <%= scan ? '' : '$' + journey.orderAmount.toFixed(2) %></button>
+<p class="form-status" role="status"></p>
+</form>
+<% if (scan) { %><form method="POST" action="/scan/cancel"><input type="hidden" name="journeyId" value="<%= journey.id %>"><button class="text-button" type="submit">Scan another merchant</button></form><% } %>
+<%- include('partials/end', { active: scan ? 'scan' : 'home' }) %>

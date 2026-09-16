@@ -1,27 +1,14 @@
-<article class="smart-match-card smart-match-reveal" data-recommendation-id="<%= recommendation.id %>">
-  <div class="smart-match-card__visual" aria-hidden="true">
-    <span class="smart-match-card__dish"><%= recommendation.dietary.includes('vegan') ? '🥗' : recommendation.category === 'noodles' ? '🍜' : '🍚' %></span>
-  </div>
-  <div class="smart-match-card__body">
-    <p class="smart-match-card__merchant"><%= recommendation.merchantName %></p>
-    <h2><%= recommendation.itemName %></h2>
-    <p class="smart-match-card__facts">
-      <% if (recommendation.price !== null) { %><span>$<%= recommendation.price.toFixed(2) %></span><% } %>
-      <% if (recommendation.dietary.length > 0) { %><span><%= recommendation.dietary[recommendation.dietary.length - 1].charAt(0).toUpperCase() + recommendation.dietary[recommendation.dietary.length - 1].slice(1) %></span><% } %>
-      <span><%= recommendation.distanceMinutes %> min walk</span>
-    </p>
-    <% if (campaign) { %>
-      <div class="smart-match-reward"><span>NETS Vouch</span><strong>$<%= campaign.rewardAmount.toFixed(2) %> cashback</strong></div>
-    <% } %>
-    <div class="smart-match-why">
-      <strong>Why this match?</strong>
-      <ul><% matchReasons.forEach(function(reason) { %><li><%= reason %></li><% }); %></ul>
-    </div>
-    <% if (campaign) { %>
-      <form method="POST" action="/recommendation/accept">
-        <button class="button button--full smart-match-view" type="submit">Accept</button>
-      </form>
-    <% } %>
-    <a class="smart-match-reject" href="/recommendation/reject">Not for me</a>
-  </div>
-</article>
+<article class="match-card reveal" data-merchant-id="<%= recommendation.id %>">
+<div class="meal-visual" aria-hidden="true"><span><%= recommendation.dietary.includes('vegan') ? '🥗' : recommendation.category === 'noodles' ? '🍜' : '🍚' %></span><i>✦</i></div>
+<div class="match-copy"><h2><%= recommendation.merchantName %></h2><p class="item"><%= recommendation.itemName %></p>
+<p class="facts">$<%= recommendation.price.toFixed(2) %><% if (recommendation.dietary.length) { %> · <%= recommendation.dietary[recommendation.dietary.length - 1] %><% } %> · <%= recommendation.distanceMinutes %> min</p>
+<% if (campaign) { %><p class="reward">$<%= campaign.rewardAmount.toFixed(2) %> cashback <small>after collection</small></p><% } else { %><p role="status">This offer has ended. Choose another spot.</p><% } %>
+<div class="why"><strong>Why this match?</strong><p><%= matchReasons.join(' · ') %></p></div>
+<% if (vouchCount > 0) { %><p class="trust"><%= vouchCount %> Payment-Verified <%= vouchCount === 1 ? 'Vouch' : 'Vouches' %></p><% } %>
+<% if (campaign) { %><form method="POST" action="/recommendation/accept" data-single-submit><input type="hidden" name="merchantId" value="<%= recommendation.id %>"><button class="button" type="submit">Accept</button></form><% } %>
+<details class="feedback" id="feedback"><summary>Not for me</summary>
+<div class="feedback-sheet"><h3>What didn't fit?</h3><form method="POST" action="/recommendation/reject" data-feedback>
+<input type="hidden" name="merchantId" value="<%= recommendation.id %>">
+<% rejectionReasons.forEach(function(reason) { %><button type="submit" name="reason" value="<%= reason.id %>"><%= reason.label %><span aria-hidden="true">→</span></button><% }); %>
+</form></div></details>
+</div></article>

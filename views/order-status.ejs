@@ -1,15 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"><title>Order Status | NETS Vouch AI</title><link rel="stylesheet" href="/css/style.css"></head>
-  <body><main class="prototype-stage"><section class="phone-shell">
-    <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
-    <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div></header>
-    <div class="phone-viewport"><div class="screen screen--post-meal">
-      <header class="recommendation-heading"><a class="icon-button" href="/home" aria-label="Back to Home">←</a><div><p class="eyebrow">Order #<%= order.orderNumber %></p><h1><%= order.status === 'READY' ? 'Ready for collection' : order.status === 'COLLECTED' ? 'Collected' : 'Order status' %></h1></div></header>
-      <section class="quick-pay-card"><div class="quick-pay-card__merchant"><span class="merchant-monogram">F</span><div><small><%= order.merchantName %></small><h2><%= order.itemName %></h2><p><%= order.status === 'READY' ? 'Your order is ready.' : order.status === 'COLLECTED' ? 'Thanks for collecting.' : order.status === 'PREPARING' ? "We'll let you know when it's ready." : 'Payment successful. Your order is confirmed.' %></p></div></div><div class="quick-pay-card__amount"><span>Total</span><strong>$<%= order.amount.toFixed(2) %></strong></div></section>
-      <% if (order.status === 'READY') { %><p class="screen-lede">8-minute walk · Merchant-controlled readiness</p><a class="button button--secondary button--full" href="https://maps.google.com/?q=Republic+Polytechnic+North+Food+Court">View directions</a><form class="screen-actions" method="POST" action="/collection"><button class="button button--full" type="submit">Collect</button></form><% } %>
-      <% if (order.status === 'COLLECTED' && order.cashbackRecorded) { %><div class="cashback-earned"><span aria-hidden="true">$</span><div><strong>Payment confirmed</strong><span>$<%= campaign.rewardAmount.toFixed(2) %> cashback released.</span></div></div><div class="screen-actions"><a class="button button--full" href="/vouch">Vouch — one tap</a><form method="POST" action="/vouch"><button class="button button--ghost button--full" type="submit" name="action" value="skip">Not now</button></form></div><% } %>
-      <% if (order.status === 'PAID' || order.status === 'PREPARING') { %><div class="availability-banner availability-banner--available"><strong><%= order.status === 'PAID' ? 'Payment successful' : 'Preparing' %></strong><span>Your lunch is being prepared.</span></div><% } %>
-    </div><%- include('partials/jia-nav', { active: 'home' }) %></div><div class="home-indicator" aria-hidden="true"></div>
-  </section></main><script src="/js/script.js"></script></body>
-</html>
+<%- include('partials/start', { title: 'Your order' }) %>
+<a class="back" href="/home">← Home</a>
+<%- include('partials/order-card', { order: order, transaction: transaction, onHome: false }) %>
+<%- include('partials/end', { active: 'home' }) %>

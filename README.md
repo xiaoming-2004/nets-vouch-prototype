@@ -29,8 +29,14 @@ The key is read only by `app.js` and is never sent to EJS or browser JavaScript.
 4. Switch to Felicia, start preparing, and mark the order ready.
 5. Switch back to Jia, collect the order, and release cashback.
 6. Optionally create a Payment-Verified Vouch.
-7. Use the existing Scan journey or switch to Felicia to view campaign attribution.
+7. Independently use Scan: choose a fictional merchant QR, enter an amount, optionally use cashback, and Pay. Scan credits eligible rewards immediately and offers Vouch/Skip; it never creates an order.
 8. Reset the demo for the next visitor.
+
+Smart Match rewards are released only after collection. Both journeys require at least $1 actually paid with simulated NETS to qualify for verification; rewards also depend on the merchant campaign. Profile contains transaction history and discreet merchant/reset controls.
+
+## Tests
+
+Run `npm test` for stateful journey, amount validation, duplicate-safety, navigation and reset tests. Run `node --check app.js` for a syntax check. Sessions are in memory and reset when the server restarts; run a single Node process for this demo.
 
 ## Prototype boundaries
 

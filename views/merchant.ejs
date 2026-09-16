@@ -1,63 +1,24 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"><title>Felicia Campaign Dashboard | NETS Vouch AI</title><link rel="stylesheet" href="/css/style.css"></head>
-  <body><main class="prototype-stage"><section class="phone-shell">
-    <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
-    <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div><span class="prototype-label">Merchant</span></header>
-    <div class="phone-viewport"><div class="screen screen--merchant-workspace">
-      <header class="merchant-workspace-header"><div><p class="eyebrow">Felicia's merchant view</p><h1>Campaign Dashboard</h1></div><span class="merchant-monogram">F</span></header>
-      <nav class="merchant-tabs" aria-label="Merchant workspace"><a class="<%= tab === 'campaign' ? 'is-active' : '' %>" href="/merchant?tab=campaign">Offers</a><a class="<%= tab === 'orders' ? 'is-active' : '' %>" href="/merchant?tab=orders">Orders</a><a class="<%= tab === 'results' ? 'is-active' : '' %>" href="/merchant?tab=results">Results</a></nav>
-
-      <% if (tab === 'campaign') { %>
-        <section class="merchant-panel">
-          <div class="merchant-panel-heading"><span aria-hidden="true">$</span><div><p class="eyebrow">Merchant-funded Vouch</p><h2>Lunch cashback</h2></div></div>
-          <div class="availability-banner availability-banner--<%= availability.available ? 'available' : 'unavailable' %>"><strong><%= availability.title %></strong><span><%= calculations.redemptionsRemaining %> redemptions remaining today</span></div>
-          <form method="POST" action="/merchant/offer">
-            <div class="campaign-controls">
-              <label>Reward amount ($)<input name="rewardAmount" type="number" min="0" max="50" step="0.10" value="<%= campaign.rewardAmount.toFixed(2) %>" required></label>
-              <label>Daily redemption cap<input name="dailyCap" type="number" min="1" max="1000" step="1" value="<%= campaign.dailyCap %>" required></label>
-              <label>Start time<input name="startTime" type="time" value="<%= campaign.startTime %>" required></label>
-              <label>End time<input name="endTime" type="time" value="<%= campaign.endTime %>" required></label>
-              <label>Status<select name="status"><option value="ACTIVE" <%= campaign.status === 'ACTIVE' ? 'selected' : '' %>>Active</option><option value="INACTIVE" <%= campaign.status === 'INACTIVE' ? 'selected' : '' %>>Inactive</option></select></label>
-            </div>
-            <dl class="offer-rules"><div><dt>Campaign QR</dt><dd><%= campaign.id %></dd></div><div><dt>Used today</dt><dd><%= campaign.redemptionsToday %> / <%= campaign.dailyCap %></dd></div><div><dt>Fixed payment check</dt><dd>At least $<%= minimumEligiblePayment.toFixed(2) %></dd></div><div class="offer-rules__total"><dt>Maximum daily reward cost</dt><dd>$<%= calculations.maximumDailyCost.toFixed(2) %></dd></div></dl>
-            <p class="merchant-funding-note">The QR identifies this campaign. Reward is released only after an eligible simulated NETS payment.</p>
-            <button class="button button--full" type="submit">Save Campaign</button>
-          </form>
-        </section>
-      <% } %>
-
-      <% if (tab === 'results') { %>
-        <section class="merchant-panel">
-          <div class="merchant-panel-heading"><span aria-hidden="true">▥</span><div><p class="eyebrow">Illustrative Prototype Data</p><h2>Campaign attribution</h2></div></div>
-          <div class="attribution-funnel"><span>Recommendation</span><i>→</i><span>QR</span><i>→</i><span>Claim</span><i>→</i><span>Payment</span></div>
-          <div class="metrics-grid"><div><span>Recommendations shown</span><strong><%= metrics.recommendationsShown %></strong></div><div><span>Accepted</span><strong><%= metrics.recommendationsAccepted %></strong></div><div><span>Valid QR scans</span><strong><%= metrics.qrScans %></strong></div><div><span>Vouch claims</span><strong><%= metrics.claims %></strong></div><div><span>Eligible payments</span><strong><%= metrics.eligiblePayments %></strong></div><div><span>Attributed value</span><strong>$<%= metrics.attributedTransactionValue.toFixed(2) %></strong></div><div><span>Reward cost</span><strong>$<%= metrics.rewardCost.toFixed(2) %></strong></div><div><span>Conversion</span><strong><%= calculations.conversion %>%</strong></div></div>
-          <div class="metric-summary"><div><span>◷</span><span>Cost per eligible payment</span><strong>$<%= calculations.costPerPayment.toFixed(2) %></strong></div></div>
-          <p class="attribution-disclaimer">Aggregated attribution only. Seeded and session-generated figures are illustrative, not real pilot results or proof of incrementality.</p>
-        </section>
-      <% } %>
-
-      <% if (tab === 'orders') { %>
-        <section class="merchant-panel">
-          <div class="merchant-panel-heading"><span aria-hidden="true">▣</span><div><p class="eyebrow">Simulated merchant handoff</p><h2>Orders</h2></div></div>
-          <% if (!order) { %>
-            <div class="availability-banner availability-banner--unavailable"><strong>No paid orders yet</strong><span>Accept a Jia recommendation to create one.</span></div>
-          <% } else { %>
-            <div class="quick-pay-card">
-              <div class="quick-pay-card__merchant"><span class="merchant-monogram" aria-hidden="true">J</span><div><small><%= order.status === 'PAID' ? 'PAID WITH NETS' : 'Order status' %></small><h2>Order #<%= order.orderNumber %></h2><p>Jia · <%= order.itemName %></p></div></div>
-              <div class="quick-pay-card__amount"><span>Total</span><strong>$<%= order.amount.toFixed(2) %></strong></div>
-              <p class="merchant-funding-note">Paid order received through participating merchant system. Merchant-controlled readiness.</p>
-              <% if (order.status === 'PAID') { %><form method="POST" action="/merchant/start-preparing"><button class="button button--full" type="submit">Start preparing</button></form><% } %>
-              <% if (order.status === 'PREPARING') { %><form method="POST" action="/merchant/mark-ready"><button class="button button--full" type="submit">Mark ready</button></form><% } %>
-              <% if (order.status === 'READY') { %><div class="availability-banner availability-banner--available"><strong>READY</strong><span>Jia can collect this order.</span></div><% } %>
-              <% if (order.status === 'COLLECTED') { %><div class="availability-banner availability-banner--available"><strong>COLLECTED</strong><span>Reward released: $<%= order.cashbackRecorded ? campaign.rewardAmount.toFixed(2) : '0.00' %>.</span></div><% } %>
-            </div>
-          <% } %>
-        </section>
-      <% } %>
-
-      <div class="merchant-return"><a class="button button--ghost button--full" href="/home">Switch to Jia</a></div>
-      <form class="reset-demo-form" method="POST" action="/reset-demo" data-confirm-reset><button type="submit">Reset Demo</button></form>
-    </div></div><div class="home-indicator" aria-hidden="true"></div>
-  </section></main><script src="/js/script.js"></script></body>
-</html>
+<%- include('partials/start', { title: 'Merchant demo' }) %>
+<p class="eyebrow">Merchant demo</p><h1><%= merchant.merchantName %></h1>
+<form method="GET" action="/merchant" class="merchant-picker"><input type="hidden" name="tab" value="<%= tab %>"><label class="field">Merchant<select name="merchantId"><% merchants.forEach(function(item) { %><option value="<%= item.id %>" <%= item.id === merchant.id ? 'selected' : '' %>><%= item.merchantName %></option><% }); %></select></label><button class="text-button" type="submit">Switch</button></form>
+<nav class="tabs" aria-label="Merchant sections"><% ['campaign', 'orders', 'results'].forEach(function(item) { %><a href="/merchant?merchantId=<%= merchant.id %>&tab=<%= item %>" <%- tab === item ? 'aria-current="page"' : '' %>><%= item.charAt(0).toUpperCase() + item.slice(1) %></a><% }); %></nav>
+<% if (tab === 'orders') { %>
+<% if (!order || order.status === 'PENDING_PAYMENT') { %><p class="card">No paid collection orders.</p><% } else { %>
+<section class="card"><p class="eyebrow">Order #<%= order.orderNumber %> · <%= order.status %></p><h2><%= order.itemName %></h2><p>Simulated merchant handoff</p>
+<% if (order.status === 'PAID' || order.status === 'PREPARING') { %><form method="POST" action="<%= order.status === 'PAID' ? '/merchant/start-preparing' : '/merchant/mark-ready' %>" data-single-submit><input type="hidden" name="journeyId" value="<%= order.id %>"><input type="hidden" name="merchantId" value="<%= merchant.id %>"><button class="button" type="submit"><%= order.status === 'PAID' ? 'Start preparing' : 'Mark ready' %></button></form><% } %>
+<% if (order.status === 'READY') { %><p>Ready for collection ✓</p><% } %><% if (order.collected) { %><p>Collected ✓</p><% } %></section><% } %>
+<% } else if (tab === 'campaign') { %>
+<p class="reward"><%= availability.title %></p><p><%= Math.max(0, campaign.dailyCap - campaign.redemptionsToday) %> rewards remaining today</p>
+<% if (error) { %><p class="error">Check the campaign values and try again.</p><% } %>
+<form method="POST" action="/merchant/offer" class="card form-stack">
+<input type="hidden" name="merchantId" value="<%= merchant.id %>">
+<label class="field">Reward ($)<input name="rewardAmount" type="number" min="0" max="50" step=".01" value="<%= campaign.rewardAmount.toFixed(2) %>" required></label>
+<label class="field">Daily cap<input name="dailyCap" type="number" min="1" max="1000" value="<%= campaign.dailyCap %>" required></label>
+<label class="field">Start<input name="startTime" type="time" value="<%= campaign.startTime %>" required></label><label class="field">End<input name="endTime" type="time" value="<%= campaign.endTime %>" required></label>
+<label class="field">Status<select name="status"><option value="ACTIVE" <%= campaign.status === 'ACTIVE' ? 'selected' : '' %>>Active</option><option value="INACTIVE" <%= campaign.status === 'INACTIVE' ? 'selected' : '' %>>Inactive</option></select></label>
+<button class="button" type="submit">Save campaign</button></form>
+<% } else { %>
+<p class="eyebrow">Illustrative Prototype Data · this session</p>
+<dl class="receipt-lines card"><div><dt>Recommendations shown</dt><dd><%= campaign.metrics.recommendationsShown %></dd></div><div><dt>Accepted</dt><dd><%= campaign.metrics.accepted %></dd></div><div><dt>QR scans</dt><dd><%= campaign.metrics.scans %></dd></div><div><dt>Completed payments</dt><dd><%= campaign.metrics.payments %></dd></div><div><dt>Attributed payments</dt><dd><%= campaign.metrics.attributedPayments %></dd></div><div><dt>Attributed purchase value</dt><dd>$<%= campaign.metrics.attributedValue.toFixed(2) %></dd></div><div><dt>Cashback released</dt><dd>$<%= campaign.metrics.rewardCost.toFixed(2) %></dd></div><div><dt>Match-to-payment conversion</dt><dd><%= campaign.metrics.recommendationsShown ? Math.round(100 * campaign.metrics.attributedPayments / campaign.metrics.recommendationsShown) : 0 %>%</dd></div></dl>
+<% } %><a class="text-button" href="/home">Return to Jia</a>
+<%- include('partials/end', { active: 'profile' }) %>
