@@ -33,6 +33,19 @@ Core loop:
 
 All people, merchants, offers, orders and metrics in the MVP are fictional or illustrative.
 
+1. **Payment comes first.** Vouching is offered only after the NETS payment has succeeded.
+2. **Recommendation and incentive remain separate.**
+   - Jia’s Vouch is the trusted recommendation.
+   - Café ABC’s offer is an optional, merchant-funded conversion mechanism.
+3. **Will get referrer reward.** Jia will only receive merchant rewards only if Darren successfully paid and claimed his reward.
+4. **Claim now, use later.** Darren saves the offer to his simulated NETS account and redeems it only during a later eligible payment.
+5. **Single-use and account-linked.** The prototype state must prevent a claimed offer from being claimed twice or a redeemed offer from being reused.
+6. **No promo code.** The offer is represented as an account-linked entitlement, never as a reusable code.
+7. **One payment creates the next.** Darren’s successful payment ends with a new Vouch action that loops to Vouch creation.
+8. **Prototype honesty.** Simulated payment, WhatsApp, account, fee, and campaign states must be clearly presented as illustrative.
+9. **Focused storytelling.** Every screen and control must support the consumer loop, merchant setup, or business rationale.
+10. **Accessible interaction.** Keyboard operation, clear focus, comfortable touch targets, readable contrast, and reduced-motion support are required.
+
 ## 3. Final consumer journey
 
 1. Darren completes first-use privacy and personalisation settings.
