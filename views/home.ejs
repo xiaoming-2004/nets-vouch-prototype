@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="description" content="Jia's NETS Vouch AI home page">
+    <meta name="theme-color" content="#083b66">
+    <title>Home | NETS Vouch AI</title>
+    <link rel="stylesheet" href="/css/style.css">
+  </head>
+  <body>
+    <main class="prototype-stage">
+      <section class="phone-shell" aria-label="NETS Vouch AI prototype">
+        <div class="status-bar" aria-hidden="true">
+          <span>9:41</span>
+          <span class="status-bar__island"></span>
+          <span class="status-bar__signals">● ◢ ▰</span>
+        </div>
+
+        <header class="app-bar">
+          <div class="wordmark" aria-label="NETS Vouch">
+            <span class="wordmark__nets">NETS</span>
+            <span class="wordmark__vouch">Vouch</span>
+          </div>
+          <a class="demo-trigger" href="/merchant" aria-label="Open Felicia's merchant view">
+            <span aria-hidden="true">◇</span>
+            <span>Felicia</span>
+          </a>
+        </header>
+
+        <div class="phone-viewport phone-viewport--home">
+          <div class="home-layout">
+            <div class="home-scroll">
+              <div class="screen screen--main-menu">
+                <header class="main-menu-greeting">
+                  <div>
+                    <p class="eyebrow">Good afternoon</p>
+                    <h1>Hi <%= user.name %></h1>
+                    <p>Make lunch count.</p>
+                  </div>
+                  <span class="profile-avatar" aria-hidden="true"><%= user.name.charAt(0) %></span>
+                </header>
+
+                <% if (personalisation.recommendations) { %>
+                  <a class="ai-recommendation-hero" href="/recommendation" aria-label="Open today's lunch recommendation">
+                    <span class="ai-recommendation-hero__icon" aria-hidden="true">✦</span>
+                    <span class="ai-recommendation-hero__copy">
+                      <small>Lunch soon?</small>
+                      <strong>One participating option matches</strong>
+                      <em>
+                        Preferences<% if (personalisation.location) { %> · location<% } %>
+                      </em>
+                    </span>
+                    <span class="card-arrow" aria-hidden="true">›</span>
+                  </a>
+                <% } else { %>
+                  <a class="recommendation-paused" href="/personalisation">
+                    <span class="recommendation-paused__icon" aria-hidden="true">✦</span>
+                    <span>
+                      <strong>Recommendations paused</strong>
+                      <small>Tap to manage personalisation</small>
+                    </span>
+                  </a>
+                <% } %>
+
+                <a class="personalisation-status" href="/personalisation">
+                  <span><%= personalisation.transactionAnalysis ? 'Personalised' : 'Basic Mode' %></span>
+                  <small>
+                    <%= personalisation.transactionAnalysis
+                      ? 'Using only data you allowed'
+                      : 'Transaction analysis is off' %>
+                  </small>
+                </a>
+
+                <% if (currentOrder) { %>
+                  <a class="current-order-card" href="<%= currentOrder.status === 'READY' ? '/collection' : '/order' %>">
+                    <span class="current-order-card__icon" aria-hidden="true">▣</span>
+                    <span>
+                      <small>Order #<%= currentOrder.orderNumber %></small>
+                      <strong><%= currentOrder.itemName %></strong>
+                      <em><%= currentOrder.status.replace('_', ' ') %></em>
+                    </span>
+                    <span class="card-arrow" aria-hidden="true">›</span>
+                  </a>
+                <% } %>
+
+                <a class="scan-compact-card" href="/scan">
+                  <span aria-hidden="true">▣</span>
+                  <strong>Scan to Pay</strong>
+                  <small>Simulate a merchant QR</small>
+                  <i aria-hidden="true">›</i>
+                </a>
+
+                <section class="home-shortcuts" aria-labelledby="shortcuts-title">
+                  <h2 id="shortcuts-title" class="section-title">Your NETS activity</h2>
+                  <div class="shortcut-grid shortcut-grid--two">
+                    <a href="/profile?tab=transactions">
+                      <span class="shortcut-icon shortcut-icon--blue" aria-hidden="true">▤</span>
+                      <strong>Transactions</strong>
+                    </a>
+                    <a href="/profile?tab=vouches">
+                      <span class="shortcut-icon shortcut-icon--red" aria-hidden="true">●</span>
+                      <strong>My Vouches</strong>
+                    </a>
+                  </div>
+                </section>
+
+                <section class="recent-transactions" aria-labelledby="recent-title">
+                  <div class="section-heading-inline">
+                    <div>
+                      <p class="eyebrow"><span aria-hidden="true">◷</span> Activity</p>
+                      <h2 id="recent-title">Recent</h2>
+                    </div>
+                    <a href="/profile?tab=transactions">View all</a>
+                  </div>
+
+                  <div class="transaction-list transaction-list--compact">
+                    <% transactions.forEach(function(transaction) { %>
+                      <a
+                        class="transaction-row"
+                        href="/transactions/<%= transaction.id %>"
+                        aria-label="<%= transaction.merchantName %> transaction, <%= transaction.displayAmount %>, <%= transaction.status %>"
+                      >
+                        <span class="transaction-row__mark" aria-hidden="true"><%= transaction.merchantName.charAt(0) %></span>
+                        <span class="transaction-row__copy">
+                          <strong><%= transaction.merchantName %></strong>
+                          <small><%= transaction.date %> · <%= transaction.time %></small>
+                        </span>
+                        <span class="transaction-row__amount">
+                          <strong><%= transaction.displayAmount %></strong>
+                          <small><%= transaction.paymentMethod %></small>
+                        </span>
+                        <span class="card-arrow" aria-hidden="true">›</span>
+                      </a>
+                    <% }); %>
+                  </div>
+                </section>
+
+                <p class="prototype-disclaimer">Fictional data · Simulated AI and payments</p>
+                <form class="reset-demo-form" method="POST" action="/reset-demo">
+                  <button type="submit">Reset Demo</button>
+                </form>
+              </div>
+            </div>
+
+            <nav class="bottom-navigation" aria-label="Primary navigation">
+              <a class="bottom-navigation__item bottom-navigation__item--active" href="/home" aria-current="page">
+                <span aria-hidden="true">⌂</span>
+                <span>Home</span>
+              </a>
+              <a class="bottom-navigation__item" href="/scan">
+                <span aria-hidden="true">▣</span>
+                <span>Scan</span>
+              </a>
+              <a class="bottom-navigation__item" href="/profile">
+                <span aria-hidden="true">○</span>
+                <span>Profile</span>
+              </a>
+            </nav>
+          </div>
+        </div>
+
+        <div class="home-indicator" aria-hidden="true"></div>
+      </section>
+    </main>
+
+    <script src="/js/script.js"></script>
+  </body>
+</html>

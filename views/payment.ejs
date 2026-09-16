@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Review and Pay | NETS Vouch AI</title>
+    <link rel="stylesheet" href="/css/style.css">
+  </head>
+  <body>
+    <main class="prototype-stage">
+      <section class="phone-shell">
+        <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
+        <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div><span class="prototype-label">Prototype</span></header>
+        <div class="phone-viewport">
+          <div class="screen screen--payment">
+            <header class="recommendation-heading"><a class="icon-button" href="/recommendation" aria-label="Back">←</a><div><p class="eyebrow">Simulated NETS payment</p><h1>Review and pay</h1></div></header>
+            <div class="payment-summary">
+              <p class="eyebrow">You are paying</p>
+              <h2><%= order.merchantName %></h2>
+              <p><%= order.itemName %></p>
+              <p class="payment-summary__amount">$<%= order.amount.toFixed(2) %></p>
+            </div>
+            <section class="cashback-explainer <%= order.amount < campaign.minimumSpend ? 'cashback-explainer--ineligible' : '' %>">
+              <span aria-hidden="true">$</span>
+              <div>
+                <% if (order.amount < campaign.minimumSpend) { %>
+                  <strong>Not eligible for campaign cashback</strong>
+                  <p>Minimum spend is $<%= campaign.minimumSpend.toFixed(2) %>. You still pay only $<%= order.amount.toFixed(2) %>.</p>
+                <% } else { %>
+                  <strong>Up to $<%= campaign.cashback.toFixed(2) %> cashback after payment</strong>
+                  <p>Eligibility is checked against campaign status, time and daily cap when payment succeeds.</p>
+                <% } %>
+              </div>
+            </section>
+            <div class="pay-security">▣ No real payment details or money are used.</div>
+            <form class="screen-actions screen-actions--bottom" method="POST" action="/payment">
+              <button class="button button--full" type="submit">Pay $<%= order.amount.toFixed(2) %> with NETS</button>
+              <p class="action-helper">Simulated payment · Merchant handoff follows</p>
+            </form>
+          </div>
+        </div>
+        <div class="home-indicator" aria-hidden="true"></div>
+      </section>
+    </main>
+    <script src="/js/script.js"></script>
+  </body>
+</html>

@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Payment Successful | NETS Vouch AI</title>
+    <link rel="stylesheet" href="/css/style.css">
+  </head>
+  <body>
+    <main class="prototype-stage">
+      <section class="phone-shell">
+        <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
+        <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div><span class="prototype-label">Prototype</span></header>
+        <div class="phone-viewport">
+          <div class="screen screen--receipt">
+            <div class="success-state">
+              <span class="success-state__icon" aria-hidden="true">✓</span>
+              <p class="eyebrow">Simulated NETS confirmation</p>
+              <h1>Payment Successful</h1>
+              <p><%= payment.merchantName %></p>
+              <strong class="success-state__amount">$<%= payment.amount.toFixed(2) %></strong>
+            </div>
+            <div class="payment-method"><span aria-hidden="true">▣</span><span>Paid with NETS</span><span class="payment-method__status">Complete</span></div>
+            <% if (payment.source === 'ORDER') { %>
+              <% if (payment.cashbackAwarded > 0) { %>
+                <div class="cashback-earned"><span aria-hidden="true">$</span><div><strong>$<%= payment.cashbackAwarded.toFixed(2) %> cashback earned</strong><span>Campaign rules were satisfied at payment time.</span></div></div>
+              <% } else { %>
+                <div class="cashback-not-awarded"><strong>No cashback awarded</strong><span>The payment did not satisfy every active campaign rule.</span></div>
+              <% } %>
+            <% } %>
+            <div class="screen-actions screen-actions--bottom">
+              <% if (payment.source === 'ORDER') { %>
+                <a class="button button--full" href="/order">View order status</a>
+                <a class="button button--ghost button--full" href="/merchant?tab=orders">View Felicia’s side</a>
+              <% } else { %>
+                <a class="button button--full" href="/transactions/<%= payment.transactionId %>">View transaction</a>
+                <a class="button button--ghost button--full" href="/home">Done</a>
+              <% } %>
+            </div>
+          </div>
+        </div>
+        <div class="home-indicator" aria-hidden="true"></div>
+      </section>
+    </main>
+    <script src="/js/script.js"></script>
+  </body>
+</html>

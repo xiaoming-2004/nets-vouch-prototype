@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"><title>Felicia Merchant Workspace | NETS Vouch AI</title><link rel="stylesheet" href="/css/style.css"></head>
+  <body><main class="prototype-stage"><section class="phone-shell">
+    <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
+    <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div><span class="prototype-label">Merchant</span></header>
+    <div class="phone-viewport"><div class="screen screen--merchant-workspace">
+      <header class="merchant-workspace-header"><div><p class="eyebrow">Felicia’s merchant view</p><h1>Chicken Rice</h1></div><span class="merchant-monogram">F</span></header>
+      <nav class="merchant-tabs" aria-label="Merchant workspace">
+        <a class="<%= tab === 'offer' ? 'is-active' : '' %>" href="/merchant?tab=offer">Offer</a>
+        <a class="<%= tab === 'orders' ? 'is-active' : '' %>" href="/merchant?tab=orders">Orders<% if (order) { %><i>1</i><% } %></a>
+        <a class="<%= tab === 'results' ? 'is-active' : '' %>" href="/merchant?tab=results">Results</a>
+      </nav>
+
+      <% if (tab === 'offer') { %>
+        <section class="merchant-panel">
+          <div class="merchant-panel-heading"><span aria-hidden="true">$</span><div><p class="eyebrow">Pre-approved and capped</p><h2>Lunch cashback</h2></div></div>
+          <form method="POST" action="/merchant/offer">
+            <div class="campaign-controls">
+              <label>Cashback ($)<input name="cashback" type="number" min="0" step="0.10" value="<%= campaign.cashback.toFixed(2) %>" required></label>
+              <label>Minimum spend ($)<input name="minimumSpend" type="number" min="0" step="0.10" value="<%= campaign.minimumSpend.toFixed(2) %>" required></label>
+              <label>Daily cap<input name="dailyCap" type="number" min="1" step="1" value="<%= campaign.dailyCap %>" required></label>
+              <label>Start time<input name="startTime" type="time" value="<%= campaign.startTime %>" required></label>
+              <label>End time<input name="endTime" type="time" value="<%= campaign.endTime %>" required></label>
+              <label>Status<select name="status"><option value="ACTIVE" <%= campaign.status === 'ACTIVE' ? 'selected' : '' %>>Active</option><option value="PAUSED" <%= campaign.status === 'PAUSED' ? 'selected' : '' %>>Paused</option></select></label>
+            </div>
+            <dl class="offer-rules"><div><dt>Campaign window</dt><dd><%= campaign.startTime %>–<%= campaign.endTime %></dd></div><div><dt>Used today</dt><dd><%= campaign.redemptionsToday %> / <%= campaign.dailyCap %></dd></div><div class="offer-rules__total"><dt>Maximum daily cost</dt><dd>$<%= calculations.maximumDailyCost.toFixed(2) %></dd></div></dl>
+            <p class="merchant-funding-note">Merchant-funded · Unused rewards cost nothing · Released only after an eligible simulated NETS payment</p>
+            <button class="button button--full" type="submit">Save illustrative offer</button>
+          </form>
+        </section>
+      <% } %>
+
+      <% if (tab === 'orders') { %>
+        <section class="merchant-panel">
+          <% if (!order || order.status === 'PENDING_PAYMENT') { %>
+            <div class="empty-merchant-state"><span class="journey-icon" aria-hidden="true">□</span><h2>No paid order yet</h2><p>An order appears only after a simulated NETS payment is confirmed.</p></div>
+          <% } else { %>
+            <article class="merchant-order-card">
+              <div class="merchant-order-card__top"><span class="order-status order-status--<%= order.status.toLowerCase() %>"><%= order.status.replace('_', ' ') %></span><strong>#<%= order.orderNumber %></strong></div>
+              <h2><%= user.name %></h2><p><%= order.itemName %></p><strong class="merchant-order-amount">$<%= order.amount.toFixed(2) %> · Paid with NETS</strong>
+              <% if (order.status === 'PAID') { %><form method="POST" action="/merchant/start-preparing"><button class="button button--full" type="submit">Start preparing</button></form><% } %>
+              <% if (order.status === 'PREPARING') { %><form method="POST" action="/merchant/mark-ready"><button class="button button--full" type="submit">Mark ready</button></form><% } %>
+              <% if (order.status === 'READY' || order.status === 'COLLECTED') { %><div class="order-ready-confirmation"><span aria-hidden="true">✓</span><span><%= order.status === 'READY' ? 'Jia notified: ready for collection' : 'Order collected' %></span></div><% } %>
+              <p class="action-helper">Felicia controls preparation. No AI cooking-time promise.</p>
+            </article>
+          <% } %>
+        </section>
+      <% } %>
+
+      <% if (tab === 'results') { %>
+        <section class="merchant-panel">
+          <div class="merchant-panel-heading"><span aria-hidden="true">▥</span><div><p class="eyebrow">Illustrative Prototype Data</p><h2>Campaign results</h2></div></div>
+          <div class="metrics-grid"><div><span>Recommended</span><strong><%= metrics.recommendations %></strong></div><div><span>Accepted</span><strong><%= metrics.accepted %></strong></div><div><span>Attributed payments</span><strong><%= metrics.attributedPayments %></strong></div><div><span>New demo value</span><strong>$<%= metrics.attributedTransactionValue.toFixed(2) %></strong></div><div><span>Cashback cost</span><strong>$<%= metrics.cashbackCost.toFixed(2) %></strong></div><div><span>Conversion</span><strong><%= calculations.conversion %>%</strong></div></div>
+          <div class="metric-summary"><div><span>◷</span><span>Cost per attributed payment</span><strong>$<%= calculations.costPerPayment.toFixed(2) %></strong></div></div>
+          <p class="attribution-disclaimer">Attribution, not proven incrementality. These are seeded and session-generated prototype figures, not real pilot results.</p>
+        </section>
+      <% } %>
+
+      <div class="merchant-return"><a class="button button--ghost button--full" href="/home">Return to Jia</a></div>
+      <form class="reset-demo-form" method="POST" action="/reset-demo"><button type="submit">Reset Demo</button></form>
+    </div></div><div class="home-indicator" aria-hidden="true"></div>
+  </section></main><script src="/js/script.js"></script></body>
+</html>

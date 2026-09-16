@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Order Status | NETS Vouch AI</title>
+    <link rel="stylesheet" href="/css/style.css">
+  </head>
+  <body>
+    <main class="prototype-stage"><section class="phone-shell">
+      <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
+      <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div><a class="prototype-label" href="/home">Home</a></header>
+      <div class="phone-viewport"><div class="screen screen--order-status">
+        <div class="order-success"><span class="journey-icon" aria-hidden="true"><%= order.status === 'READY' || order.status === 'COLLECTED' ? '▣' : '✓' %></span><p class="eyebrow">Order #<%= order.orderNumber %></p>
+          <% if (order.status === 'PAID') { %><h1>Order sent to Felicia</h1><p>Waiting for preparation to begin.</p><% } %>
+          <% if (order.status === 'PREPARING') { %><h1>Felicia is preparing it</h1><p>Your <%= order.itemName %> is being prepared.</p><% } %>
+          <% if (order.status === 'READY') { %><h1>Ready for collection</h1><p>Felicia has marked your order ready.</p><% } %>
+          <% if (order.status === 'COLLECTED') { %><h1>Order collected</h1><p>Your meal journey is complete.</p><% } %>
+        </div>
+        <% if (order.cashbackAwarded > 0) { %><div class="cashback-earned"><span>$</span><div><strong>$<%= order.cashbackAwarded.toFixed(2) %> cashback earned</strong><span>Recorded separately from the full payment.</span></div></div><% } else { %><div class="cashback-not-awarded"><strong>No cashback awarded</strong><span>Actual eligibility was checked at payment.</span></div><% } %>
+        <section class="waiting-card"><span aria-hidden="true">🏪</span><div><h2><%= order.merchantName %></h2><p><%= order.itemName %> · $<%= order.amount.toFixed(2) %> · <%= order.status.replace('_', ' ') %></p></div></section>
+        <div class="screen-actions screen-actions--bottom">
+          <% if (order.status === 'READY') { %><a class="button button--full" href="/collection">Collect order</a><% } %>
+          <% if (order.status === 'COLLECTED') { %><a class="button button--full" href="/vouch">Continue to Vouch</a><% } %>
+          <% if (order.status === 'PAID' || order.status === 'PREPARING') { %><a class="button button--secondary button--full" href="/merchant?tab=orders">View Felicia’s side</a><% } %>
+          <a class="back-home-link" href="/home">Back to Home</a>
+        </div>
+      </div></div>
+      <div class="home-indicator" aria-hidden="true"></div>
+    </section></main>
+    <script src="/js/script.js"></script>
+  </body>
+</html>

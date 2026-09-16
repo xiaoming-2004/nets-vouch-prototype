@@ -1,72 +1,29 @@
-# NETS Vouch AI Clickable Prototype
+# NETS Vouch AI
 
-A frontend-only React/Vite/TypeScript MVP for a proposed NETS App capability.
-
-NETS Vouch AI proactively gives Darren one suitable participating lunch option, connects his accepted recommendation to a simulated NETS payment, lets Felicia fulfil the paid order and records an optional Payment-Verified Vouch after collection.
-
-> NETS moves from the last tap to the first choice.
-
-## Main demonstration
-
-1. Choose privacy and personalisation settings.
-2. Open the proactive lunch recommendation.
-3. Accept Felicia’s Chicken Rice or test the one-tap rejection branch.
-4. Complete the simulated full-price NETS payment.
-5. Switch to Felicia and move the paid order from `Paid` to `Preparing` to `Ready`.
-6. Return to Darren, collect the order and optionally Vouch.
-7. Open Felicia’s Results tab to view recommendation-to-payment attribution.
-
-The **Demo** control switches between Darren and Felicia. **Restart Demo** clears saved local progress after a second confirmation.
-
-## Retained secondary features
-
-- Scan-to-Pay simulation
-- Profile
-- Past NETS transactions
-- Vouch history
-
-The old Jia/WhatsApp referral-and-offer-claim journey is no longer part of primary navigation.
-
-## Important simulation boundaries
-
-This prototype does not connect to a real NETS, AI, merchant-ordering, cashback or notification API. All people, merchants, payments, orders, offers and campaign metrics are fictional or illustrative. No real money moves.
-
-A Payment-Verified Vouch means an eligible payment was confirmed before the recommendation. It is not a guarantee of quality. Only fictional participating merchants are displayed.
+A Republic Polytechnic C237-style Open House prototype built with Node.js, Express, EJS, express-session, HTML, CSS and vanilla JavaScript.
 
 ## Run locally
 
-Requirements: Node.js 22 or newer.
-
 ```bash
 npm install
-npm run dev
+npm start
 ```
 
-Open the local address shown in the terminal.
+Open [http://localhost:3000](http://localhost:3000).
 
-## Checks
+## Demo journey
 
-```bash
-npm run lint
-npm run typecheck
-npm run test
-npm run build
-```
+1. Set Jia's personalisation permissions.
+2. View or reject a simulated Smart Match.
+3. Accept and complete a simulated NETS payment.
+4. Use Felicia's merchant view to prepare the order and mark it ready.
+5. Collect the order and optionally create a Payment-Verified Vouch.
+6. Review transactions, Vouches and illustrative campaign results.
+7. Try the separate simulated Scan-to-Pay journey or reset the demo.
 
-## Build and deploy
+## Prototype boundaries
 
-```bash
-npm run build
-```
-
-Deploy the generated `dist` directory to any static host. No server routes or environment variables are required for this MVP.
-
-## Project structure
-
-- `src/app/` — reducer, typed state, navigation and persistence
-- `src/screens/` — Darren, Felicia, Scan and Profile screens
-- `src/components/` — reusable phone-shell and interface components
-- `src/data/` — fictional merchants, recommendations and activity data
-- `src/styles/` — design tokens and responsive phone styling
-- `src/test/` — reducer, persistence and clickable-flow tests
-- `PROTOTYPE_PLAN.md` — product, state, privacy, funding and integration source of truth
+- Prototype only; all people, merchants and campaign results are fictional or illustrative.
+- NETS payments, payment verification, cashback and QR scanning are simulated.
+- There is no production NETS connection or database.
+- Smart Match currently uses local prototype logic. Real AI integration is planned separately.

@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"><title>Payment Review | NETS Vouch AI</title><link rel="stylesheet" href="/css/style.css"></head>
+  <body><main class="prototype-stage"><section class="phone-shell">
+    <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
+    <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div><span class="prototype-label">Prototype</span></header>
+    <div class="phone-viewport"><div class="screen screen--payment-review">
+      <header class="recommendation-heading"><a class="icon-button" href="/scan">←</a><div><p class="eyebrow">Review before paying</p><h1>Payment Review</h1></div></header>
+      <section class="review-merchant-card"><span class="merchant-monogram">C</span><p class="eyebrow">You’re paying</p><h2><%= scanPayment.merchantName %></h2><p>⌖ <%= scanPayment.outlet %></p></section>
+      <div class="review-amount"><span>Amount</span><strong>$<%= scanPayment.amount.toFixed(2) %></strong></div>
+      <dl class="review-details"><div><dt>🏢 Merchant</dt><dd><%= scanPayment.merchantName %></dd></div><div><dt>▣ Payment method</dt><dd>NETS</dd></div></dl>
+      <div class="pay-security">▣ Simulated payment only. No bank or payment details are requested.</div>
+      <form class="screen-actions screen-actions--bottom" method="POST" action="/scan/payment"><button class="button button--full" type="submit">Pay $<%= scanPayment.amount.toFixed(2) %></button><a class="button button--ghost button--full" href="/home">Cancel</a></form>
+    </div></div><div class="home-indicator" aria-hidden="true"></div>
+  </section></main><script src="/js/script.js"></script></body>
+</html>

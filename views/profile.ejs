@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"><title>Jia Profile | NETS Vouch AI</title><link rel="stylesheet" href="/css/style.css"></head>
+  <body><main class="prototype-stage"><section class="phone-shell">
+    <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
+    <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div><a class="prototype-label" href="/personalisation">AI settings</a></header>
+    <div class="phone-viewport phone-viewport--home"><div class="home-layout"><div class="home-scroll"><div class="screen screen--profile">
+      <header class="profile-header"><span class="profile-header__avatar" aria-hidden="true">J</span><div><p class="eyebrow">Prototype profile</p><h1><%= user.name %></h1><p>✓ Fictional NETS user</p></div><a class="saved-offers-link" href="/personalisation"><span>⚙</span><span>AI settings</span></a></header>
+      <nav class="profile-tabs" aria-label="Profile records"><a class="<%= tab === 'transactions' ? 'is-active' : '' %>" href="/profile?tab=transactions">Past Transactions <span><%= transactions.length %></span></a><a class="<%= tab === 'vouches' ? 'is-active' : '' %>" href="/profile?tab=vouches">My Vouches <span><%= vouches.length %></span></a></nav>
+      <% if (tab === 'transactions') { %>
+        <section class="profile-panel"><div class="profile-panel__heading"><h2>Past Transactions</h2><p>Jia’s successful simulated NETS payments.</p></div><div class="transaction-list">
+          <% transactions.forEach(function(transaction) { %><a class="transaction-row" href="/transactions/<%= transaction.id %>"><span class="transaction-row__mark"><%= transaction.merchantName.charAt(0) %></span><span class="transaction-row__copy"><strong><%= transaction.merchantName %></strong><small><%= transaction.date %> · <%= transaction.time %></small><span class="transaction-row__meta"><span>✓ Successful</span><span class="transaction-vouch <%= transaction.vouchCreated ? 'transaction-vouch--yes' : '' %>"><%= transaction.vouchCreated ? 'Vouch created' : 'No Vouch yet' %></span></span></span><span class="transaction-row__amount"><strong><%= transaction.displayAmount %></strong><small>NETS</small></span><span>›</span></a><% }); %>
+        </div></section>
+      <% } else { %>
+        <section class="profile-panel"><div class="profile-panel__heading"><h2>My Vouches</h2><p>Recommendations created after simulated verified payments.</p></div><div class="vouch-history-list">
+          <% vouches.forEach(function(vouch) { %><article class="vouch-history-card"><div class="vouch-history-card__mark"><%= vouch.merchantName.charAt(0) %></div><div class="vouch-history-card__copy"><div class="vouch-history-card__topline"><h3><%= vouch.merchantName %></h3><span class="history-status history-status--completed"><%= vouch.status %></span></div><div class="badge-row"><span class="vouch-tag-chip"><%= vouch.tag %></span><span class="verified-chip">✓ Payment-Verified</span></div><p>◷ <%= vouch.date %></p></div></article><% }); %>
+        </div></section>
+      <% } %>
+      <form class="reset-demo-form" method="POST" action="/reset-demo"><button type="submit">Reset Demo</button></form>
+    </div></div><nav class="bottom-navigation"><a class="bottom-navigation__item" href="/home"><span>⌂</span><span>Home</span></a><a class="bottom-navigation__item" href="/scan"><span>▣</span><span>Scan</span></a><a class="bottom-navigation__item bottom-navigation__item--active" href="/profile"><span>○</span><span>Profile</span></a></nav></div></div>
+    <div class="home-indicator" aria-hidden="true"></div>
+  </section></main><script src="/js/script.js"></script></body>
+</html>

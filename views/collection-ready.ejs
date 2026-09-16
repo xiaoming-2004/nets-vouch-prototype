@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"><title>Ready for Collection | NETS Vouch AI</title><link rel="stylesheet" href="/css/style.css"></head>
+  <body><main class="prototype-stage"><section class="phone-shell">
+    <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
+    <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div><span class="prototype-label">Prototype</span></header>
+    <div class="phone-viewport"><div class="screen screen--collection">
+      <div class="ready-hero"><span class="journey-icon" aria-hidden="true">▣</span><p class="eyebrow">Merchant confirmed</p><h1>Ready for collection</h1><p>Order #<%= order.orderNumber %> · <%= order.itemName %></p></div>
+      <div class="collection-card"><h2><%= order.merchantName %></h2><p>⌖ <%= order.outlet %></p><strong>Show collection number #<%= order.orderNumber %></strong></div>
+      <form class="screen-actions screen-actions--bottom" method="POST" action="/collection"><button class="button button--full" type="submit">I collected my order</button><a class="back-home-link" href="/order">Back to order</a></form>
+    </div></div><div class="home-indicator" aria-hidden="true"></div>
+  </section></main><script src="/js/script.js"></script></body>
+</html>
