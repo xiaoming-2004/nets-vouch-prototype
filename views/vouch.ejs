@@ -5,11 +5,11 @@
     <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
     <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div></header>
     <div class="phone-viewport"><div class="screen screen--post-meal">
-      <p class="eyebrow">After an eligible payment · Optional</p><h1>Create a Vouch?</h1><p class="screen-lede">Would you Vouch for <%= merchant.name %>?</p>
+      <p class="eyebrow">After a successful NETS payment · Optional</p><h1>Create a Vouch?</h1><p class="screen-lede">Would you Vouch for <%= merchant.name %>?</p>
       <div class="one-tap-vouch"><span class="journey-icon" aria-hidden="true">✓</span><h2>One tap. No review required.</h2><p>Your payment amount is never shown and you receive no extra reward.</p></div>
       <div class="verified-definition"><span aria-hidden="true">✓</span><span><strong>Payment-Verified Vouch</strong>Shows that you paid with NETS at this merchant.</span></div>
       <% if (alreadyCreated) { %><p class="availability-banner availability-banner--available"><strong>Vouch already saved</strong></p><% } %>
-      <form class="screen-actions screen-actions--bottom" method="POST" action="/vouch"><button class="button button--full" type="submit" name="action" value="create" <%= alreadyCreated ? 'disabled' : '' %>>Create Vouch</button><button class="button button--ghost button--full" type="submit" name="action" value="skip">Skip</button></form>
+      <form class="screen-actions screen-actions--bottom" method="POST" action="/vouch" data-single-submit><button class="button button--full" type="submit" name="action" value="create" <%= alreadyCreated ? 'disabled' : '' %>>Vouch for <%= merchant.name %></button><button class="button button--ghost button--full" type="submit" name="action" value="skip">Not now</button></form>
     </div><%- include('partials/jia-nav', { active: 'profile' }) %></div><div class="home-indicator" aria-hidden="true"></div>
   </section></main><script src="/js/script.js"></script></body>
 </html>

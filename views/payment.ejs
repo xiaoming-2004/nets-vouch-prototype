@@ -28,27 +28,27 @@
 
             <section class="quick-pay-card">
               <div class="quick-pay-card__merchant">
-                <span class="merchant-monogram" aria-hidden="true">F</span>
-                <div><small><%= order ? 'Collecting from merchant' : 'Paying' %></small><h2><%= merchant.name %></h2><p><%= recommendation.itemName %></p></div>
+                <span class="merchant-monogram" aria-hidden="true"><%= merchant.name.charAt(0) %></span>
+                <div><small><%= order ? 'Collecting from merchant' : 'Paying' %></small><h2><%= merchant.name %></h2><p><%= order ? recommendation.itemName : 'Walk-in purchase' %></p></div>
               </div>
-              <div class="quick-pay-card__amount"><span>Order total</span><strong>$<%= recommendation.price.toFixed(2) %></strong></div>
-              <% if (order && cashbackBalance > 0) { %>
+              <div class="quick-pay-card__amount"><span><%= scan ? 'Purchase amount' : 'Order total' %></span><strong>$<%= recommendation.price.toFixed(2) %></strong></div>
+              <% if (cashbackBalance > 0 && (order || scan)) { %>
                 <label class="cashback-toggle">
                   <span><strong>Vouch Cashback</strong><small>$<%= cashbackBalance.toFixed(2) %> available</small></span>
-                  <input type="checkbox" name="useCashback" form="payment-form" <%= breakdown.cashbackUsed > 0 ? 'checked' : '' %>>
+                  <input type="checkbox" name="useCashback" form="payment-form" <%= breakdown.cashbackUsed > 0 ? 'checked' : '' %> <%= scan ? 'disabled' : '' %>>
                 </label>
                 <div class="payment-breakdown">
-                  <div><span>Order total</span><strong>$<%= recommendation.price.toFixed(2) %></strong></div>
+                  <div><span><%= scan ? 'Purchase amount' : 'Order total' %></span><strong>$<%= recommendation.price.toFixed(2) %></strong></div>
                   <div><span>Vouch Cashback</span><strong>-$<%= breakdown.cashbackUsed.toFixed(2) %></strong></div>
                   <div class="payment-breakdown__total"><span>Pay with NETS</span><strong>$<%= breakdown.amountToPay.toFixed(2) %></strong></div>
                 </div>
               <% } %>
-              <div class="quick-pay-card__vouch"><span aria-hidden="true">✓</span><div><strong>$<%= campaign.rewardAmount.toFixed(2) %> merchant cashback</strong><small><%= order ? 'Released after eligible NETS payment and collection' : 'After payment verification' %></small></div></div>
+              <% if (scan) { %><div class="quick-pay-card__vouch"><span aria-hidden="true">✓</span><div><strong>Campaign checked after payment</strong><small>Eligible Green Bowl payments earn cashback immediately.</small></div></div><% } else { %><div class="quick-pay-card__vouch"><span aria-hidden="true">✓</span><div><strong>$<%= campaign.rewardAmount.toFixed(2) %> merchant cashback</strong><small>Released after eligible NETS payment and collection</small></div></div><% } %>
               <% if (order) { %><p class="verification-note">Collection from merchant. No delivery.</p><% } %>
             </section>
 
             <form id="payment-form" class="quick-pay-action" method="POST" action="/payment" data-single-submit>
-              <button class="button button--full" type="submit" data-submit-text="Processing..."><%= order && breakdown.amountToPay !== recommendation.price ? 'Pay $' + breakdown.amountToPay.toFixed(2) : 'Continue to payment · $' + recommendation.price.toFixed(2) %></button>
+              <button class="button button--full" type="submit" data-submit-text="Processing..."><%= breakdown.amountToPay !== recommendation.price ? 'Pay $' + breakdown.amountToPay.toFixed(2) : 'Pay with NETS · $' + recommendation.price.toFixed(2) %></button>
               <p>Pay securely with NETS.</p>
             </form>
           </div>

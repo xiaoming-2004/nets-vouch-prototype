@@ -25,13 +25,13 @@
               <span class="success-state__icon" aria-hidden="true">✓</span>
               <p class="eyebrow">NETS payment</p>
               <h1>Payment successful</h1>
-              <p><%= payment.merchantName %> · <%= payment.itemName %></p>
+              <p><%= payment.merchantName %> · <%= payment.source === 'scan' ? 'Walk-in purchase' : payment.itemName %></p>
               <strong class="success-state__amount">$<%= payment.amount.toFixed(2) %></strong>
             </section>
 
             <% if (payment.cashbackUsed > 0) { %>
               <div class="payment-breakdown payment-breakdown--receipt">
-                <div><span>Order total</span><strong>$<%= payment.orderAmount.toFixed(2) %></strong></div>
+                  <div><span><%= payment.source === 'scan' ? 'Purchase amount' : 'Order total' %></span><strong>$<%= payment.orderAmount.toFixed(2) %></strong></div>
                 <div><span>Vouch Cashback used</span><strong>-$<%= payment.cashbackUsed.toFixed(2) %></strong></div>
                 <div><span>Paid with NETS</span><strong>$<%= payment.netsPaid.toFixed(2) %></strong></div>
                 <div class="payment-breakdown__total"><span>Remaining cashback</span><strong>$<%= cashbackBalance.toFixed(2) %></strong></div>
@@ -39,7 +39,7 @@
             <% } %>
 
             <% if (payment.rewardAwarded > 0) { %>
-              <div class="cashback-earned"><span aria-hidden="true">$</span><div><strong>$<%= payment.rewardAwarded.toFixed(2) %> cashback unlocked</strong><span>Your balance will update after collection.</span></div></div>
+              <div class="cashback-earned"><span aria-hidden="true">$</span><div><strong>+$<%= payment.rewardAwarded.toFixed(2) %> Vouch Cashback</strong><span><%= payment.source === 'scan' ? 'Released after this successful NETS payment.' : 'Released after collection.' %></span></div></div>
             <% } else if (payment.eligible && order && !order.collected) { %>
               <div class="cashback-earned"><span aria-hidden="true">$</span><div><strong>$<%= rewardAmount.toFixed(2) %> cashback</strong><span>Unlocks after collection.</span></div></div>
             <% } else if (!payment.eligible) { %>
@@ -48,6 +48,7 @@
 
             <div class="quick-pay-finish">
               <% if (order) { %><a class="button button--full" href="/order">View order status</a><% } %>
+              <% if (transaction && transaction.eligible && transaction.vouchDecision === 'pending') { %><div class="home-journey-card home-journey-card--complete"><p class="eyebrow">Payment successful ✓</p><h2>Enjoyed this place?</h2><p>Vouch for <%= transaction.merchantName %></p><a class="button button--full" href="/vouch">Vouch 👍</a><form method="POST" action="/vouch"><button class="button button--ghost button--full" type="submit" name="action" value="skip">Not now</button></form></div><% } %>
               <a class="button button--full" href="/home">Done</a>
               <% if (transaction) { %><a class="back-home-link" href="/transactions/<%= transaction.id %>">View transaction</a><% } %>
             </div>
