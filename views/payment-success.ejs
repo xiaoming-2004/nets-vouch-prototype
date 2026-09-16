@@ -29,10 +29,21 @@
               <strong class="success-state__amount">$<%= payment.amount.toFixed(2) %></strong>
             </section>
 
+            <% if (payment.cashbackUsed > 0) { %>
+              <div class="payment-breakdown payment-breakdown--receipt">
+                <div><span>Order total</span><strong>$<%= payment.orderAmount.toFixed(2) %></strong></div>
+                <div><span>Vouch Cashback used</span><strong>-$<%= payment.cashbackUsed.toFixed(2) %></strong></div>
+                <div><span>Paid with NETS</span><strong>$<%= payment.netsPaid.toFixed(2) %></strong></div>
+                <div class="payment-breakdown__total"><span>Remaining cashback</span><strong>$<%= cashbackBalance.toFixed(2) %></strong></div>
+              </div>
+            <% } %>
+
             <% if (payment.rewardAwarded > 0) { %>
-                <div class="cashback-earned"><span aria-hidden="true">$</span><div><strong>$<%= payment.rewardAwarded.toFixed(2) %> cashback unlocked</strong><span>Ready to collect from Felicia.</span></div></div>
-            <% } else { %>
-              <div class="cashback-not-awarded"><strong>No reward unlocked</strong><span>The payment succeeded but did not pass every campaign rule.</span></div>
+              <div class="cashback-earned"><span aria-hidden="true">$</span><div><strong>$<%= payment.rewardAwarded.toFixed(2) %> cashback unlocked</strong><span>Your balance will update after collection.</span></div></div>
+            <% } else if (payment.eligible && order && !order.collected) { %>
+              <div class="cashback-earned"><span aria-hidden="true">$</span><div><strong>$<%= rewardAmount.toFixed(2) %> cashback</strong><span>Unlocks after collection.</span></div></div>
+            <% } else if (!payment.eligible) { %>
+              <div class="cashback-not-awarded"><strong>Cashback not available</strong><span>This payment was not eligible for the merchant reward.</span></div>
             <% } %>
 
             <div class="quick-pay-finish">

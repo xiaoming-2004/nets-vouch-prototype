@@ -13,6 +13,7 @@
       </nav>
 
       <% if (tab === 'settings') { %>
+        <section class="profile-panel cashback-balance-panel"><div class="profile-panel__heading"><h2>Vouch Cashback</h2><p>Use this on a future NETS payment.</p></div><strong class="cashback-balance">$<%= cashbackBalance.toFixed(2) %></strong><span class="cashback-balance-label">available</span></section>
         <section class="profile-panel profile-settings"><div class="profile-panel__heading"><h2>Preferences</h2><p>Choose what works for you.</p></div>
           <% if (settingsError) { %><p class="form-error">Please choose valid profile settings and try again.</p><% } %>
           <form method="POST" action="/profile">

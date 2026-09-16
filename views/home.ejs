@@ -31,16 +31,63 @@
                   <p>Good afternoon, <%= user.name %> <span aria-hidden="true">👋</span></p>
                   <h1>Lunch in 10 minutes?</h1>
                 </header>
-                <section id="smart-match" class="smart-match-section" aria-labelledby="smart-match-title">
-                  <p id="smart-match-title" class="smart-match-label">Your Smart Match</p>
-                  <div class="smart-match-region" data-smart-match data-loading-message="<%= matchingAgain ? 'Finding something better...' : 'Finding your next spot...' %>" aria-live="polite" aria-busy="true">
-                    <div class="smart-match-loading">
-                      <div class="smart-match-loading__visual" aria-hidden="true"><span></span><span></span><span></span></div>
-                      <h2><%= matchingAgain ? 'Finding something better...' : 'Finding your next spot...' %></h2>
-                      <p data-loading-detail><%= matchingAgain ? 'Using your feedback' : 'Checking what fits right now' %></p>
-                    </div>
-                  </div>
-                </section>
+                <% if (journey === 'match') { %>
+                  <section id="smart-match" class="smart-match-section" aria-labelledby="smart-match-title">
+                    <p id="smart-match-title" class="smart-match-label">Your Smart Match</p>
+                    <% if (recommendation) { %>
+                      <div class="smart-match-region" aria-live="polite" aria-busy="false">
+                        <%- include('smart-match-card', { recommendation: recommendation, campaign: campaign, matchReasons: matchReasons, source: 'local-fallback' }) %>
+                      </div>
+                    <% } else { %>
+                      <div class="smart-match-region" data-smart-match data-loading-message="<%= matchingAgain ? 'Finding something better...' : 'Finding your next spot...' %>" aria-live="polite" aria-busy="true">
+                        <div class="smart-match-loading">
+                          <div class="smart-match-loading__visual" aria-hidden="true"><span></span><span></span><span></span></div>
+                          <h2><%= matchingAgain ? 'Finding something better...' : 'Finding your next spot...' %></h2>
+                          <p data-loading-detail><%= matchingAgain ? 'Using your feedback' : 'Checking what fits right now' %></p>
+                        </div>
+                      </div>
+                    <% } %>
+                  </section>
+                <% } %>
+
+                <% if (journey === 'payment') { %>
+                  <section class="home-journey-card">
+                    <p class="eyebrow">Continue your order</p>
+                    <h2><%= order.itemName %></h2>
+                    <p><%= order.merchantName %> · $<%= order.amount.toFixed(2) %></p>
+                    <a class="button button--full" href="/payment">Continue to payment</a>
+                  </section>
+                <% } %>
+
+                <% if (journey === 'order') { %>
+                  <section class="home-journey-card">
+                    <p class="eyebrow"><%= order.status === 'READY' ? 'Ready for collection' : order.status === 'PREPARING' ? 'Your lunch is being prepared' : 'Payment successful' %></p>
+                    <h2><%= order.itemName %></h2>
+                    <p><%= order.merchantName %> · <%= order.status === 'READY' ? '8 min walk' : "We'll let you know when it's ready." %></p>
+                    <a class="button button--full" href="/order"><%= order.status === 'READY' ? 'View order' : 'Track order' %></a>
+                  </section>
+                <% } %>
+
+                <% if (journey === 'vouch') { %>
+                  <section class="home-journey-card home-journey-card--complete">
+                    <span class="success-state__icon" aria-hidden="true">✓</span>
+                    <p class="eyebrow">Collected</p>
+                    <h2>$<%= order.cashbackReleased ? campaign.rewardAmount.toFixed(2) : '0.00' %> cashback received</h2>
+                    <p>Enjoyed <%= order.itemName %>?</p>
+                    <a class="button button--full" href="/vouch">Vouch</a>
+                    <form method="POST" action="/vouch"><button class="button button--ghost button--full" type="submit" name="action" value="skip">Not now</button></form>
+                  </section>
+                <% } %>
+
+                <% if (journey === 'complete') { %>
+                  <section class="home-journey-card home-journey-card--complete">
+                    <span class="success-state__icon" aria-hidden="true">✓</span>
+                    <p class="eyebrow">Journey complete</p>
+                    <h2>Your cashback is ready</h2>
+                    <p>Vouch Cashback · $<%= cashbackBalance.toFixed(2) %> available</p>
+                    <a class="button button--full" href="/home?new=1">Find a new match</a>
+                  </section>
+                <% } %>
               </div>
             </div>
             <nav class="bottom-navigation" aria-label="Primary navigation">

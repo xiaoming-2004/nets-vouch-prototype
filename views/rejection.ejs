@@ -46,7 +46,7 @@
               <p>Tell us what missed the mark and we’ll find something better.</p>
             </div>
 
-            <form class="rejection-form" method="POST" action="/recommendation/reject">
+            <form class="rejection-form" method="POST" action="/recommendation/reject" data-auto-submit>
               <fieldset>
                 <legend>Choose one reason</legend>
 
@@ -69,7 +69,7 @@
               </fieldset>
 
               <div class="screen-actions screen-actions--bottom">
-                <button class="button button--full" type="submit">Find something better</button>
+                <button class="button button--full rejection-submit" type="submit">Finding something better...</button>
                 <a class="back-home-link" href="/home">Back to Home</a>
               </div>
             </form>

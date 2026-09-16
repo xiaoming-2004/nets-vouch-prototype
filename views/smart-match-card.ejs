@@ -3,8 +3,7 @@
     <span class="smart-match-card__dish"><%= recommendation.dietary.includes('vegan') ? '🥗' : recommendation.category === 'noodles' ? '🍜' : '🍚' %></span>
   </div>
   <div class="smart-match-card__body">
-    <p class="smart-match-card__merchant">Your Smart Match</p>
-    <p class="smart-match-card__place"><%= recommendation.merchantName %></p>
+    <p class="smart-match-card__merchant"><%= recommendation.merchantName %></p>
     <h2><%= recommendation.itemName %></h2>
     <p class="smart-match-card__facts">
       <% if (recommendation.price !== null) { %><span>$<%= recommendation.price.toFixed(2) %></span><% } %>

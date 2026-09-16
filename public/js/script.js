@@ -51,3 +51,16 @@ singleSubmitForms.forEach(function(form) {
     submitButton.disabled = true;
   });
 });
+
+const autoSubmitForms = document.querySelectorAll('[data-auto-submit]');
+
+autoSubmitForms.forEach(function(form) {
+  const reasonInputs = form.querySelectorAll('input[type="radio"]');
+  reasonInputs.forEach(function(input) {
+    input.addEventListener('change', function() {
+      if (form.dataset.submitting) return;
+      form.dataset.submitting = 'true';
+      form.submit();
+    });
+  });
+});
