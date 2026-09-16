@@ -11,19 +11,33 @@ npm start
 
 Open [http://localhost:3000](http://localhost:3000).
 
-## Demo journey
+## Optional nearby merchant discovery
 
-1. Set Jia's personalisation permissions.
-2. View or reject a simulated Smart Match.
-3. Accept and complete a simulated NETS payment.
-4. Use Felicia's merchant view to prepare the order and mark it ready.
-5. Collect the order and optionally create a Payment-Verified Vouch.
-6. Review transactions, Vouches and illustrative campaign results.
-7. Try the separate simulated Scan-to-Pay journey or reset the demo.
+Smart Match works offline with local Open House demo merchants. To also retrieve nearby restaurants from Google Places, copy `.env.example` to `.env` and add a server-side Places API key:
+
+```text
+PLACES_API_KEY=your_key_here
+```
+
+The key is read only by `app.js` and is never sent to EJS or browser JavaScript.
+
+## Open House journey
+
+1. Open Jia's Home page and review her Profile Settings.
+2. Accept the Felicia Smart Recommendation and review the collection order.
+3. Complete the simulated NETS payment.
+4. Switch to Felicia, start preparing, and mark the order ready.
+5. Switch back to Jia, collect the order, and release cashback.
+6. Optionally create a Payment-Verified Vouch.
+7. Use the existing Scan journey or switch to Felicia to view campaign attribution.
+8. Reset the demo for the next visitor.
 
 ## Prototype boundaries
 
-- Prototype only; all people, merchants and campaign results are fictional or illustrative.
-- NETS payments, payment verification, cashback and QR scanning are simulated.
-- There is no production NETS connection or database.
-- Smart Match currently uses local prototype logic. Real AI integration is planned separately.
+- All people, merchants, payments and campaign results are fictional or illustrative.
+- QR scanning, NETS payment verification, merchant handoff, fulfilment status and cashback are simulated.
+- The preorder journey is collection-only; there is no delivery or POS/kitchen integration.
+- There is no production NETS connection, real payout, database or authentication.
+- Smart Match uses simple server-side ranking, not a production AI model. Google Places is optional for discovery; campaign participation and rewards remain internal prototype data.
+
+See [PROTOTYPE_PLAN.md](PROTOTYPE_PLAN.md) for the canonical product direction.

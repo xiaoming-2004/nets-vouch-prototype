@@ -30,27 +30,14 @@
             <header class="recommendation-heading">
               <a class="icon-button" href="/home" aria-label="Back to Home">←</a>
               <div>
-                <p class="eyebrow">
-                  <%= personalisation.transactionAnalysis ? 'Vouch AI smart match' : 'Basic Mode smart match' %>
-                </p>
-                <h1>One lunch option</h1>
+                <p class="eyebrow">Your Smart Match</p>
+                <h1>Worth a look</h1>
               </div>
             </header>
 
-            <section
-              class="recommendation-mode <%= personalisation.transactionAnalysis ? 'recommendation-mode--personalised' : 'recommendation-mode--basic' %>"
-              aria-label="Recommendation mode"
-            >
-              <strong><%= personalisation.transactionAnalysis ? 'Personalised Mode' : 'Basic Mode' %></strong>
-              <% if (personalisation.transactionAnalysis && personalisation.location) { %>
-                <span>For <%= user.name %> · Uses permitted prototype preferences, activity patterns and location.</span>
-              <% } else if (personalisation.transactionAnalysis) { %>
-                <span>For <%= user.name %> · Uses permitted prototype preferences and activity patterns. Location is off.</span>
-              <% } else if (personalisation.location) { %>
-                <span>For <%= user.name %> · Uses allowed preferences and location. No transaction-history analysis.</span>
-              <% } else { %>
-                <span>For <%= user.name %> · Uses allowed preferences only. No transaction-history analysis or location.</span>
-              <% } %>
+            <section class="smart-match-summary" aria-label="Profile preferences used for Smart Match">
+              <strong>Matched for <%= user.name %></strong>
+                <span><%= dietaryPreferenceLabel %> · Up to $<%= profile.budget.toFixed(2) %> · <%= profile.maxDistanceMinutes %> min walk</span>
             </section>
 
             <% if (rejectionNote) { %>
@@ -62,57 +49,53 @@
 
             <article class="recommendation-card" data-recommendation-id="<%= recommendation.id %>">
               <div class="recommendation-card__visual" aria-hidden="true">
-                <span>🏪</span>
-                <small><%= recommendation.availability %></small>
+                <span><%= recommendation.dietary.includes('vegan') ? '🥗' : recommendation.category === 'noodles' ? '🍜' : '🍚' %></span>
+                <small><%= recommendation.address %></small>
               </div>
 
               <div class="recommendation-card__body">
-                <p class="eyebrow">Participating merchant</p>
+                <p class="eyebrow"><%= campaign ? 'Participating merchant' : 'Nearby discovery' %></p>
                 <h2><%= recommendation.merchantName %></h2>
                 <p class="recommendation-card__item"><%= recommendation.itemName %></p>
 
                 <div class="recommendation-facts" aria-label="Recommendation details">
-                  <span><strong>$<%= recommendation.price.toFixed(2) %></strong> price</span>
-                  <% if (recommendation.halal) { %>
-                    <span><strong>Halal</strong> dietary</span>
-                  <% } %>
-                  <% if (personalisation.location) { %>
-                    <span><strong><%= recommendation.distanceMinutes %>-minute</strong> walk</span>
-                  <% } %>
+                  <% if (recommendation.price !== null) { %><span><strong>$<%= recommendation.price.toFixed(2) %></strong> approximate price</span><% } %>
+                  <% recommendation.dietary.forEach(function(dietaryTag) { %>
+                    <span><strong><%= dietaryTag.charAt(0).toUpperCase() + dietaryTag.slice(1) %></strong> dietary</span>
+                  <% }); %>
+                  <span><strong><%= recommendation.distanceMinutes %>-minute</strong> walk</span>
                 </div>
 
-                <p class="cashback-chip">
-                  <strong>$<%= recommendation.cashback.toFixed(2) %> cashback</strong>
-                  after eligible NETS payment
-                </p>
-
-                <p class="verified-vouches">
-                  <span aria-hidden="true">✓</span>
-                  <strong><%= recommendation.vouchCount %></strong> Payment-Verified Vouches
-                </p>
+                <% if (campaign) { %>
+                  <p class="cashback-chip"><strong>$<%= campaign.rewardAmount.toFixed(2) %> cashback</strong> after eligible NETS payment</p>
+                <% } %>
 
                 <div class="match-reason">
                   <span aria-hidden="true">✦</span>
-                  <p><strong>Why this match</strong><%= matchReason %></p>
+                  <div><strong>Why this match</strong><ul><% matchReasons.forEach(function(reason) { %><li><%= reason %></li><% }); %></ul></div>
                 </div>
               </div>
             </article>
 
             <p class="verification-note">
-              A Verified Vouch confirms an eligible payment, not guaranteed quality.
+              Nearby discovery does not mean a merchant participates in NETS Vouch AI. Vouch details only appear for an internal prototype campaign.
             </p>
 
             <p class="prototype-match-note">Simulated Smart Match · No live AI model or production data access</p>
 
             <div class="screen-actions screen-actions--bottom">
-              <% if (currentOrder) { %>
-                <a class="button button--full" href="/order">View current order</a>
-              <% } else { %>
+              <% if (recommendationAccepted && journeyLink) { %>
+                <a class="button button--full" href="<%= journeyLink %>">Continue Vouch journey</a>
+              <% } else if (canContinueJourney) { %>
                 <form method="POST" action="/recommendation/accept">
-                  <button class="button button--full" type="submit">Accept and pay</button>
+                  <button class="button button--full" type="submit">Accept &amp; pay</button>
                 </form>
+              <% } else { %>
+                <button class="button button--full" type="button" disabled>Nearby discovery only</button>
               <% } %>
-              <a class="button button--ghost button--full" href="/recommendation/reject">Not for me</a>
+              <% if (!recommendationAccepted) { %>
+                <a class="button button--ghost button--full" href="/recommendation/reject">Not for me</a>
+              <% } %>
               <a class="back-home-link" href="/home">Back to Home</a>
             </div>
           </div>

@@ -1,33 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Order Status | NETS Vouch AI</title>
-    <link rel="stylesheet" href="/css/style.css">
-  </head>
-  <body>
-    <main class="prototype-stage"><section class="phone-shell">
-      <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
-      <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div><a class="prototype-label" href="/home">Home</a></header>
-      <div class="phone-viewport"><div class="screen screen--order-status">
-        <div class="order-success"><span class="journey-icon" aria-hidden="true"><%= order.status === 'READY' || order.status === 'COLLECTED' ? '▣' : '✓' %></span><p class="eyebrow">Order #<%= order.orderNumber %></p>
-          <% if (order.status === 'PAID') { %><h1>Order sent to Felicia</h1><p>Waiting for preparation to begin.</p><% } %>
-          <% if (order.status === 'PREPARING') { %><h1>Felicia is preparing it</h1><p>Your <%= order.itemName %> is being prepared.</p><% } %>
-          <% if (order.status === 'READY') { %><h1>Ready for collection</h1><p>Felicia has marked your order ready.</p><% } %>
-          <% if (order.status === 'COLLECTED') { %><h1>Order collected</h1><p>Your meal journey is complete.</p><% } %>
-        </div>
-        <% if (order.cashbackAwarded > 0) { %><div class="cashback-earned"><span>$</span><div><strong>$<%= order.cashbackAwarded.toFixed(2) %> cashback earned</strong><span>Recorded separately from the full payment.</span></div></div><% } else { %><div class="cashback-not-awarded"><strong>No cashback awarded</strong><span>Actual eligibility was checked at payment.</span></div><% } %>
-        <section class="waiting-card"><span aria-hidden="true">🏪</span><div><h2><%= order.merchantName %></h2><p><%= order.itemName %> · $<%= order.amount.toFixed(2) %> · <%= order.status.replace('_', ' ') %></p></div></section>
-        <div class="screen-actions screen-actions--bottom">
-          <% if (order.status === 'READY') { %><a class="button button--full" href="/collection">Collect order</a><% } %>
-          <% if (order.status === 'COLLECTED') { %><a class="button button--full" href="/vouch">Continue to Vouch</a><% } %>
-          <% if (order.status === 'PAID' || order.status === 'PREPARING') { %><a class="button button--secondary button--full" href="/merchant?tab=orders">View Felicia’s side</a><% } %>
-          <a class="back-home-link" href="/home">Back to Home</a>
-        </div>
-      </div></div>
-      <div class="home-indicator" aria-hidden="true"></div>
-    </section></main>
-    <script src="/js/script.js"></script>
-  </body>
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"><title>Order Status | NETS Vouch AI</title><link rel="stylesheet" href="/css/style.css"></head>
+  <body><main class="prototype-stage"><section class="phone-shell">
+    <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
+    <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch AI</span></div><span class="prototype-label">Jia view</span></header>
+    <div class="phone-viewport"><div class="screen screen--post-meal">
+      <header class="recommendation-heading"><a class="icon-button" href="/home" aria-label="Back to Home">←</a><div><p class="eyebrow">Order #<%= order.orderNumber %></p><h1><%= order.status === 'READY' ? 'Ready for collection' : order.status === 'COLLECTED' ? 'Collected' : 'Order status' %></h1></div></header>
+      <section class="quick-pay-card"><div class="quick-pay-card__merchant"><span class="merchant-monogram">F</span><div><small><%= order.merchantName %></small><h2><%= order.itemName %></h2><p><%= order.status === 'READY' ? 'Your order is ready.' : order.status === 'COLLECTED' ? 'Thanks for collecting.' : order.status === 'PREPARING' ? 'Felicia is preparing your order.' : 'Payment received by Felicia.' %></p></div></div><div class="quick-pay-card__amount"><span>Total</span><strong>$<%= order.amount.toFixed(2) %></strong></div></section>
+      <% if (order.status === 'READY') { %><p class="screen-lede">8-minute walk · Merchant-controlled readiness</p><a class="button button--secondary button--full" href="https://maps.google.com/?q=Republic+Polytechnic+North+Food+Court">View directions</a><form class="screen-actions" method="POST" action="/collection"><button class="button button--full" type="submit">Collect</button></form><% } %>
+      <% if (order.status === 'COLLECTED' && order.cashbackRecorded) { %><div class="cashback-earned"><span aria-hidden="true">$</span><div><strong>Payment confirmed</strong><span>$<%= campaign.rewardAmount.toFixed(2) %> cashback released.</span></div></div><div class="screen-actions"><a class="button button--full" href="/vouch">Vouch — one tap</a><a class="button button--ghost button--full" href="/home">Not now</a></div><% } %>
+      <% if (order.status === 'PAID' || order.status === 'PREPARING') { %><div class="availability-banner availability-banner--available"><strong><%= order.status === 'PAID' ? 'Paid with NETS' : 'Preparing' %></strong><span>Switch to Felicia to update readiness.</span></div><% } %>
+      <p class="verification-note">Prototype simulation: payment, merchant handoff, fulfilment status and cashback are simulated. No delivery.</p>
+      <div class="merchant-return"><a class="button button--ghost button--full" href="/merchant?tab=orders">Switch to Felicia</a></div>
+    </div></div><div class="home-indicator" aria-hidden="true"></div>
+  </section></main><script src="/js/script.js"></script></body>
 </html>

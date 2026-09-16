@@ -1,15 +1,61 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"><title>Scan to Pay | NETS Vouch AI</title><link rel="stylesheet" href="/css/style.css"></head>
-  <body><main class="prototype-stage"><section class="phone-shell">
-    <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
-    <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div><span class="prototype-label">Prototype</span></header>
-    <div class="phone-viewport"><div class="screen screen--scanner">
-      <header class="recommendation-heading"><a class="icon-button" href="/home">←</a><div><p class="eyebrow">Simulated QR payment</p><h1>Scan to Pay</h1></div></header>
-      <div class="scanner-intro"><span>▣</span><div><h2>Point, scan, pay</h2><p>Try the fictional merchant QR below.</p></div></div>
-      <div class="scan-frame"><i class="scan-corner scan-corner--tl"></i><i class="scan-corner scan-corner--tr"></i><i class="scan-corner scan-corner--bl"></i><i class="scan-corner scan-corner--br"></i><form method="POST" action="/scan"><button class="fictional-qr" type="submit" aria-label="Simulate scanning Café ABC"><span>NETS</span><strong>▦</strong><small>Tap to scan</small></button></form></div>
-      <div class="scan-instruction"><strong>Tap the QR code to simulate scanning</strong><span>The QR is a normal form button</span></div>
-      <div class="prototype-camera-note"><span>⊘</span><span><strong>No camera used</strong>This prototype never requests camera permission.</span></div><p class="scan-security">✓ Fictional QR · Contains no payment information</p>
-    </div></div><div class="home-indicator" aria-hidden="true"></div>
-  </section></main><script src="/js/script.js"></script></body>
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="description" content="Simulated NETS Vouch scan-to-pay">
+    <meta name="theme-color" content="#082f5b">
+    <title>Scan to Pay | NETS Vouch AI</title>
+    <link rel="stylesheet" href="/css/style.css">
+  </head>
+  <body>
+    <main class="prototype-stage">
+      <section class="phone-shell" aria-label="NETS Vouch AI prototype">
+        <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
+        <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch AI</span></div><span class="prototype-label">Simulation</span></header>
+        <div class="phone-viewport">
+          <div class="screen scan-pay-screen">
+            <header class="recommendation-heading">
+              <a class="icon-button" href="/home" aria-label="Back to Home">←</a>
+              <div><p class="eyebrow">Fast checkout</p><h1>Scan to pay</h1></div>
+            </header>
+
+            <ol class="scan-pay-steps" aria-label="Scan-to-pay steps">
+              <li class="is-active"><span>1</span>Scan</li>
+              <li><span>2</span>Pay</li>
+              <li><span>3</span>Done</li>
+            </ol>
+
+            <% if (errorMessage) { %><p class="form-error"><%= errorMessage %></p><% } %>
+
+            <section class="scan-pay-card">
+              <div class="scan-pay-card__merchant">
+                <span class="merchant-monogram" aria-hidden="true">F</span>
+                <div><small>Merchant QR</small><h2><%= merchant.name %></h2><p><%= merchant.outlet %></p></div>
+              </div>
+
+              <form method="POST" action="/scan" data-single-submit>
+                <input type="hidden" name="merchantId" value="<%= merchant.id %>">
+                <input type="hidden" name="campaignId" value="<%= campaign.id %>">
+                <button class="scan-pay-qr" type="submit" <%= availability.available ? '' : 'disabled' %>>
+                  <span class="scan-pay-qr__code" aria-hidden="true">▦</span>
+                  <span><strong>Scan demo QR</strong><small>One tap for Open House</small></span>
+                </button>
+              </form>
+
+              <div class="scan-pay-offer">
+                <span><%= availability.available ? 'Vouch available' : availability.title %></span>
+                <strong>$<%= campaign.rewardAmount.toFixed(2) %> cashback</strong>
+              </div>
+              <p class="scan-pay-card__item"><%= recommendation.itemName %> · $<%= recommendation.price.toFixed(2) %></p>
+            </section>
+
+            <p class="scan-pay-note">This simulated QR identifies Felicia's campaign. Your Vouch is claimed automatically, then you confirm the simulated NETS payment.</p>
+          </div>
+        </div>
+        <div class="home-indicator" aria-hidden="true"></div>
+      </section>
+    </main>
+    <script src="/js/script.js"></script>
+  </body>
 </html>
