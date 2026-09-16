@@ -16,6 +16,7 @@
           <span class="status-bar__island"></span>
           <span class="status-bar__signals">● ◢ ▰</span>
         </div>
+        <%- include('partials/jia-nav', { active: 'home' }) %>
 
         <header class="app-bar">
           <div class="wordmark" aria-label="NETS Vouch">
@@ -28,7 +29,7 @@
         <div class="phone-viewport">
           <div class="screen screen--rejection">
             <header class="recommendation-heading">
-              <a class="icon-button" href="/recommendation" aria-label="Back to recommendation">←</a>
+              <a class="icon-button" href="/home" aria-label="Back to Home">←</a>
               <div>
                 <p class="eyebrow">One tap — no typing</p>
                 <h1>What did not fit?</h1>
@@ -40,9 +41,9 @@
               <%= currentRecommendation.merchantName %>
             </p>
 
-            <div class="rejection-intro">
-              <span aria-hidden="true">✦</span>
-              <p>Your answer improves the next recommendation. Rejecting is always free.</p>
+              <div class="rejection-intro">
+              <span aria-hidden="true">↻</span>
+              <p>Tell us what missed the mark and we’ll find something better.</p>
             </div>
 
             <form class="rejection-form" method="POST" action="/recommendation/reject">
@@ -68,8 +69,8 @@
               </fieldset>
 
               <div class="screen-actions screen-actions--bottom">
-                <button class="button button--full" type="submit">Show me another</button>
-                <a class="back-home-link" href="/recommendation">Back to recommendation</a>
+                <button class="button button--full" type="submit">Find something better</button>
+                <a class="back-home-link" href="/home">Back to Home</a>
               </div>
             </form>
           </div>

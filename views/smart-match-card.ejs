@@ -1,11 +1,10 @@
 <article class="smart-match-card smart-match-reveal" data-recommendation-id="<%= recommendation.id %>">
   <div class="smart-match-card__visual" aria-hidden="true">
-    <span class="smart-match-card__spark">✦</span>
     <span class="smart-match-card__dish"><%= recommendation.dietary.includes('vegan') ? '🥗' : recommendation.category === 'noodles' ? '🍜' : '🍚' %></span>
-    <% if (campaign) { %><span class="smart-match-card__campaign">Vouch available now</span><% } %>
   </div>
   <div class="smart-match-card__body">
-    <p class="smart-match-card__merchant"><%= recommendation.merchantName %></p>
+    <p class="smart-match-card__merchant">Your Smart Match</p>
+    <p class="smart-match-card__place"><%= recommendation.merchantName %></p>
     <h2><%= recommendation.itemName %></h2>
     <p class="smart-match-card__facts">
       <% if (recommendation.price !== null) { %><span>$<%= recommendation.price.toFixed(2) %></span><% } %>
@@ -19,8 +18,11 @@
       <strong>Why this match?</strong>
       <ul><% matchReasons.forEach(function(reason) { %><li><%= reason %></li><% }); %></ul>
     </div>
-    <a class="button button--full smart-match-view" href="/recommendation">View match</a>
+    <% if (campaign) { %>
+      <form method="POST" action="/recommendation/accept">
+        <button class="button button--full smart-match-view" type="submit">Accept</button>
+      </form>
+    <% } %>
     <a class="smart-match-reject" href="/recommendation/reject">Not for me</a>
   </div>
-  <p class="smart-match-source"><%= source === 'google-places' ? 'Nearby discovery supported by Google Places · Prototype ranking' : 'Local Open House demo data · Prototype ranking' %></p>
 </article>

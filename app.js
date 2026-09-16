@@ -149,31 +149,8 @@ const dietaryPreferenceOptions = [
   { value: 'vegan', label: 'Vegan' }
 ];
 
-const initialTransactions = [
-  {
-    id: 'tx-toast-001', merchantId: merchants.toastAndCo.id,
-    merchantName: merchants.toastAndCo.name, outlet: merchants.toastAndCo.outlet,
-    date: '1 Sep 2026', time: '8:10 AM', amount: 4.20, displayAmount: '$4.20',
-    status: 'Successful', paymentMethod: 'NETS', vouchCreated: true,
-    cashbackAwarded: 0, eligible: false
-  },
-  {
-    id: 'tx-hawker-001', merchantId: merchants.hawker88.id,
-    merchantName: merchants.hawker88.name, outlet: merchants.hawker88.outlet,
-    date: '30 Aug 2026', time: '12:42 PM', amount: 6.80, displayAmount: '$6.80',
-    status: 'Successful', paymentMethod: 'NETS', vouchCreated: false,
-    cashbackAwarded: 0, eligible: false
-  }
-];
-
-const initialPaymentVerifiedVouches = [
-  {
-    id: 'vouch-toast-001', user: 'Jia', merchantId: merchants.toastAndCo.id,
-    merchantName: merchants.toastAndCo.name, transactionId: 'tx-toast-001',
-    date: '1 Sep 2026', status: 'Completed',
-    verifiedStatus: 'Payment-Verified (Simulated)'
-  }
-];
+const initialTransactions = [];
+const initialPaymentVerifiedVouches = [];
 
 const initialCampaign = {
   id: 'felicia-lunch-vouch',
@@ -234,8 +211,8 @@ function createInitialDemo() {
     metrics: { ...initialMetrics },
     nextScanNumber: 1,
     nextClaimNumber: 1,
-    nextTransactionNumber: 3,
-    nextVouchNumber: 2,
+    nextTransactionNumber: 1,
+    nextVouchNumber: 1,
     nextOrderNumber: 104
   };
 }
@@ -778,27 +755,7 @@ app.get('/smart-match/result', async function(req, res) {
 });
 
 app.get('/recommendation', function(req, res) {
-  initialiseDemoSession(req);
-  const demo = req.session.demo;
-  const recommendation = findMerchantForDemo(demo, demo.selectedMerchantId);
-  if (!recommendation) return res.redirect('/home#smart-match');
-
-  let rejectionNote = null;
-  if (demo.lastRejectionReason) {
-    rejectionNote = getRejectionReasonLabel(demo.lastRejectionReason) + '. Here is another option.';
-  }
-  res.render('recommendation', {
-    user: demo.user,
-    profile: demo.profile,
-    dietaryPreferenceLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference),
-    recommendation: recommendation,
-    matchReasons: getMatchReasons(demo.profile, recommendation, demo.recommendationFeedback),
-    rejectionNote: rejectionNote,
-    campaign: findCampaignForMerchant(recommendation, demo),
-    canContinueJourney: recommendation.merchantId === demo.campaign.merchantId,
-    recommendationAccepted: demo.recommendationAccepted,
-    journeyLink: getJourneyLink(demo)
-  });
+  res.redirect('/home#smart-match');
 });
 
 app.get('/recommendation/reject', function(req, res) {

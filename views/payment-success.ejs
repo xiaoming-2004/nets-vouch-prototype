@@ -12,7 +12,7 @@
     <main class="prototype-stage">
       <section class="phone-shell" aria-label="NETS Vouch AI prototype">
         <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
-        <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch AI</span></div><span class="prototype-label">Simulation</span></header>
+        <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div></header>
         <div class="phone-viewport">
           <div class="screen scan-pay-screen">
             <ol class="scan-pay-steps" aria-label="Scan-to-pay steps">
@@ -23,14 +23,14 @@
 
             <section class="quick-pay-success">
               <span class="success-state__icon" aria-hidden="true">✓</span>
-              <p class="eyebrow">Simulated NETS confirmation</p>
+              <p class="eyebrow">NETS payment</p>
               <h1>Payment successful</h1>
               <p><%= payment.merchantName %> · <%= payment.itemName %></p>
               <strong class="success-state__amount">$<%= payment.amount.toFixed(2) %></strong>
             </section>
 
             <% if (payment.rewardAwarded > 0) { %>
-              <div class="cashback-earned"><span aria-hidden="true">$</span><div><strong>$<%= payment.rewardAwarded.toFixed(2) %> cashback unlocked</strong><span>Your Vouch and payment passed the prototype checks.</span></div></div>
+                <div class="cashback-earned"><span aria-hidden="true">$</span><div><strong>$<%= payment.rewardAwarded.toFixed(2) %> cashback unlocked</strong><span>Ready to collect from Felicia.</span></div></div>
             <% } else { %>
               <div class="cashback-not-awarded"><strong>No reward unlocked</strong><span>The payment succeeded but did not pass every campaign rule.</span></div>
             <% } %>
@@ -39,9 +39,9 @@
               <% if (order) { %><a class="button button--full" href="/order">View order status</a><% } %>
               <a class="button button--full" href="/home">Done</a>
               <% if (transaction) { %><a class="back-home-link" href="/transactions/<%= transaction.id %>">View transaction</a><% } %>
-              <p>Prototype simulation · No real NETS payment or cashback payout</p>
             </div>
           </div>
+          <%- include('partials/jia-nav', { active: 'home' }) %>
         </div>
         <div class="home-indicator" aria-hidden="true"></div>
       </section>

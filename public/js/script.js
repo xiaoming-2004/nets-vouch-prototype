@@ -12,19 +12,6 @@ resetForms.forEach(function(form) {
 const smartMatchRegion = document.querySelector('[data-smart-match]');
 
 if (smartMatchRegion) {
-  const loadingDetail = smartMatchRegion.querySelector('[data-loading-detail]');
-  const loadingDetails = [
-    "Checking what's nearby",
-    'Matching your preferences',
-    "Looking for something you'll like"
-  ];
-  let detailIndex = 0;
-
-  const detailTimer = window.setInterval(function() {
-    detailIndex = (detailIndex + 1) % loadingDetails.length;
-    if (loadingDetail) loadingDetail.textContent = loadingDetails[detailIndex];
-  }, 650);
-
   const minimumDisplayTime = new Promise(function(resolve) {
     window.setTimeout(resolve, 2000);
   });
@@ -51,9 +38,6 @@ if (smartMatchRegion) {
         '</section>';
       smartMatchRegion.setAttribute('aria-busy', 'false');
     })
-    .finally(function() {
-      window.clearInterval(detailTimer);
-    });
 }
 
 const singleSubmitForms = document.querySelectorAll('[data-single-submit]');

@@ -37,16 +37,10 @@
                     <div class="smart-match-loading">
                       <div class="smart-match-loading__visual" aria-hidden="true"><span></span><span></span><span></span></div>
                       <h2><%= matchingAgain ? 'Finding something better...' : 'Finding your next spot...' %></h2>
-                      <p data-loading-detail>Checking what's nearby</p>
+                      <p data-loading-detail><%= matchingAgain ? 'Using your feedback' : 'Checking what fits right now' %></p>
                     </div>
                   </div>
                 </section>
-                <a class="scan-invite" href="/scan">
-                  <span class="scan-invite__icon" aria-hidden="true">⌗</span>
-                  <span><small>Already at a merchant?</small><strong>Scan their NETS Vouch QR</strong></span>
-                  <span aria-hidden="true">→</span>
-                </a>
-                <p class="smart-home-note">Smart Match and merchant data are simulated for this prototype.</p>
               </div>
             </div>
             <nav class="bottom-navigation" aria-label="Primary navigation">

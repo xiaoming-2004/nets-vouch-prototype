@@ -12,7 +12,7 @@
     <main class="prototype-stage">
       <section class="phone-shell" aria-label="NETS Vouch AI prototype">
         <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-bar__island"></span><span class="status-bar__signals">● ◢ ▰</span></div>
-        <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch AI</span></div><span class="prototype-label">Simulation</span></header>
+        <header class="app-bar"><div class="wordmark"><span class="wordmark__nets">NETS</span><span class="wordmark__vouch">Vouch</span></div></header>
         <div class="phone-viewport">
           <div class="screen scan-pay-screen">
             <header class="recommendation-heading">
@@ -50,8 +50,9 @@
               <p class="scan-pay-card__item"><%= recommendation.itemName %> · $<%= recommendation.price.toFixed(2) %></p>
             </section>
 
-            <p class="scan-pay-note">This simulated QR identifies Felicia's campaign. Your Vouch is claimed automatically, then you confirm the simulated NETS payment.</p>
+            <p class="scan-pay-note">Scan the merchant QR to unlock cashback with an eligible NETS payment.</p>
           </div>
+          <%- include('partials/jia-nav', { active: 'scan' }) %>
         </div>
         <div class="home-indicator" aria-hidden="true"></div>
       </section>

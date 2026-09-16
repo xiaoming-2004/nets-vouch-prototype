@@ -1,0 +1,5 @@
+<nav class="bottom-navigation bottom-navigation--journey" aria-label="Primary navigation">
+  <a class="bottom-navigation__item <%= active === 'home' ? 'bottom-navigation__item--active' : '' %>" href="/home" <%= active === 'home' ? 'aria-current="page"' : '' %>><span aria-hidden="true">⌂</span><span>Home</span></a>
+  <a class="bottom-navigation__item <%= active === 'scan' ? 'bottom-navigation__item--active' : '' %>" href="/scan" <%= active === 'scan' ? 'aria-current="page"' : '' %>><span aria-hidden="true">⌗</span><span>Scan</span></a>
+  <a class="bottom-navigation__item <%= active === 'profile' ? 'bottom-navigation__item--active' : '' %>" href="/profile" <%= active === 'profile' ? 'aria-current="page"' : '' %>><span aria-hidden="true">○</span><span>Profile</span></a>
+</nav>
