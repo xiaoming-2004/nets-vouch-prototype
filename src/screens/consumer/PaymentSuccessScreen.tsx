@@ -5,7 +5,7 @@ import { SuccessState } from '../../components/SuccessState'
 interface PaymentSuccessScreenProps {
   merchantName: string
   amount: string
-  onVouch: () => void
+  onVouch?: () => void
   onDone: () => void
 }
 
@@ -20,7 +20,7 @@ export function PaymentSuccessScreen({ merchantName, amount, onVouch, onDone }: 
       </div>
       <Button variant="ghost" fullWidth onClick={onDone}>Done</Button>
 
-      <section className="vouch-invitation" aria-labelledby="worth-sharing-title">
+      {onVouch ? <section className="vouch-invitation" aria-labelledby="worth-sharing-title">
         <div className="vouch-invitation__icon"><Share2 size={22} aria-hidden="true" /></div>
         <div>
           <p className="eyebrow">Payment complete</p>
@@ -28,7 +28,7 @@ export function PaymentSuccessScreen({ merchantName, amount, onVouch, onDone }: 
           <p>Pass on a trusted recommendation. There’s no reward for you.</p>
         </div>
         <Button fullWidth onClick={onVouch} icon={<ArrowRight size={19} />}>Vouch this place</Button>
-      </section>
+      </section> : null}
     </div>
   )
 }

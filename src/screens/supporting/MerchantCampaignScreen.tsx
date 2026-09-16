@@ -1,11 +1,11 @@
 import { ArrowLeft, Check, CheckCircle2, CalendarDays, MapPin, ShieldCheck, Store, Users } from 'lucide-react'
-import type { CampaignStatus } from '../../app/types'
+import type { LegacyCampaignStatus } from '../../app/types'
 import { Button } from '../../components/Button'
 import { ScreenHeader } from '../../components/ScreenHeader'
 import { campaign, merchant, offer } from '../../data/mockData'
 
 interface MerchantCampaignScreenProps {
-  status: CampaignStatus
+  status: LegacyCampaignStatus
   onBack: () => void
   onClose: () => void
   onLaunch: () => void

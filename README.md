@@ -1,78 +1,72 @@
-# NETS Vouch prototype
+# NETS Vouch AI Clickable Prototype
 
-Interactive front-end prototype for the NETS Vouch payment and referral journey.
+A frontend-only React/Vite/TypeScript MVP for a proposed NETS App capability.
 
-**One payment creates the next.**
+NETS Vouch AI proactively gives Darren one suitable participating lunch option, connects his accepted recommendation to a simulated NETS payment, lets Felicia fulfil the paid order and records an optional Payment-Verified Vouch after collection.
 
-The demo starts from Jia’s NETS-style Main Menu. She scans a fictional QR, reviews and completes a simulated payment, optionally creates a Vouch, and can then continue into Darren’s recipient journey, optional merchant-funded offer, and later payment that creates the next Vouch.
+> NETS moves from the last tap to the first choice.
+
+## Main demonstration
+
+1. Choose privacy and personalisation settings.
+2. Open the proactive lunch recommendation.
+3. Accept Felicia’s Chicken Rice or test the one-tap rejection branch.
+4. Complete the simulated full-price NETS payment.
+5. Switch to Felicia and move the paid order from `Paid` to `Preparing` to `Ready`.
+6. Return to Darren, collect the order and optionally Vouch.
+7. Open Felicia’s Results tab to view recommendation-to-payment attribution.
+
+The **Demo** control switches between Darren and Felicia. **Restart Demo** clears saved local progress after a second confirmation.
+
+## Retained secondary features
+
+- Scan-to-Pay simulation
+- Profile
+- Past NETS transactions
+- Vouch history
+
+The old Jia/WhatsApp referral-and-offer-claim journey is no longer part of primary navigation.
+
+## Important simulation boundaries
+
+This prototype does not connect to a real NETS, AI, merchant-ordering, cashback or notification API. All people, merchants, payments, orders, offers and campaign metrics are fictional or illustrative. No real money moves.
+
+A Payment-Verified Vouch means an eligible payment was confirmed before the recommendation. It is not a guarantee of quality. Only fictional participating merchants are displayed.
 
 ## Run locally
 
-Requirements:
-
-- Node.js 22 or newer
-- npm
-
-Install and start the development server:
+Requirements: Node.js 22 or newer.
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite. The prototype appears in a centred iPhone-style frame on desktop and fills smaller mobile screens.
+Open the local address shown in the terminal.
 
-## Verify the project
+## Checks
 
 ```bash
 npm run lint
 npm run typecheck
 npm run test
 npm run build
-npm run preview
 ```
 
-The production-ready static files are generated in `dist/`.
+## Build and deploy
 
-## Demo areas
+```bash
+npm run build
+```
 
-- **Main journey:** Home → Scan to Pay → payment review → payment success → optional Vouch → Home
-- **Profile:** Jia’s fictional Past Transactions and My Vouches, including a fallback Vouch action from eligible transaction details
-- **Optional Darren journey:** choose **Continue demo as Darren** after Jia shares a Café ABC Vouch, then claim and later redeem the merchant-funded offer
-- **Saved Offers:** Darren’s claimed merchant offers, kept separate from Jia’s My Vouches
-- **Merchant campaign:** fictional merchant-funded offer setup
-- **Business logic:** illustrative payment-rate comparison and merchant rationale
+Deploy the generated `dist` directory to any static host. No server routes or environment variables are required for this MVP.
 
-Use the Home/Scan/Profile navigation for Jia’s main tasks. The discreet **Demo** control moves between consumer, merchant, and business areas without losing current records. **Restart demo** requires confirmation and restores the original fictional transactions, Vouches, offer, campaign, and navigation state.
+## Project structure
 
-### Suggested click-through
-
-1. Choose **Scan to Pay** on Home.
-2. Tap the fictional QR; no camera permission is requested.
-3. Review Café ABC and choose **Pay $8.50**.
-4. Choose **Vouch this place**, select a tag, and pick a simulated share option.
-5. Choose **Done** to return Home, or **Continue demo as Darren** for the recipient and offer-redemption branch.
-6. Open **Profile** to inspect the new payment in Past Transactions and the new recommendation in My Vouches.
-
-## Technical approach
-
-- React, TypeScript, and Vite
-- A typed `useReducer` state machine with guarded transitions
-- Centralised fictional mock data
-- Plain responsive CSS with reusable design tokens and components
-- Vitest and React Testing Library for state and click-through coverage
-- No router, state library, backend, database, authentication, or network integration
-
-The implementation source of truth and live progress checklist are in [`PROTOTYPE_PLAN.md`](./PROTOTYPE_PLAN.md).
-
-## Prototype limitations
-
-All people, merchants, messages, transactions, QR visuals, offers, accounts, and campaign results are fictional. QR scanning, WhatsApp, Telegram, Messages, NETS payments, link copying, offer claiming, and redemption are simulated entirely in the browser. The prototype does not access a camera, request bank details, move money, or open an external application.
-
-The offer is represented as account-linked and single-use only through temporary in-memory demo state. Refreshing the page resets the prototype.
-
-**Illustrative published rates. Actual merchant fees vary.** The displayed rate comparison is not guaranteed merchant pricing or a promise of savings.
-
-## Vercel readiness
-
-This is a single-page static Vite application. Vercel can build it with `npm run build` and publish the `dist/` directory; no server routes or environment variables are required.
+- `src/app/` — reducer, typed state, navigation and persistence
+- `src/screens/` — Darren, Felicia, Scan and Profile screens
+- `src/components/` — reusable phone-shell and interface components
+- `src/data/` — fictional merchants, recommendations and activity data
+- `src/styles/` — design tokens and responsive phone styling
+- `src/test/` — reducer, persistence and clickable-flow tests
+- `PROTOTYPE_PLAN.md` — product, state, privacy, funding and integration source of truth

@@ -6,7 +6,7 @@ import { ScreenHeader } from '../components/ScreenHeader'
 interface TransactionDetailScreenProps {
   transaction: TransactionRecord
   onBack: () => void
-  onVouch: () => void
+  onVouch?: () => void
   onViewVouches: () => void
 }
 
@@ -36,9 +36,9 @@ export function TransactionDetailScreen({ transaction, onBack, onVouch, onViewVo
       <div className="screen-actions screen-actions--bottom">
         {transaction.vouchCreated ? (
           <Button fullWidth variant="secondary" onClick={onViewVouches}>View My Vouches</Button>
-        ) : (
+        ) : onVouch ? (
           <Button fullWidth onClick={onVouch}>Vouch this merchant</Button>
-        )}
+        ) : <p className="action-helper">Vouches are offered after the completed meal journey.</p>}
       </div>
     </div>
   )

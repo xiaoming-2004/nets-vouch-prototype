@@ -1,4 +1,4 @@
-import { ShieldCheck, Ticket, UserRound } from 'lucide-react'
+import { ShieldCheck, UserRound } from 'lucide-react'
 import type { KeyboardEvent } from 'react'
 import type { ProfileTab, TransactionRecord, VouchRecord } from '../app/types'
 import { TransactionList } from '../components/TransactionList'
@@ -10,10 +10,10 @@ interface ProfileScreenProps {
   vouches: VouchRecord[]
   onTab: (tab: ProfileTab) => void
   onTransaction: (transactionId: string) => void
-  onSavedOffers: () => void
+  onSettings?: () => void
 }
 
-export function ProfileScreen({ activeTab, transactions, vouches, onTab, onTransaction, onSavedOffers }: ProfileScreenProps) {
+export function ProfileScreen({ activeTab, transactions, vouches, onTab, onTransaction, onSettings }: ProfileScreenProps) {
   const selectTabFromKeyboard = (event: KeyboardEvent<HTMLButtonElement>, tab: ProfileTab) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
     event.preventDefault()
@@ -27,12 +27,12 @@ export function ProfileScreen({ activeTab, transactions, vouches, onTab, onTrans
         <span className="profile-header__avatar" aria-hidden="true"><UserRound size={27} /></span>
         <div>
           <p className="eyebrow">Prototype profile</p>
-          <h1 data-screen-heading tabIndex={-1}>Jia</h1>
+          <h1 data-screen-heading tabIndex={-1}>Darren</h1>
           <p><ShieldCheck size={13} aria-hidden="true" /> Fictional NETS user</p>
         </div>
-        <button type="button" className="saved-offers-link" onClick={onSavedOffers}>
-          <Ticket size={17} aria-hidden="true" />
-          <span>Saved Offers</span>
+        <button type="button" className="saved-offers-link" onClick={onSettings}>
+          <ShieldCheck size={17} aria-hidden="true" />
+          <span>AI settings</span>
         </button>
       </header>
 
@@ -65,12 +65,12 @@ export function ProfileScreen({ activeTab, transactions, vouches, onTab, onTrans
 
       {activeTab === 'transactions' ? (
         <section className="profile-panel" role="tabpanel" id="transactions-panel" aria-labelledby="transactions-tab">
-          <div className="profile-panel__heading"><h2>Past Transactions</h2><p>Successful NETS payments made by Jia.</p></div>
+          <div className="profile-panel__heading"><h2>Past Transactions</h2><p>Darren’s successful simulated NETS payments.</p></div>
           <TransactionList transactions={transactions} onSelect={onTransaction} />
         </section>
       ) : (
         <section className="profile-panel" role="tabpanel" id="vouches-panel" aria-labelledby="vouches-tab">
-          <div className="profile-panel__heading"><h2>My Vouches</h2><p>Recommendations Jia created after verified visits.</p></div>
+          <div className="profile-panel__heading"><h2>My Vouches</h2><p>Recommendations created after eligible NETS payments.</p></div>
           <VouchHistoryList vouches={vouches} />
         </section>
       )}
