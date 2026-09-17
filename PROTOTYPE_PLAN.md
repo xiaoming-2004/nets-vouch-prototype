@@ -10,13 +10,13 @@ Show NETS before, during and after payment: Smart Match, simulated payment/cashb
 
 ### A — Smart Match / collection preorder
 
-Home → one persistent match → Accept → review and Pay → Track order → merchant Preparing / Ready → Collect → cashback released → Vouch or Not now → completed Home → Find my next match.
+Home → one persistent match → Accept → review and Pay → choose a Vouch tag or Not now → Home/Track order → merchant Preparing / Ready → Collect → cashback released.
 
-Home always shows the next meaningful order action. Ready orders can be collected directly on Home. Rejection is an inline four-reason sheet with one-tap submission and a short matching transition. Visiting Home must not change the selected merchant.
+Home always keeps Smart Match available. A separate status control below the match opens all current and previous collection orders, so a paid/preparing order never blocks Jia from accepting another match. Rejection is an inline four-reason sheet with one-tap submission and a short matching transition. Visiting Home must not change the selected merchant.
 
 ### B — Standalone Scan to Pay
 
-Scan → select a fictional merchant QR and tap Scan → enter purchase amount, optionally use cashback, and Pay on one screen → receipt and immediate eligible cashback → Vouch or Not now → Done.
+Scan → tap one camera-style payment card → simulated merchant detection → enter purchase amount, optionally use cashback, and Pay on one screen → immediate eligible cashback → choose a Vouch tag or Not now → Done.
 
 Scan never creates an order and never requires Smart Match, preparation or collection. The QR identifies a merchant, not a verified payment. Scan uses the entered amount, not a recommendation price.
 
@@ -24,7 +24,7 @@ These journeys deliberately replace the earlier QR-claim-only plan. No temporary
 
 ## Implemented consumer experience
 
-- Home opens directly; dietary, budget, walking distance and notification preferences live in Profile.
+- Home opens directly. The Vouch Cashback card sits above Smart Match; dietary, budget, walking distance and notification preferences live in Profile.
 - Five fictional participating merchants have separate campaigns and dynamic merchant/outlet labels.
 - Smart Match filters preferences, availability and rejected merchants, then uses simple simulated ranking.
 - Optional server-side Google Places discovery remains separate from campaign participation. Offline demo merchants work without a key.
@@ -32,7 +32,9 @@ These journeys deliberately replace the earlier QR-claim-only plan. No temporary
 - Existing cashback can offset either purchase; only successful payment deducts it.
 - Transaction-specific receipts and Vouch decisions prevent previous payments hijacking later journeys.
 - Bottom navigation remains exactly Home, Scan, Profile.
-- Profile contains preferences, balance, rewards, social Vouches and NETS activity.
+- Profile contains preferences, earned rewards, social Vouches and NETS activity. The spendable cashback balance is surfaced on Home.
+- A Payment-Verified Vouch requires one of four simple tags. WhatsApp, Telegram, Instagram and Copy link are simulated by copying one claimable friend-offer URL.
+- Another demo session can claim that link once. The sender cannot claim their own offer.
 - New sessions start with zero cashback, zero transactions and zero social Vouches.
 
 ## State ownership
@@ -41,10 +43,11 @@ Under req.session.demo:
 
 - user, profile, cashbackBalance
 - nearbyMerchants, selectedMerchantId, rejectedMerchantIds, recommendationFeedback, shownMerchantIds
-- currentOrder: its own ID, merchant/item, amount, payment, status and Vouch decision
+- currentOrder: the newest order (and the only order allowed to be pending payment)
+- orders: earlier paid collection orders, each retaining its own lifecycle and Vouch decision
 - currentScanPayment: its own ID, merchant, entered amount, payment and Vouch decision
 - transactions: permanent-for-session records identified by transaction ID and source
-- paymentVerifiedVouches, promotionalRedemptions
+- paymentVerifiedVouches, promotionalRedemptions, claimedSharedOffers
 - campaigns: one per merchant, each with timing, cap, reward and aggregate metrics
 - simple order, scan, transaction and Vouch counters
 
@@ -60,7 +63,7 @@ There is no global latestPayment, activeClaim or journeyComplete. Vouch decision
 - At least $1 must actually be paid with simulated NETS for a Payment-Verified Vouch and campaign reward eligibility.
 - Campaign reward additionally requires active status, valid Singapore timing and remaining daily cap.
 - A fully cashback-funded payment is allowed, but does not create NETS-verified social proof or earn a new campaign reward.
-- Eligible rewards reserve campaign capacity at payment. Smart Match credits the promised reward once after collection; Scan credits it once immediately.
+- Eligible rewards reserve campaign capacity at payment. Both payments open the same optional tag-and-share Vouch flow immediately. Smart Match still credits the promised reward once after collection; Scan credits it once immediately.
 - Campaign edits after payment cannot change a previously promised collection reward.
 - No ratings or written reviews. One transaction permits at most one social Vouch; Skip is remembered.
 - Public social Vouch content never includes the amount.
@@ -79,7 +82,7 @@ This is a simulated collection handoff, not POS integration, delivery or a full 
 - GET/POST /scan, GET/POST /scan/payment, POST /scan/cancel: standalone Scan only.
 - GET /payment-success/:id: explicit historical transaction receipt.
 - GET /order, GET /order/state, POST /collection.
-- GET/POST /vouch/:id, GET /vouch/:id/success, POST /transactions/:id/done.
+- GET/POST /vouch/:id, GET /vouch/:id/success, GET /offers/:token, POST /offers/:token/claim, POST /transactions/:id/done.
 - GET/POST /profile, GET /transactions/:id.
 - GET /merchant, POST /merchant/offer, /merchant/start-preparing, /merchant/mark-ready.
 - POST /reset-demo.
@@ -90,7 +93,7 @@ Legacy GET shortcuts redirect safely. Forms carry journey IDs; old forms cannot 
 
 State-changing routes validate prerequisites and use Post/Redirect/Get. Successful payment, collection, reward and Vouch creation are idempotent. Requests in the same demo session are serialized to prevent simultaneous requests spending the same balance or duplicating rewards.
 
-No bank access, production NETS connection, real cashback payout, real camera scanner or real merchant partnership is claimed. Merchant analytics are aggregated. All demo merchants are fictional. All actions require user approval; social proof indicates a simulated eligible transaction, not product quality.
+No bank access, production NETS connection, real cashback payout, real camera scanner, external social posting or real merchant partnership is claimed. Merchant analytics are aggregated. All demo merchants are fictional. All actions require user approval; social proof indicates a simulated eligible transaction, not product quality. Shared links and claims are held only in process memory.
 
 ## Verification and Definition of Done
 

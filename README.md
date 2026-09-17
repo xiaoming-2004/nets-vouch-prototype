@@ -23,16 +23,16 @@ The key is read only by `app.js` and is never sent to EJS or browser JavaScript.
 
 ## Open House journey
 
-1. Open Jia's Home page and review her Profile Settings.
+1. Open Jia's Home page, see her Vouch Cashback balance, and review the Smart Match.
 2. Accept the Felicia Smart Recommendation and review the collection order.
-3. Complete the simulated NETS payment.
+3. Complete the simulated NETS payment, then optionally choose one tag and share a Payment-Verified Vouch.
 4. Switch to Felicia, start preparing, and mark the order ready.
 5. Switch back to Jia, collect the order, and release cashback.
-6. Optionally create a Payment-Verified Vouch.
-7. Independently use Scan: choose a fictional merchant QR, enter an amount, optionally use cashback, and Pay. Scan credits eligible rewards immediately and offers Vouch/Skip; it never creates an order.
+6. Copy the Vouch's friend-offer link using a simulated social button when Jia creates one.
+7. Independently use Scan: tap the camera-style card once, enter an amount, optionally use cashback, and Pay. Scan credits eligible rewards immediately and opens the Vouch screen; it never creates an order.
 8. Reset the demo for the next visitor.
 
-Smart Match rewards are released only after collection. Both journeys require at least $1 actually paid with simulated NETS to qualify for verification; rewards also depend on the merchant campaign. Profile contains transaction history and discreet merchant/reset controls.
+Home keeps Smart Match available after an order is paid, so Jia can place another collection order while earlier orders continue preparing. A separate status control below Smart Match lists every order. Smart Match rewards are released only after collection. Both journeys require at least $1 actually paid with simulated NETS to qualify for verification; rewards also depend on the merchant campaign. Copied Vouch links can be opened in another demo session and claimed once for prototype cashback. Profile contains transaction history and discreet merchant/reset controls.
 
 ## Tests
 

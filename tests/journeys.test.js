@@ -111,27 +111,55 @@ test('Smart Match payment, concurrent duplicate protection, merchant readiness, 
   assert.equal(state.cashbackBalance, 0);
   assert.equal(state.currentOrder.status, 'PAID');
   const tx = state.transactions[0];
-  assert.match((await v.request(pays[0].location)).html, /Track order/);
-  await v.request('/vouch/' + tx.id, { action: 'create' });
-  assert.equal((await v.state()).demo.paymentVerifiedVouches.length, 0);
+  assert.match((await v.request(pays[0].location)).html, /Worth sharing/);
+  await v.request('/vouch/' + tx.id, { action: 'create', tag: 'worth-it' });
+  assert.equal((await v.state()).demo.paymentVerifiedVouches.length, 1);
   await collect(v, order);
   await v.request('/collection', { journeyId: order.id });
   state = (await v.state()).demo;
   assert.equal(state.cashbackBalance, .5);
   assert.equal(state.transactions[0].cashbackAwarded, .5);
-  assert.match((await v.request('/home')).html, /Vouch for this spot/);
-  await Promise.all([v.request('/vouch/' + tx.id, { action: 'create' }), v.request('/vouch/' + tx.id, { action: 'create' })]);
+  const homeWithOrder = await v.request('/home');
+  assert.match(homeWithOrder.html, /Your Smart Match/);
+  assert.match(homeWithOrder.html, /View order status/);
+  assert.match((await v.request('/order')).html, /Thanks for the Vouch/);
+  await Promise.all([v.request('/vouch/' + tx.id, { action: 'create', tag: 'worth-it' }), v.request('/vouch/' + tx.id, { action: 'create', tag: 'worth-it' })]);
   state = (await v.state()).demo;
   assert.equal(state.paymentVerifiedVouches.length, 1);
   assert.equal(state.currentOrder.vouchDecision, 'created');
   const success = await v.request('/vouch/' + tx.id + '/success');
   assert.match(success.html, /amount stays private/);
   assert.ok(!success.html.includes('$7.50'));
-  assert.match((await v.request('/home')).html, /Find my next match/);
-  await v.request('/recommendation/next', {});
-  assert.equal((await v.state()).demo.currentOrder, null);
+  assert.match((await v.request('/home')).html, /Your Smart Match/);
   assert.equal((await v.request('/smart-match/result')).status, 200);
   assert.notEqual((await v.state()).demo.selectedMerchantId, order.merchantId);
+});
+
+test('Home keeps Smart Match available and tracks multiple collection orders', async function() {
+  const v = visitor();
+  const first = await accept(v);
+  await v.request('/payment', { journeyId: first.id });
+  const home = await v.request('/home');
+  assert.match(home.html, /Your Smart Match/);
+  assert.match(home.html, /View order status/);
+  await match(v);
+  const secondMerchantId = (await v.state()).demo.selectedMerchantId;
+  assert.notEqual(secondMerchantId, first.merchantId);
+  await v.request('/recommendation/accept', { merchantId: secondMerchantId });
+  let state = (await v.state()).demo;
+  const second = state.currentOrder;
+  assert.notEqual(second.id, first.id);
+  assert.equal(state.orders.length, 1);
+  assert.equal(state.orders[0].id, first.id);
+  await v.request('/payment', { journeyId: second.id });
+  const statusPage = await v.request('/order');
+  assert.match(statusPage.html, new RegExp('Order #' + first.orderNumber));
+  assert.match(statusPage.html, new RegExp('Order #' + second.orderNumber));
+  await collect(v, first);
+  state = (await v.state()).demo;
+  assert.equal(state.orders[0].status, 'COLLECTED');
+  assert.equal(state.currentOrder.id, second.id);
+  assert.match((await v.request('/home')).html, /2 orders/);
 });
 
 test('Scan is standalone; custom amount, offset, immediate cashback, Vouch merchant and later journeys', async function() {
@@ -161,7 +189,7 @@ test('Scan is standalone; custom amount, offset, immediate cashback, Vouch merch
   const receipt = await v.request(responses[0].location);
   assert.match(receipt.html, /Green Bowl/);
   assert.ok(!receipt.html.includes('Track order'));
-  await v.request('/vouch/' + tx.id, { action: 'create' });
+  await v.request('/vouch/' + tx.id, { action: 'create', tag: 'good-value' });
   assert.equal((await v.state()).demo.paymentVerifiedVouches[0].merchantName, 'Green Bowl');
   await v.request('/transactions/' + tx.id + '/done', {});
   assert.equal((await v.request('/scan')).status, 200);
@@ -177,7 +205,7 @@ test('Scan is standalone; custom amount, offset, immediate cashback, Vouch merch
   const orderTx = (await v.state()).demo.currentOrder.transactionId;
   await v.request('/vouch/' + orderTx, { action: 'skip' });
   assert.equal((await v.state()).demo.currentOrder.vouchDecision, 'skipped');
-  await v.request('/vouch/' + orderTx, { action: 'create' });
+  await v.request('/vouch/' + orderTx, { action: 'create', tag: 'vouch-pick' });
   assert.equal((await v.state()).demo.paymentVerifiedVouches.length, 1);
   const secondScan = await scan(v, 'spice-lane');
   await v.request('/scan/payment', { journeyId: secondScan.id, amount: '4.80' });
@@ -207,7 +235,7 @@ test('Amount validation, stale forms, exhausted campaign, zero NETS payment and 
   assert.equal(state.transactions[0].cashbackAwarded, 0);
   assert.equal(state.transactions[0].eligible, false);
   assert.equal(state.cashbackBalance, .2);
-  await v.request('/vouch/' + state.transactions[0].id, { action: 'create' });
+  await v.request('/vouch/' + state.transactions[0].id, { action: 'create', tag: 'worth-it' });
   assert.equal((await v.state()).demo.paymentVerifiedVouches.length, 0);
   await v.request('/transactions/' + state.transactions[0].id + '/done', {});
   await v.request('/reset-demo', {});
@@ -268,6 +296,39 @@ test('Concurrent independent journeys cannot spend the same cashback twice', asy
   assert.notEqual(state.currentOrder.transactionId, state.currentScanPayment.transactionId);
 });
 
+test('Home balance, one-tap scan, tagged Vouch sharing and friend claim', async function() {
+  const sender = visitor();
+  const home = await sender.request('/home');
+  assert.ok(home.html.indexOf('Your Vouch Cashback') < home.html.indexOf('Your Smart Match'));
+  assert.ok(!home.html.includes('Already at a merchant'));
+  const scanPage = await sender.request('/scan');
+  assert.match(scanPage.html, /Tap to Pay/);
+  assert.ok(!scanPage.html.includes('Demo merchant'));
+  const pending = await scan(sender);
+  const paid = await sender.request('/scan/payment', { journeyId: pending.id, amount: '7.20' });
+  assert.match(paid.location, /^\/vouch\/tx-/);
+  const transaction = (await sender.state()).demo.transactions[0];
+  await sender.request('/vouch/' + transaction.id, { action: 'create' });
+  assert.equal((await sender.state()).demo.paymentVerifiedVouches.length, 0);
+  await sender.request('/vouch/' + transaction.id, { action: 'create', tag: 'good-hangout' });
+  const vouch = (await sender.state()).demo.paymentVerifiedVouches[0];
+  assert.equal(vouch.tagLabel, 'Good Hangout');
+  const share = await sender.request('/vouch/' + transaction.id + '/success');
+  assert.match(share.html, /WhatsApp/);
+  assert.match(share.html, /Telegram/);
+  assert.match(share.html, /Instagram/);
+  const receiver = visitor();
+  const offerPath = '/offers/' + vouch.shareToken;
+  assert.match((await receiver.request(offerPath)).html, /Claim offer/);
+  await receiver.request(offerPath + '/claim', {});
+  let receiverState = (await receiver.state()).demo;
+  assert.equal(receiverState.cashbackBalance, .5);
+  assert.equal(receiverState.claimedSharedOffers.length, 1);
+  await receiver.request(offerPath + '/claim', {});
+  receiverState = (await receiver.state()).demo;
+  assert.equal(receiverState.cashbackBalance, .5);
+});
+
 test('Direct guards and all rendered pages / navigation destinations', async function() {
   const v = visitor();
   for (const path of ['/payment', '/order', '/collection', '/vouch', '/vouch/missing',
@@ -284,7 +345,7 @@ test('Direct guards and all rendered pages / navigation destinations', async fun
   for (const path of pages) assert.equal((await v.request(path)).status, 200, path);
   await collect(v, order);
   assert.equal((await v.request('/vouch/' + id)).status, 200);
-  await v.request('/vouch/' + id, { action: 'create' });
+  await v.request('/vouch/' + id, { action: 'create', tag: 'good-hangout' });
   assert.equal((await v.request('/vouch/' + id + '/success')).status, 200);
   const links = new Set();
   for (const path of pages.slice(0, -2)) {

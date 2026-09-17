@@ -63,6 +63,26 @@ if (paymentForm) {
   updateTotal();
 }
 
+// Social buttons are deliberately simulated: each copies the same claimable link.
+const shareGrid = document.querySelector('[data-share-path]');
+if (shareGrid) {
+  shareGrid.addEventListener('click', async function(event) {
+    const button = event.target.closest('[data-copy-share]');
+    if (!button) return;
+    const link = new URL(shareGrid.dataset.sharePath, window.location.origin).href;
+    try {
+      await navigator.clipboard.writeText(link);
+    } catch (error) {
+      const input = document.createElement('textarea');
+      input.value = link; input.setAttribute('readonly', ''); input.style.position = 'fixed'; input.style.opacity = '0';
+      document.body.appendChild(input); input.select(); document.execCommand('copy'); input.remove();
+    }
+    const status = document.querySelector('.share-status');
+    status.textContent = 'Claim link copied ✓';
+    button.setAttribute('aria-label', button.textContent.trim() + ' link copied');
+  });
+}
+
 // Capture the clicked action BEFORE disabling controls. Keeps Vouch/Skip values intact.
 document.addEventListener('submit', function(event) {
   const form = event.target;
@@ -105,14 +125,18 @@ window.addEventListener('pageshow', function(event) {
 });
 
 // Reflect merchant readiness without fake preparation timers.
-const orderCard = document.querySelector('[data-order-id]');
-if (orderCard && ['PAID', 'PREPARING'].includes(orderCard.dataset.orderStatus)) {
+const orderCards = Array.from(document.querySelectorAll('[data-order-id]'));
+if (orderCards.some(function(card) { return ['PAID', 'PREPARING'].includes(card.dataset.orderStatus); })) {
   window.setInterval(async function() {
     if (document.hidden) return;
     try {
       const response = await fetch('/order/state');
       const state = await response.json();
-      if (state.id !== orderCard.dataset.orderId || state.status !== orderCard.dataset.orderStatus) location.reload();
+      const changed = orderCards.some(function(card) {
+        const latest = state.orders.find(function(order) { return order.id === card.dataset.orderId; });
+        return !latest || latest.status !== card.dataset.orderStatus;
+      });
+      if (changed) location.reload();
     } catch (error) { /* The next poll can recover from temporary loss of connection. */ }
   }, 4000);
 }

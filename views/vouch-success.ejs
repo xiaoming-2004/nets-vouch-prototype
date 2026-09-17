@@ -1,4 +1,6 @@
 <%- include('partials/start', { title: 'Vouched' }) %>
-<section class="receipt"><div class="success-mark" aria-hidden="true">✓</div><h1>Vouched ✓</h1><p class="eyebrow">Payment-Verified</p><h2><%= transaction.merchantName %></h2><p>You paid with NETS at this merchant.</p><p>Your payment amount stays private.</p>
+<section class="share-vouch"><div class="success-mark" aria-hidden="true">✓</div><h1>Share your Vouch</h1><p>Choose how to send this trusted recommendation.</p>
+<article class="share-preview"><small>NETS Vouch</small><h2><%= vouch.user %> Vouched for <%= transaction.merchantName %></h2><span><%= vouch.tagLabel %></span><span>✓ Verified NETS Visit</span></article>
+<div class="share-grid" data-share-path="<%= sharePath %>"><button type="button" data-copy-share><b>◉</b>WhatsApp</button><button type="button" data-copy-share><b>➤</b>Telegram</button><button type="button" data-copy-share><b>◎</b>Instagram</button><button type="button" data-copy-share><b>▣</b>Copy link</button></div><p class="share-status" role="status"></p><small>Your payment amount stays private. Prototype sharing copies the same claim link; no external app opens.</small>
 <form method="POST" action="/transactions/<%= transaction.id %>/done"><button class="button" type="submit">Done</button></form></section>
 <%- include('partials/end', { active: transaction.source === 'scan' ? 'scan' : 'home' }) %>

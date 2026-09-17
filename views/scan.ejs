@@ -1,11 +1,10 @@
 <%- include('partials/start', { title: 'Scan to Pay' }) %>
-<p class="eyebrow">Already found your spot?</p><h1>Scan to Pay</h1><p>Point your camera at a participating merchant QR.</p>
 <% if (error) { %><p class="error" role="alert">That QR wasn't recognised. Try a participating merchant.</p><% } %>
-<form method="POST" action="/scan" data-scan>
-<div class="qr-frame" aria-hidden="true"><span>▦</span><i></i></div>
-<label class="field">Demo merchant
-<select name="merchantId"><% merchants.forEach(function(merchant) { %><option value="<%= merchant.id %>" <%= merchant.id === 'green-bowl' ? 'selected' : '' %>><%= merchant.merchantName %></option><% }); %></select></label>
-<button class="button" type="submit">Scan QR</button><p class="form-status" role="status"></p>
+<form method="POST" action="/scan" class="scan-launch" data-scan>
+<input type="hidden" name="merchantId" value="green-bowl">
+<button class="camera-card" type="submit" aria-label="Tap to pay at the detected merchant">
+<span class="camera-view" aria-hidden="true"><i></i><b>⌗</b></span>
+<strong>Tap to Pay</strong><small>Hold near the merchant code</small>
+</button><p class="form-status" role="status"></p>
 </form>
-<p class="subtle">Simulated scan · No camera needed</p>
 <%- include('partials/end', { active: 'scan' }) %>
