@@ -272,6 +272,64 @@ test('Merchant campaign cap is shared across different user sessions, not per br
   assert.equal(jiaSecondTransaction.merchantRewardEarned, 0);
 });
 
+test('Normal Vouch Credit is earned once per user, merchant and Singapore day', async function() {
+  const v = visitor();
+  await v.request('/home');
+  const feliciaCampaign = getMerchantCampaigns().find(function(item) {
+    return item.merchantId === 'felicia-chicken-rice';
+  });
+
+  const first = await scan(v, 'felicia-chicken-rice');
+  await v.request('/scan/payment', { journeyId: first.id, amount: '5.00' });
+  let state = (await v.state()).demo;
+  assert.equal(state.transactions[0].merchantRewardEarned, .5);
+  assert.equal(credit(state, 'felicia-chicken-rice'), .5);
+  assert.equal(feliciaCampaign.redemptionsToday, 1);
+  assert.equal(feliciaCampaign.rewardBudgetSpentToday, .5);
+  await v.request('/vouch/' + state.transactions[0].id, { action: 'skip' });
+  assert.match((await v.request('/smart-match/result')).html, /Today's Vouch Credit earned/);
+
+  const second = await scan(v, 'felicia-chicken-rice');
+  const secondPaymentPage = await v.request('/scan/payment');
+  assert.match(secondPaymentPage.html, /Today's Felicia/);
+  await v.request('/scan/payment', { journeyId: second.id, amount: '5.00' });
+  state = (await v.state()).demo;
+  assert.equal(state.transactions[0].merchantRewardEarned, 0);
+  assert.equal(credit(state, 'felicia-chicken-rice'), .5);
+  assert.equal(feliciaCampaign.redemptionsToday, 1);
+  assert.equal(feliciaCampaign.rewardBudgetSpentToday, .5);
+  await v.request('/vouch/' + state.transactions[0].id, { action: 'skip' });
+
+  const green = await scan(v, 'green-bowl');
+  await v.request('/scan/payment', { journeyId: green.id, amount: '5.00' });
+  state = (await v.state()).demo;
+  assert.equal(state.transactions[0].merchantRewardEarned, .5);
+  assert.equal(credit(state, 'green-bowl'), .5);
+  await v.request('/vouch/' + state.transactions[0].id, { action: 'skip' });
+
+  await v.change(function(demo) {
+    demo.dailyMerchantRewards['felicia-chicken-rice'] = '2000-01-01';
+  });
+  const nextDay = await scan(v, 'felicia-chicken-rice');
+  await v.request('/scan/payment', { journeyId: nextDay.id, amount: '5.00' });
+  state = (await v.state()).demo;
+  assert.equal(state.transactions[0].merchantRewardEarned, .5);
+  assert.equal(credit(state, 'felicia-chicken-rice'), 1);
+});
+
+test('Using accumulated merchant credit does not block the first daily reward', async function() {
+  const v = visitor();
+  await v.request('/home');
+  await v.change(function(demo) { demo.vouchCredits['felicia-chicken-rice'] = 1; });
+  const payment = await scan(v, 'felicia-chicken-rice');
+  await v.request('/scan/payment', { journeyId: payment.id, amount: '5.00', useCashback: 'on' });
+  const state = (await v.state()).demo;
+  assert.equal(state.transactions[0].merchantCreditUsed, 1);
+  assert.equal(state.transactions[0].netsPaid, 4);
+  assert.equal(state.transactions[0].merchantRewardEarned, .5);
+  assert.equal(credit(state, 'felicia-chicken-rice'), .5);
+});
+
 test('Shared Vouch claim rewards only after same-merchant payment without stacking', async function() {
   const sender = visitor();
   await sender.request('/home');

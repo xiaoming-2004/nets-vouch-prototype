@@ -12,7 +12,7 @@
 <% if (merchantCredit > 0) { %><div class="line"><span><%= journey.merchantName %> Vouch Credit</span><strong data-cashback-used>Not applied</strong></div><% } %>
 <div class="total"><span>Pay with NETS</span><strong data-nets-total>$0.00</strong></div>
 </div>
-<% if (campaign) { %><p class="pay-hint" data-reward-eligibility data-minimum-spend="<%= campaign.minimumEligibleSpend %>" data-reward-amount="<%= campaign.rewardAmount %>" data-merchant-name="<%= journey.merchantName %>">Earn $<%= campaign.rewardAmount.toFixed(2) %> <%= journey.merchantName %> Vouch Credit. Spend $<%= campaign.minimumEligibleSpend.toFixed(2) %>+ and keep at least $1 paid with NETS.</p><% } %>
+<% if (campaign && dailyRewardEarned) { %><p class="pay-hint earned">Today's <%= journey.merchantName %> reward earned ✓<br>You can still use your available Vouch Credit.</p><% } else if (campaign) { %><p class="pay-hint" data-reward-eligibility data-minimum-spend="<%= campaign.minimumEligibleSpend %>" data-reward-amount="<%= campaign.rewardAmount %>" data-merchant-name="<%= journey.merchantName %>">Earn $<%= campaign.rewardAmount.toFixed(2) %> <%= journey.merchantName %> Vouch Credit. Once daily · Spend $<%= campaign.minimumEligibleSpend.toFixed(2) %>+ and keep at least $1 paid with NETS.</p><% } %>
 <button class="button" type="submit" data-pay-button>Pay</button>
 <p class="form-status" role="status"></p>
 </form>

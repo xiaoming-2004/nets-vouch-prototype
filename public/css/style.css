@@ -118,6 +118,7 @@ button:disabled { opacity:.55; cursor:wait; }
 .total strong { font-size:27px; letter-spacing:-.6px; color:var(--navy); }
 .pay-hint { font-size:12px; text-align:center; margin:4px 0 20px; }
 .pay-hint.is-ineligible { color:#96252d; }
+.pay-hint.earned,.reward.earned { color:var(--green); }
 .form-status { min-height:22px; text-align:center; margin:12px 0 0; font-size:13px; }
 .is-processing { opacity:.8; }
 .is-processing .button::before { content:''; width:14px; height:14px; border:2px solid #fff7; border-top-color:white; border-radius:50%; margin-right:9px; animation:spin .7s linear infinite; }

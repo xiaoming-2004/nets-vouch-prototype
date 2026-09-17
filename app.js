@@ -214,10 +214,10 @@ let merchantCampaignStore = createCampaigns();
 function createInitialDemo(userId) {
   const identityId = isValidDemoIdentity(userId) ? userId : 'jia';
   return {
-    version: 11,
+    version: 12,
     user: { ...demoIdentities[identityId] },
     profile: { dietaryPreference: 'none', budget: 10, maxDistanceMinutes: 10, notifications: true },
-    vouchCredits: {},
+    vouchCredits: {}, dailyMerchantRewards: {},
     nearbyMerchants: [], selectedMerchantId: null, recommendationAccepted: false, rejectedMerchantIds: [],
     recommendationFeedback: [], shownMerchantIds: [],
     currentScanPayment: null, activeVouchClaim: null,
@@ -227,7 +227,7 @@ function createInitialDemo(userId) {
 }
 
 function initialiseDemoSession(req) {
-  if (!req.session.demo || req.session.demo.version !== 11) {
+  if (!req.session.demo || req.session.demo.version !== 12) {
     req.session.demo = createInitialDemo('jia');
     req.session.demoUserStates = {};
   }
@@ -674,6 +674,10 @@ function paymentBreakdown(merchantCredit, amount, useCredit) {
   return { merchantCreditUsed: usedCents / 100, netsPaid: (purchaseCents - usedCents) / 100 };
 }
 
+function hasEarnedNormalRewardToday(demo, merchantId) {
+  return demo.dailyMerchantRewards[merchantId] === singaporeDay();
+}
+
 // Both journeys use this function; the routes choose the journey explicitly.
 function recordPayment(demo, journey, amount, useCashback) {
   if (journey.transactionId) return findTransactionById(demo.transactions, journey.transactionId);
@@ -696,7 +700,8 @@ function recordPayment(demo, journey, amount, useCashback) {
   const meetsMinimumSpend = Boolean(campaign) && amount >= campaign.minimumEligibleSpend;
   const withinRewardBudget = Boolean(campaign) &&
     money(campaign.rewardBudgetSpentToday + potentialReward) <= campaign.maxRewardBudgetPerDay;
-  const rewardEligible = eligible && campaign && meetsMinimumSpend && withinRewardBudget &&
+  const dailyNormalRewardAvailable = matchingClaim || !hasEarnedNormalRewardToday(demo, journey.merchantId);
+  const rewardEligible = eligible && campaign && meetsMinimumSpend && withinRewardBudget && dailyNormalRewardAvailable &&
     getCampaignAvailability(campaign, false).available;
   let senderReferralReward = 0;
   const remainingBudgetAfterCustomerReward = campaign ? money(
@@ -715,6 +720,7 @@ function recordPayment(demo, journey, amount, useCashback) {
     cashbackUsed: breakdown.merchantCreditUsed, netsPaid: breakdown.netsPaid,
     merchantRewardEarned: 0, cashbackAwarded: 0,
     promisedReward: rewardEligible ? potentialReward : 0,
+    normalDailyRewardAwarded: rewardEligible && !matchingClaim,
     rewardReleased: false, status: 'Successful', eligible: eligible,
     collected: false, vouchDecision: eligible ? 'pending' : 'not-eligible', vouchCreated: false,
     campaignId: campaign ? campaign.id : null,
@@ -743,6 +749,7 @@ function recordPayment(demo, journey, amount, useCashback) {
     }
     if (rewardEligible) {
       campaign.redemptionsToday += 1;
+      if (!matchingClaim) demo.dailyMerchantRewards[journey.merchantId] = singaporeDay();
       // The daily reward budget genuinely caps merchant-funded spend: the customer reward and
       // any sender referral bonus both count against it, not just the payment count.
       campaign.rewardBudgetSpentToday = money(campaign.rewardBudgetSpentToday + potentialReward);
@@ -829,6 +836,7 @@ function matchView(demo, recommendation) {
     campaign: recommendation ? findCampaignForMerchant(recommendation, demo) : null,
     matchReasons: recommendation ? getMatchReasons(demo.profile, recommendation, demo.recommendationFeedback) : [],
     rejectionReasons: rejectionReasons, recommendationAccepted: demo.recommendationAccepted,
+    dailyRewardEarned: recommendation ? hasEarnedNormalRewardToday(demo, recommendation.id) : false,
     vouchCount: recommendation ? countVouches(demo, recommendation.id) : 0,
     dietaryTagLabel: recommendation && recommendation.dietary.length ?
       getDietaryPreferenceLabel(recommendation.dietary[recommendation.dietary.length - 1]) : null
@@ -1011,9 +1019,12 @@ app.get('/scan/payment', function(req, res) {
     const existingTransaction = findTransactionById(demo.transactions, scan.transactionId);
     return res.redirect(receiptUrl(existingTransaction));
   }
+  const claim = getEffectiveVouchClaim(demo);
+  const matchingSharedClaim = claim && claim.status === 'CLAIMED' && claim.merchantId === scan.merchantId;
   res.render('payment', { journey: scan, scan: true,
     merchantCredit: getMerchantCredit(demo, scan.merchantId),
     campaign: findCampaignForMerchant(findMerchantForDemo(demo, scan.merchantId), demo),
+    dailyRewardEarned: hasEarnedNormalRewardToday(demo, scan.merchantId) && !matchingSharedClaim,
     error: req.query.error === 'amount' ? 'Enter $0.01–$1,000 with no more than two decimal places.' : null });
 });
 app.post('/scan/payment', function(req, res) {

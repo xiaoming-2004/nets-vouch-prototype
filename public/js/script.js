@@ -68,7 +68,7 @@ if (paymentForm) {
       const merchant = eligibility.dataset.merchantName;
       eligibility.classList.toggle('is-ineligible', valid && amount < minimum);
       if (!valid) {
-        eligibility.textContent = 'Earn $' + reward + ' ' + merchant + ' Vouch Credit. Spend $' + minimum.toFixed(2) + '+ and keep at least $1 paid with NETS.';
+        eligibility.textContent = 'Earn $' + reward + ' ' + merchant + ' Vouch Credit. Once daily · Spend $' + minimum.toFixed(2) + '+ and keep at least $1 paid with NETS.';
       } else if (amount < minimum) {
         eligibility.textContent = "This payment won't earn Vouch Credit. Minimum spend is $" + minimum.toFixed(2) + '.';
       } else if (paid < 1) {
