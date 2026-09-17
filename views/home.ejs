@@ -1,6 +1,5 @@
 <%- include('partials/start', { title: 'Home' }) %>
 <header class="greeting"><p>Good afternoon, <%= user.name %> 👋</p><h1>Lunch in 10 minutes?</h1></header>
-<section class="home-balance" aria-label="Vouch Cashback balance"><span><small>Your Vouch Cashback</small><strong>$<%= cashbackBalance.toFixed(2) %></strong></span><span class="balance-spark" aria-hidden="true">✦</span></section>
 <% if (order) { %>
 <%- include('partials/order-card', { order: order, transaction: transaction, onHome: true }) %>
 <% } else { %>

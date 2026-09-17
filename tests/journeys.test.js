@@ -64,6 +64,7 @@ async function scan(v, merchantId = 'green-bowl') {
   assert.equal(result.location, '/scan/payment');
   return (await v.state()).demo.currentScanPayment;
 }
+function credit(demo, merchantId) { return demo.vouchCredits[merchantId] || 0; }
 
 test('Smart Match persists, supports inline feedback, and filters all dietary choices', async function() {
   const v = visitor();
@@ -108,7 +109,7 @@ test('Smart Match payment, concurrent duplicate protection, merchant readiness, 
   assert.equal(pays[0].location, pays[1].location);
   let state = (await v.state()).demo;
   assert.equal(state.transactions.length, 1);
-  assert.equal(state.cashbackBalance, 0);
+  assert.equal(credit(state, order.merchantId), 0);
   assert.equal(state.currentOrder.status, 'PAID');
   const tx = state.transactions[0];
   assert.match((await v.request(pays[0].location)).html, /Track order/);
@@ -117,8 +118,8 @@ test('Smart Match payment, concurrent duplicate protection, merchant readiness, 
   await collect(v, order);
   await v.request('/collection', { journeyId: order.id });
   state = (await v.state()).demo;
-  assert.equal(state.cashbackBalance, .5);
-  assert.equal(state.transactions[0].cashbackAwarded, .5);
+  assert.equal(credit(state, order.merchantId), .5);
+  assert.equal(state.transactions[0].merchantRewardEarned, .5);
   const homeWithOrder = await v.request('/home');
   assert.match(homeWithOrder.html, /Vouch this spot/);
   assert.match((await v.request('/order')).html, /Vouch this spot/);
@@ -145,11 +146,11 @@ test('One Smart Match order stays active until collection and Vouch decision', a
   assert.equal((await v.request('/smart-match/result')).status, 409);
   await collect(v, order);
   const txId = (await v.state()).demo.currentOrder.transactionId;
-  assert.equal((await v.state()).demo.cashbackBalance, .5);
+  assert.equal(credit((await v.state()).demo, order.merchantId), .5);
   await v.request('/vouch/' + txId, { action: 'skip' });
   let state = (await v.state()).demo;
   assert.equal(state.currentOrder.vouchDecision, 'skipped');
-  assert.equal(state.cashbackBalance, .5);
+  assert.equal(credit(state, order.merchantId), .5);
   await v.request('/recommendation/next', {});
   state = (await v.state()).demo;
   assert.equal(state.currentOrder, null);
@@ -159,13 +160,13 @@ test('One Smart Match order stays active until collection and Vouch decision', a
 test('Scan is standalone; custom amount, offset, immediate cashback, Vouch merchant and later journeys', async function() {
   const v = visitor();
   await v.request('/home');
-  await v.change(function(demo) { demo.cashbackBalance = .5; });
+  await v.change(function(demo) { demo.vouchCredits['green-bowl'] = .5; });
   const scanPayment = await scan(v);
   assert.equal((await v.state()).demo.currentOrder, null);
   const review = await v.request('/scan/payment');
   assert.match(review.html, /Green Bowl/);
   assert.ok(!review.html.includes('Chicken Rice'));
-  assert.equal((await v.state()).demo.cashbackBalance, .5);
+  assert.equal(credit((await v.state()).demo, 'green-bowl'), .5);
   const responses = await Promise.all([
     v.request('/scan/payment', { journeyId: scanPayment.id, amount: '7.20', useCashback: 'on' }),
     v.request('/scan/payment', { journeyId: scanPayment.id, amount: '7.20', useCashback: 'on' })
@@ -175,10 +176,10 @@ test('Scan is standalone; custom amount, offset, immediate cashback, Vouch merch
   const tx = state.transactions[0];
   assert.equal(state.transactions.length, 1);
   assert.equal(tx.purchaseAmount, 7.2);
-  assert.equal(tx.cashbackUsed, .5);
+  assert.equal(tx.merchantCreditUsed, .5);
   assert.equal(tx.netsPaid, 6.7);
-  assert.equal(tx.cashbackAwarded, .5);
-  assert.equal(state.cashbackBalance, .5);
+  assert.equal(tx.merchantRewardEarned, .5);
+  assert.equal(credit(state, 'green-bowl'), .5);
   assert.equal(state.currentOrder, null);
   const receipt = await v.request(responses[0].location);
   assert.match(receipt.html, /Green Bowl/);
@@ -191,11 +192,11 @@ test('Scan is standalone; custom amount, offset, immediate cashback, Vouch merch
   assert.equal((await v.request('/payment')).status, 200);
   const payment = await v.request('/payment', { journeyId: order.id, useCashback: 'on' });
   state = (await v.state()).demo;
-  assert.equal(state.currentOrder.netsPaid, 7);
-  assert.equal(state.cashbackBalance, 0);
+  assert.equal(state.currentOrder.netsPaid, 7.5);
+  assert.equal(credit(state, order.merchantId), 0);
   assert.notEqual(payment.location, responses[0].location);
   await collect(v, order);
-  assert.equal((await v.state()).demo.cashbackBalance, .5);
+  assert.equal(credit((await v.state()).demo, order.merchantId), .5);
   const orderTx = (await v.state()).demo.currentOrder.transactionId;
   await v.request('/vouch/' + orderTx, { action: 'skip' });
   assert.equal((await v.state()).demo.currentOrder.vouchDecision, 'skipped');
@@ -209,6 +210,39 @@ test('Scan is standalone; custom amount, offset, immediate cashback, Vouch merch
   assert.equal(state.currentOrder.transactionId, orderTx);
 });
 
+test('Merchant Vouch Credit cannot be spent elsewhere and works on a return purchase', async function() {
+  const v = visitor();
+  const firstOrder = await accept(v);
+  await v.request('/payment', { journeyId: firstOrder.id });
+  await collect(v, firstOrder);
+  const firstTx = (await v.state()).demo.currentOrder.transactionId;
+  await v.request('/vouch/' + firstTx, { action: 'skip' });
+  let state = (await v.state()).demo;
+  assert.equal(firstOrder.merchantId, 'felicia-chicken-rice');
+  assert.equal(credit(state, 'felicia-chicken-rice'), .5);
+  await v.request('/recommendation/next', {});
+
+  const greenScan = await scan(v, 'green-bowl');
+  await v.request('/scan/payment', { journeyId: greenScan.id, amount: '4.80', useCashback: 'on' });
+  state = (await v.state()).demo;
+  assert.equal(state.transactions[0].merchantCreditUsed, 0);
+  assert.equal(credit(state, 'felicia-chicken-rice'), .5);
+  await v.request('/vouch/' + state.transactions[0].id, { action: 'skip' });
+
+  await v.change(function(demo) {
+    demo.rejectedMerchantIds = [];
+    demo.selectedMerchantId = null;
+    demo.shownMerchantIds = [];
+  });
+  const secondOrder = await accept(v);
+  await v.request('/payment', { journeyId: secondOrder.id, useCashback: 'on' });
+  state = (await v.state()).demo;
+  assert.equal(secondOrder.merchantId, 'felicia-chicken-rice');
+  assert.equal(state.transactions[0].merchantCreditUsed, .5);
+  assert.equal(state.transactions[0].netsPaid, 7);
+  assert.equal(credit(state, 'felicia-chicken-rice'), 0);
+});
+
 test('Amount validation, stale forms, $1 NETS floor and reset', async function() {
   const v = visitor();
   const pending = await scan(v);
@@ -220,22 +254,22 @@ test('Amount validation, stale forms, $1 NETS floor and reset', async function()
   await v.request('/scan/payment', { journeyId: 'old-scan', amount: '7' });
   assert.equal((await v.state()).demo.transactions.length, 0);
   await v.change(function(demo) {
-    demo.cashbackBalance = 5;
+    demo.vouchCredits['green-bowl'] = 5;
     demo.campaigns.find(function(c) { return c.merchantId === 'green-bowl'; }).status = 'INACTIVE';
   });
   await v.request('/scan/payment', { journeyId: pending.id, amount: '4.80', useCashback: 'on' });
   let state = (await v.state()).demo;
-  assert.equal(state.transactions[0].cashbackUsed, 3.8);
+  assert.equal(state.transactions[0].merchantCreditUsed, 3.8);
   assert.equal(state.transactions[0].netsPaid, 1);
-  assert.equal(state.transactions[0].cashbackAwarded, 0);
+  assert.equal(state.transactions[0].merchantRewardEarned, 0);
   assert.equal(state.transactions[0].eligible, true);
-  assert.equal(state.cashbackBalance, 1.2);
+  assert.equal(credit(state, 'green-bowl'), 1.2);
   await v.request('/vouch/' + state.transactions[0].id, { action: 'skip' });
   assert.equal((await v.state()).demo.paymentVerifiedVouches.length, 0);
   await v.request('/transactions/' + state.transactions[0].id + '/done', {});
   await v.request('/reset-demo', {});
   state = (await v.state()).demo;
-  assert.equal(state.cashbackBalance, 0);
+  assert.deepEqual(state.vouchCredits, {});
   assert.equal(state.transactions.length, 0);
   assert.equal(state.currentScanPayment, null);
   assert.equal(state.currentOrder, null);
@@ -256,7 +290,7 @@ test('Campaign cap, promised reward, concurrent collection and historical receip
   await v.request('/merchant/start-preparing', data);
   await v.request('/merchant/mark-ready', data);
   await Promise.all([v.request('/collection', data), v.request('/collection', data)]);
-  assert.equal((await v.state()).demo.cashbackBalance, .5);
+  assert.equal(credit((await v.state()).demo, order.merchantId), .5);
   assert.equal((await v.state()).demo.promotionalRedemptions.length, 1);
   await v.request('/vouch/' + txId, { action: 'skip' });
   await v.request('/recommendation/next', {});
@@ -268,8 +302,8 @@ test('Campaign cap, promised reward, concurrent collection and historical receip
     campaign.redemptionsToday = campaign.dailyCap;
   });
   await v.request('/scan/payment', { journeyId: pending.id, amount: '4.80' });
-  assert.equal((await v.state()).demo.transactions[0].cashbackAwarded, 0);
-  assert.equal((await v.state()).demo.cashbackBalance, .5);
+  assert.equal((await v.state()).demo.transactions[0].merchantRewardEarned, 0);
+  assert.equal(credit((await v.state()).demo, order.merchantId), .5);
 });
 
 test('Concurrent independent journeys cannot spend the same cashback twice', async function() {
@@ -277,7 +311,8 @@ test('Concurrent independent journeys cannot spend the same cashback twice', asy
   const order = await accept(v);
   const pending = await scan(v);
   await v.change(function(demo) {
-    demo.cashbackBalance = .5;
+    demo.vouchCredits[order.merchantId] = .5;
+    demo.vouchCredits['green-bowl'] = .5;
     demo.campaigns.forEach(function(c) { c.status = 'INACTIVE'; });
   });
   await Promise.all([
@@ -286,15 +321,17 @@ test('Concurrent independent journeys cannot spend the same cashback twice', asy
   ]);
   const state = (await v.state()).demo;
   assert.equal(state.transactions.length, 2);
-  assert.equal(state.transactions[0].cashbackUsed + state.transactions[1].cashbackUsed, .5);
-  assert.equal(state.cashbackBalance, 0);
+  assert.equal(state.transactions[0].merchantCreditUsed + state.transactions[1].merchantCreditUsed, 1);
+  assert.equal(credit(state, order.merchantId), 0);
+  assert.equal(credit(state, 'green-bowl'), 0);
   assert.notEqual(state.currentOrder.transactionId, state.currentScanPayment.transactionId);
 });
 
 test('Home balance, one-tap scan, tagged Vouch sharing and friend claim', async function() {
   const sender = visitor();
   const home = await sender.request('/home');
-  assert.ok(home.html.indexOf('Your Vouch Cashback') < home.html.indexOf('Your Smart Match'));
+  assert.match(home.html, /Your Smart Match/);
+  assert.ok(!home.html.includes('Your Vouch Cashback'));
   assert.ok(!home.html.includes('Already at a merchant'));
   const scanPage = await sender.request('/scan');
   assert.match(scanPage.html, /Scan Merchant QR/);
@@ -312,24 +349,35 @@ test('Home balance, one-tap scan, tagged Vouch sharing and friend claim', async 
   assert.match(share.html, /Copy link/);
   const receiver = visitor();
   const offerPath = '/offers/' + vouch.shareToken;
-  assert.match((await receiver.request(offerPath)).html, /Claim offer/);
+  assert.match((await receiver.request(offerPath)).html, /Claim Vouch/);
   await receiver.request(offerPath + '/claim', {});
   let receiverState = (await receiver.state()).demo;
-  assert.equal(receiverState.cashbackBalance, 0);
+  assert.equal(credit(receiverState, 'green-bowl'), 0);
   assert.equal(receiverState.activeVouchClaim.status, 'CLAIMED');
   await receiver.request(offerPath + '/claim', {});
   receiverState = (await receiver.state()).demo;
-  assert.equal(receiverState.cashbackBalance, 0);
+  assert.equal(credit(receiverState, 'green-bowl'), 0);
   const claimedScan = await scan(receiver, 'green-bowl');
-  await receiver.change(function(demo) {
-    demo.campaigns.find(function(campaign) { return campaign.merchantId === 'green-bowl'; }).status = 'INACTIVE';
-  });
   await receiver.request('/scan/payment', { journeyId: claimedScan.id, amount: '4.80' });
   receiverState = (await receiver.state()).demo;
   assert.equal(receiverState.activeVouchClaim.status, 'REDEEMED');
-  assert.equal(receiverState.cashbackBalance, .5);
+  assert.equal(credit(receiverState, 'green-bowl'), .5);
+  assert.equal(receiverState.transactions[0].source, 'shared-vouch');
+  assert.equal(receiverState.campaigns[1].redemptionsToday, 2);
+  assert.equal(receiverState.campaigns[1].platformFeeAccrued, .1);
   await receiver.request('/scan/payment', { journeyId: claimedScan.id, amount: '4.80' });
-  assert.equal((await receiver.state()).demo.cashbackBalance, .5);
+  assert.equal(credit((await receiver.state()).demo, 'green-bowl'), .5);
+  await sender.request('/home');
+  assert.equal(credit((await sender.state()).demo, 'green-bowl'), .7);
+
+  const wrongMerchant = visitor();
+  await wrongMerchant.request(offerPath + '/claim', {});
+  const wrongScan = await scan(wrongMerchant, 'spice-lane');
+  await wrongMerchant.request('/scan/payment', { journeyId: wrongScan.id, amount: '4.80' });
+  const wrongState = (await wrongMerchant.state()).demo;
+  assert.equal(wrongState.activeVouchClaim.status, 'CLAIMED');
+  assert.equal(credit(wrongState, 'green-bowl'), 0);
+  assert.equal(credit(wrongState, 'spice-lane'), .5);
 });
 
 test('Direct guards and all rendered pages / navigation destinations', async function() {

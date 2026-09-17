@@ -9,7 +9,7 @@
 <form method="POST" action="/collection" data-single-submit><input type="hidden" name="journeyId" value="<%= order.id %>"><button class="button" type="submit">Collect</button></form>
 <% } else if (order.vouchDecision === 'pending') { %>
 <div class="success-mark" aria-hidden="true">✓</div><h1>Collected</h1>
-<% if (transaction.cashbackAwarded > 0) { %><p class="reward">+$<%= transaction.cashbackAwarded.toFixed(2) %> Vouch Cashback</p><% } %>
+<% if (transaction.merchantRewardEarned > 0) { %><p class="reward">+$<%= transaction.merchantRewardEarned.toFixed(2) %> <%= transaction.merchantName %> Vouch Credit</p><% } %>
 <%- include('vouch-prompt', { transaction: transaction }) %>
 <% } else { %>
 <div class="success-mark" aria-hidden="true">✓</div><p class="eyebrow">Journey complete</p><h1><%= order.vouchDecision === 'created' ? 'Thanks for the Vouch' : 'Enjoy your day' %></h1><p>Your payment and rewards are saved in Profile.</p>

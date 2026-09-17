@@ -3,11 +3,11 @@
 <section class="claim-state"><div class="status-orbit" aria-hidden="true">×</div><h1>This offer is no longer available.</h1><a class="button" href="/home">Explore NETS Vouch</a></section>
 <% } else { %>
 <section class="shared-vouch-card"><p class="eyebrow">A Vouch from a friend</p><h1><%= offer.user %> Vouched for this place</h1><h2><%= offer.merchantName %></h2><div><span><%= offer.tagLabel %></span><span>✓ Verified NETS Visit</span></div></section>
-<section class="offer-card"><p class="eyebrow">Friend offer</p><h2>$<%= offer.rewardAmount.toFixed(2) %> Vouch Cashback</h2><p>Use it toward your next simulated NETS payment.</p>
+<section class="offer-card"><p class="eyebrow">Friend offer</p><h2>Get <%= offer.merchantName %> Vouch Credit</h2><p>Earn $<%= offer.rewardAmount.toFixed(2) %> after an eligible NETS payment at this merchant.</p>
 <% if (claimed && claim.status === 'REDEEMED') { %><div class="success-mark" aria-hidden="true">✓</div><h3>Reward unlocked</h3><p>Payment verified at <%= offer.merchantName %>.</p><a class="button" href="/home">Done</a>
-<% } else if (claimed) { %><div class="success-mark" aria-hidden="true">✓</div><h3>Offer saved</h3><p>Pay with NETS at <%= offer.merchantName %> to unlock $<%= offer.rewardAmount.toFixed(2) %> cashback.</p><a class="button" href="/scan">Scan to pay</a>
+<% } else if (claimed) { %><div class="success-mark" aria-hidden="true">✓</div><h3>Offer saved</h3><p>Pay with NETS at <%= offer.merchantName %> to unlock $<%= offer.rewardAmount.toFixed(2) %> Vouch Credit.</p><a class="button" href="/scan">Scan to pay</a>
 <% } else if (own) { %><p class="privacy-note">This link is ready to send to a friend.</p><a class="button" href="/home">Done</a>
-<% } else { %><form method="POST" action="/offers/<%= offer.token %>/claim" data-single-submit><button class="button" type="submit">Claim offer</button></form><small>One claim per demo visitor. Prototype reward only.</small><% } %>
+<% } else { %><form method="POST" action="/offers/<%= offer.token %>/claim" data-single-submit><button class="button" type="submit">Claim Vouch</button></form><small>Claiming does not release credit. Pay with NETS at this merchant first.</small><% } %>
 </section>
 <% } %>
 <%- include('partials/end', { active: '' }) %>

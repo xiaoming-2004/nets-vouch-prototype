@@ -6,4 +6,4 @@
 <% vouchTags.forEach(function(tag) { %><label><input type="radio" name="tag" value="<%= tag.id %>"><span><i aria-hidden="true">✓</i><%= tag.label %></span></label><% }); %>
 </div></fieldset><p class="privacy-note">A simple recommendation from a verified NETS visit — no rating or review needed.</p><button class="button" type="submit">Vouch this spot</button></form>
 <form method="POST" action="/vouch/<%= transaction.id %>" data-single-submit><input type="hidden" name="action" value="skip"><button class="text-button" type="submit">Not now</button></form>
-<%- include('partials/end', { active: transaction.source === 'scan' ? 'scan' : 'home' }) %>
+<%- include('partials/end', { active: transaction.journeySource === 'scan' ? 'scan' : 'home' }) %>

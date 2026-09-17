@@ -2,7 +2,7 @@
 <div class="meal-visual" aria-hidden="true"><span><%= recommendation.dietary.includes('vegan') ? '🥗' : recommendation.category === 'noodles' ? '🍜' : '🍚' %></span><i>✦</i></div>
 <div class="match-copy"><h2><%= recommendation.merchantName %></h2><p class="item"><%= recommendation.itemName %></p>
 <p class="facts">$<%= recommendation.price.toFixed(2) %><% if (recommendation.dietary.length) { %> · <%= recommendation.dietary[recommendation.dietary.length - 1] %><% } %> · <%= recommendation.distanceMinutes %> min</p>
-<% if (campaign) { %><p class="reward">$<%= campaign.rewardAmount.toFixed(2) %> cashback <small>after collection</small></p><% } else { %><p role="status">This offer has ended. Choose another spot.</p><% } %>
+<% if (campaign) { %><p class="reward">$<%= campaign.rewardAmount.toFixed(2) %> <%= recommendation.merchantName %> Vouch Credit <small>after collection</small></p><% } else { %><p role="status">This offer has ended. Choose another spot.</p><% } %>
 <div class="why"><strong>Why this match?</strong><p><%= matchReasons.join(' · ') %></p></div>
 <% if (vouchCount > 0) { %><p class="trust"><%= vouchCount %> Payment-Verified <%= vouchCount === 1 ? 'Vouch' : 'Vouches' %></p><% } %>
 <% if (campaign) { %><form method="POST" action="/recommendation/accept" data-single-submit><input type="hidden" name="merchantId" value="<%= recommendation.id %>"><button class="button" type="submit">Accept</button></form><% } %>

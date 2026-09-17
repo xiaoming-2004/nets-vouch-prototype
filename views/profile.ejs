@@ -1,5 +1,6 @@
 <%- include('partials/start', { title: 'Profile' }) %>
 <p class="eyebrow">Your space</p><h1><%= user.name %></h1>
+<section><p class="eyebrow">Your rewards</p><% if (!rewardCredits.length) { %><p class="card">Your merchant Vouch Credits will appear here.</p><% } %><div class="list"><% rewardCredits.forEach(function(credit) { %><article class="activity-row"><span class="monogram"><%= credit.merchantName.charAt(0) %></span><span><strong><%= credit.merchantName %></strong><small>Vouch Credit</small></span><b>$<%= credit.amount.toFixed(2) %></b></article><% }); %></div></section>
 <nav class="tabs" aria-label="Profile sections"><a href="/profile" <%- tab === 'settings' ? 'aria-current="page"' : '' %>>Preferences</a><a href="/profile?tab=vouches" <%- tab === 'vouches' ? 'aria-current="page"' : '' %>>My Vouches</a><a href="/profile?tab=transactions" <%- tab === 'transactions' ? 'aria-current="page"' : '' %>>NETS Activity</a></nav>
 <% if (tab === 'settings') { %>
 <% if (settingsError) { %><p class="error">Please choose valid settings.</p><% } %>
@@ -15,7 +16,7 @@
 <% } else { %>
 <h2>Payment-Verified Vouches</h2><% if (!paymentVerifiedVouches.length) { %><p class="card">Your first Vouch starts with a NETS payment.</p><% } %>
 <% paymentVerifiedVouches.forEach(function(vouch) { %><article class="card"><span class="eyebrow">Payment-Verified ✓</span><h3><%= vouch.merchantName %></h3><p><%= vouch.tagLabel %> · <%= vouch.date %> · <%= vouch.user %></p><small>Transaction <%= vouch.transactionId %> · Simulated verification</small></article><% }); %>
-<h2>Cashback earned</h2><% if (!promotionalRedemptions.length) { %><p>No rewards earned yet.</p><% } %>
+<h2>Vouch Credit earned</h2><% if (!promotionalRedemptions.length) { %><p>No rewards earned yet.</p><% } %>
 <% promotionalRedemptions.forEach(function(redemption) { %><article class="card"><h3><%= redemption.merchantName %></h3><p class="reward">+$<%= redemption.rewardAmount.toFixed(2) %></p><small><%= redemption.date %></small></article><% }); %>
 <% } %>
 <details class="demo-controls"><summary>Open House controls</summary><a class="text-button" href="/merchant?tab=orders">Merchant view</a><form method="POST" action="/reset-demo" data-confirm-reset><button class="text-button" type="submit">Reset Demo</button></form></details>
