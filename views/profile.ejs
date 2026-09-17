@@ -19,5 +19,5 @@
 <h2>Vouch Credit earned</h2><% if (!promotionalRedemptions.length) { %><p>No rewards earned yet.</p><% } %>
 <% promotionalRedemptions.forEach(function(redemption) { %><article class="card"><h3><%= redemption.merchantName %></h3><p class="reward">+$<%= redemption.rewardAmount.toFixed(2) %></p><small><%= redemption.date %></small></article><% }); %>
 <% } %>
-<details class="demo-controls"><summary>Open House controls</summary><a class="text-button" href="/merchant?tab=orders">Merchant view</a><form method="POST" action="/reset-demo" data-confirm-reset><button class="text-button" type="submit">Reset Demo</button></form></details>
+<details class="demo-controls"><summary>Open House controls</summary><a class="text-button" href="/merchant">Merchant view</a><form method="POST" action="/reset-demo" data-confirm-reset><button class="text-button" type="submit">Reset Demo</button></form></details>
 <%- include('partials/end', { active: 'profile' }) %>

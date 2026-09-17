@@ -1,8 +1,5 @@
 <%- include('partials/start', { title: 'Home' }) %>
 <header class="greeting"><p>Good afternoon, <%= user.name %> 👋</p><h1>Lunch in 10 minutes?</h1></header>
-<% if (order) { %>
-<%- include('partials/order-card', { order: order, transaction: transaction, onHome: true }) %>
-<% } else { %>
 <section id="smart-match"><p class="eyebrow">Your Smart Match</p>
 <div data-match-region aria-live="polite" aria-busy="<%= recommendation ? 'false' : 'true' %>">
 <% if (recommendation) { %><%- include('smart-match-card') %><% } else { %>
@@ -10,5 +7,4 @@
 <noscript><a class="button" href="/smart-match/static">Find my match</a></noscript>
 <% } %>
 </div></section>
-<% } %>
 <%- include('partials/end', { active: 'home' }) %>

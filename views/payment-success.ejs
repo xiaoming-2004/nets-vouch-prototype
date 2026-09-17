@@ -1,13 +1,8 @@
 <%- include('partials/start', { title: 'Payment successful' }) %>
 <section class="receipt"><div class="success-mark" aria-hidden="true">✓</div><h1>Payment successful</h1><h2><%= transaction.merchantName %></h2>
-<% if (transaction.journeySource === 'smart-match') { %>
-<p><%= transaction.itemName %></p><p>The merchant has your order.</p>
-<% if (transaction.promisedReward > 0 && !transaction.rewardReleased) { %><p class="reward">$<%= transaction.promisedReward.toFixed(2) %> <%= transaction.merchantName %> Vouch Credit</p><p>Unlocks after collection.</p><% } %>
-<% if (currentOrderMatches && !transaction.collected) { %><a class="button" href="/order">Track order</a><% } else { %><a class="button" href="/home">Done</a><% } %>
-<% } else { %>
 <dl class="receipt-lines"><div><dt>Purchase</dt><dd>$<%= transaction.purchaseAmount.toFixed(2) %></dd></div><div><dt><%= transaction.merchantName %> credit used</dt><dd>−$<%= transaction.merchantCreditUsed.toFixed(2) %></dd></div><div><dt>Paid with NETS</dt><dd>$<%= transaction.netsPaid.toFixed(2) %></dd></div></dl>
 <% if (transaction.merchantRewardEarned > 0) { %><p class="reward">+$<%= transaction.merchantRewardEarned.toFixed(2) %> <%= transaction.merchantName %> Vouch Credit</p><% } %>
 <% if (canVouch && transaction.vouchDecision === 'pending') { %><%- include('partials/vouch-prompt', { transaction: transaction }) %>
 <% } else { %><form method="POST" action="/transactions/<%= transaction.id %>/done"><button class="button" type="submit">Done</button></form><% } %>
-<% } %></section>
-<%- include('partials/end', { active: transaction.journeySource === 'scan' ? 'scan' : 'home' }) %>
+</section>
+<%- include('partials/end', { active: 'scan' }) %>

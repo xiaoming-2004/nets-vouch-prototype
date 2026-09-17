@@ -124,16 +124,3 @@ document.addEventListener('submit', function(event) {
 window.addEventListener('pageshow', function(event) {
   if (event.persisted) window.location.reload();
 });
-
-// Reflect merchant readiness without fake preparation timers.
-const orderCard = document.querySelector('[data-order-id]');
-if (orderCard && ['PAID', 'PREPARING'].includes(orderCard.dataset.orderStatus)) {
-  window.setInterval(async function() {
-    if (document.hidden) return;
-    try {
-      const response = await fetch('/order/state');
-      const state = await response.json();
-      if (state.id !== orderCard.dataset.orderId || state.status !== orderCard.dataset.orderStatus) location.reload();
-    } catch (error) { /* The next poll can recover from temporary loss of connection. */ }
-  }, 4000);
-}

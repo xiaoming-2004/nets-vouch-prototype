@@ -70,7 +70,7 @@ const fallbackMerchants = [
     merchantName: merchants.felicia.name,
     name: merchants.felicia.name,
     itemName: 'Chicken Rice',
-    price: 7.50,
+    price: 5.00,
     category: 'chicken-rice',
     address: merchants.felicia.outlet,
     dietary: ['halal'],
@@ -183,21 +183,21 @@ function createCampaigns() {
 
 function createInitialDemo() {
   return {
-    version: 7,
+    version: 8,
     user: { id: 'jia', name: 'Jia' },
     profile: { dietaryPreference: 'none', budget: 10, maxDistanceMinutes: 10, notifications: true },
     vouchCredits: {},
-    nearbyMerchants: [], selectedMerchantId: null, rejectedMerchantIds: [],
+    nearbyMerchants: [], selectedMerchantId: null, recommendationAccepted: false, rejectedMerchantIds: [],
     recommendationFeedback: [], shownMerchantIds: [],
-    currentOrder: null, currentScanPayment: null, activeVouchClaim: null,
+    currentScanPayment: null, activeVouchClaim: null,
     transactions: [], paymentVerifiedVouches: [], promotionalRedemptions: [],
     campaigns: createCampaigns(),
-    nextOrderNumber: 104, nextScanNumber: 1, nextTransactionNumber: 1, nextVouchNumber: 1
+    nextScanNumber: 1, nextTransactionNumber: 1, nextVouchNumber: 1
   };
 }
 
 function initialiseDemoSession(req) {
-  if (!req.session.demo || req.session.demo.version !== 7) {
+  if (!req.session.demo || req.session.demo.version !== 8) {
     req.session.demo = createInitialDemo();
   }
 }
@@ -244,16 +244,6 @@ function findTransactionById(transactions, transactionId) {
   for (let i = 0; i < transactions.length; i++) {
     if (transactions[i].id === transactionId) return transactions[i];
   }
-  return null;
-}
-
-function findOrderById(demo, orderId) {
-  if (demo.currentOrder && demo.currentOrder.id === orderId) return demo.currentOrder;
-  return null;
-}
-
-function findOrderByTransactionId(demo, transactionId) {
-  if (demo.currentOrder && demo.currentOrder.transactionId === transactionId) return demo.currentOrder;
   return null;
 }
 
@@ -642,7 +632,7 @@ function recordPayment(demo, journey, amount, useCashback) {
   const matchingClaim = demo.activeVouchClaim && demo.activeVouchClaim.status === 'CLAIMED' &&
     demo.activeVouchClaim.merchantId === journey.merchantId ? demo.activeVouchClaim : null;
   const rewardEligible = eligible && campaign && getCampaignAvailability(campaign, false).available;
-  const rewardSource = rewardEligible && matchingClaim ? 'shared-vouch' : journey.source;
+  const rewardSource = rewardEligible && matchingClaim ? 'shared-vouch' : (journey.attributionSource || journey.source);
   let senderReferralReward = 0;
   if (rewardEligible && matchingClaim && campaign.senderReferralReward > 0 &&
       campaign.dailyCap - campaign.redemptionsToday >= 2) {
@@ -701,7 +691,6 @@ function recordPayment(demo, journey, amount, useCashback) {
 
 function releaseMerchantReward(demo, transaction, journey) {
   if (transaction.rewardReleased) return;
-  if (journey.source === 'smart-match' && !transaction.collected) return;
   transaction.rewardReleased = true;
   transaction.merchantRewardEarned = transaction.promisedReward;
   transaction.cashbackAwarded = transaction.merchantRewardEarned;
@@ -721,7 +710,7 @@ function releaseMerchantReward(demo, transaction, journey) {
 
 function canVouch(transaction) {
   return transaction && transaction.status === 'Successful' && transaction.eligible &&
-    (transaction.journeySource === 'scan' || transaction.collected);
+    transaction.journeySource === 'scan';
 }
 
 function setVouchDecision(demo, transaction, decision) {
@@ -730,7 +719,13 @@ function setVouchDecision(demo, transaction, decision) {
     findOrderByTransactionId(demo, transaction.id);
   if (journey && journey.transactionId === transaction.id) {
     journey.vouchDecision = decision;
-    if (transaction.journeySource === 'scan') journey.status = 'COMPLETE';
+    if (transaction.journeySource === 'scan') {
+      journey.status = 'COMPLETE';
+      if (demo.selectedMerchantId === transaction.merchantId) {
+        demo.selectedMerchantId = null;
+        demo.recommendationAccepted = false;
+      }
+    }
   }
 }
 
@@ -739,7 +734,7 @@ function matchView(demo, recommendation) {
     recommendation: recommendation,
     campaign: recommendation ? findCampaignForMerchant(recommendation, demo) : null,
     matchReasons: recommendation ? getMatchReasons(demo.profile, recommendation, demo.recommendationFeedback) : [],
-    rejectionReasons: rejectionReasons,
+    rejectionReasons: rejectionReasons, recommendationAccepted: demo.recommendationAccepted,
     vouchCount: recommendation ? countVouches(demo, recommendation.id) : 0
   };
 }
@@ -788,15 +783,13 @@ app.get('/home', function(req, res) {
   const demo = req.session.demo;
   const recommendation = findMerchantForDemo(demo, demo.selectedMerchantId);
   res.render('home', {
-    ...matchView(demo, recommendation), user: demo.user, order: demo.currentOrder,
-    transaction: demo.currentOrder ? findTransactionById(demo.transactions, demo.currentOrder.transactionId) : null,
+    ...matchView(demo, recommendation), user: demo.user,
     matchingAgain: req.query.matching === 'again'
   });
 });
 
 app.get('/smart-match/result', async function(req, res) {
   const demo = req.session.demo;
-  if (demo.currentOrder) return res.status(409).send('Return Home to continue your order.');
   let recommendation = findMerchantForDemo(demo, demo.selectedMerchantId);
   if (!recommendation) {
     if (!demo.nearbyMerchants.length) demo.nearbyMerchants = (await getNearbyMerchants()).merchants;
@@ -817,7 +810,7 @@ app.get('/smart-match/result', async function(req, res) {
 // Plain HTML fallback for visitors with JavaScript disabled.
 app.get('/smart-match/static', function(req, res) {
   const demo = req.session.demo;
-  if (!demo.currentOrder && !demo.selectedMerchantId) {
+  if (!demo.selectedMerchantId) {
     demo.nearbyMerchants = copyObjects(fallbackMerchants);
     const merchant = getSmartRecommendation(demo.profile, demo.nearbyMerchants,
       demo.rejectedMerchantIds, demo.recommendationFeedback, demo);
@@ -837,7 +830,7 @@ app.get('/recommendation/reject', function(req, res) { res.redirect('/home#feedb
 app.post('/recommendation/reject', function(req, res) {
   const demo = req.session.demo;
   const merchant = findMerchantForDemo(demo, demo.selectedMerchantId);
-  if (demo.currentOrder || !merchant || req.body.merchantId !== merchant.id ||
+  if (!merchant || req.body.merchantId !== merchant.id ||
       !isValidRejectionReason(req.body.reason)) {
     if (req.get('X-Requested-With') === 'smart-match') return res.status(409).send('Refresh Home and try again.');
     return res.redirect('/home');
@@ -846,19 +839,15 @@ app.post('/recommendation/reject', function(req, res) {
   demo.recommendationFeedback.push({ merchantId: merchant.id, reason: req.body.reason,
     category: merchant.category, price: merchant.price, distanceMinutes: merchant.distanceMinutes });
   demo.selectedMerchantId = null;
+  demo.recommendationAccepted = false;
   if (req.get('X-Requested-With') === 'smart-match') return res.sendStatus(204);
   res.redirect('/home?matching=again');
 });
 
 function restartMatch(req, res) {
   const demo = req.session.demo;
-  if (demo.currentOrder && !(demo.currentOrder.status === 'COLLECTED' &&
-      demo.currentOrder.vouchDecision !== 'pending')) return res.redirect('/home');
-  if (demo.currentOrder && !demo.rejectedMerchantIds.includes(demo.currentOrder.merchantId)) {
-    demo.rejectedMerchantIds.push(demo.currentOrder.merchantId);
-  }
-  demo.currentOrder = null;
   demo.selectedMerchantId = null;
+  demo.recommendationAccepted = false;
   demo.shownMerchantIds = [];
   if (req.path === '/recommendation/try-again') demo.rejectedMerchantIds = [];
   if (req.path === '/recommendation/widen-distance') {
@@ -872,44 +861,19 @@ app.post('/recommendation/widen-distance', restartMatch);
 
 app.post('/recommendation/accept', function(req, res) {
   const demo = req.session.demo;
-  if (demo.currentOrder) return res.redirect(demo.currentOrder.status === 'PENDING_PAYMENT' ? '/payment' : '/order');
   const merchant = findMerchantForDemo(demo, demo.selectedMerchantId);
   if (!merchant || merchant.id !== req.body.merchantId ||
       !merchantMatchesProfile(merchant, demo.profile) || !findCampaignForMerchant(merchant, demo)) {
     return res.redirect('/home?error=offer');
   }
-  const number = demo.nextOrderNumber++;
-  demo.currentOrder = {
-    id: 'order-' + number, orderNumber: number, source: 'smart-match',
-    merchantId: merchant.id, merchantName: merchant.merchantName, outlet: merchant.address,
-    itemName: merchant.itemName, orderAmount: merchant.price, distanceMinutes: merchant.distanceMinutes,
-    status: 'PENDING_PAYMENT', transactionId: null, paymentRecorded: false,
-    cashbackUsed: 0, netsPaid: 0, cashbackReleased: false, cashbackAwarded: 0,
-    collected: false, vouchDecision: 'pending'
-  };
-  findCampaign(demo, merchant.id).metrics.accepted += 1;
-  res.redirect('/payment');
+  if (!demo.recommendationAccepted) findCampaign(demo, merchant.id).metrics.accepted += 1;
+  demo.recommendationAccepted = true;
+  res.redirect('/home');
 });
 
-// Smart Match review and payment. Scan uses its own explicit routes.
-app.get('/payment', function(req, res) {
-  const demo = req.session.demo;
-  const order = demo.currentOrder;
-  if (!order) return res.redirect('/home');
-  if (order.status !== 'PENDING_PAYMENT') return res.redirect('/order');
-  res.render('payment', { journey: order, scan: false,
-    merchantCredit: getMerchantCredit(demo, order.merchantId),
-    campaign: findCampaignForMerchant(findMerchantForDemo(demo, order.merchantId), demo),
-    error: null });
-});
-app.post('/payment', function(req, res) {
-  const demo = req.session.demo;
-  const order = demo.currentOrder;
-  if (!order || req.body.journeyId !== order.id) return res.redirect('/home');
-  if (order.transactionId) return res.redirect(receiptUrl(findTransactionById(demo.transactions, order.transactionId)));
-  const transaction = recordPayment(demo, order, order.orderAmount, req.body.useCashback === 'on');
-  res.redirect(receiptUrl(transaction));
-});
+// Preorder payment is retired. In-store Scan is the only payment entry.
+app.get('/payment', function(req, res) { res.redirect('/scan'); });
+app.post('/payment', function(req, res) { res.redirect('/scan'); });
 
 // Standalone scan: merchant identity -> amount and cashback -> Pay.
 app.get('/scan', function(req, res) {
@@ -919,7 +883,8 @@ app.get('/scan', function(req, res) {
   if (scan && scan.status === 'PAID') return res.redirect('/vouch/' + scan.transactionId);
   res.render('scan', { error: req.query.error === 'invalid',
     merchantId: demo.activeVouchClaim && demo.activeVouchClaim.status === 'CLAIMED' ?
-      demo.activeVouchClaim.merchantId : 'green-bowl' });
+      demo.activeVouchClaim.merchantId :
+      demo.recommendationAccepted && demo.selectedMerchantId ? demo.selectedMerchantId : 'green-bowl' });
 });
 app.post('/scan', function(req, res) {
   const demo = req.session.demo;
@@ -933,6 +898,7 @@ app.post('/scan', function(req, res) {
   if (existing && existing.status === 'MERCHANT_FOUND') return res.redirect('/scan/payment');
   demo.currentScanPayment = {
     id: 'scan-' + demo.nextScanNumber++, source: 'scan',
+    attributionSource: demo.recommendationAccepted && demo.selectedMerchantId === merchant.id ? 'smart-match' : 'scan',
     merchantId: merchant.id, merchantName: merchant.merchantName, outlet: merchant.address,
     enteredAmount: null, status: 'MERCHANT_FOUND', transactionId: null,
     cashbackUsed: 0, netsPaid: 0, cashbackAwarded: 0, vouchDecision: 'pending'
@@ -981,38 +947,13 @@ app.get('/payment-success/:id', function(req, res) {
   const demo = req.session.demo;
   const transaction = findTransactionById(demo.transactions, req.params.id);
   if (!transaction) return res.redirect('/home');
-  res.render('payment-success', { transaction: transaction, canVouch: canVouch(transaction),
-    currentOrderMatches: Boolean(findOrderByTransactionId(demo, transaction.id)) });
+  res.render('payment-success', { transaction: transaction, canVouch: canVouch(transaction) });
 });
 
-// Collection and merchant-controlled readiness
-app.get('/order', function(req, res) {
-  const demo = req.session.demo;
-  const order = demo.currentOrder;
-  if (!order) return res.redirect('/home');
-  if (order.status === 'PENDING_PAYMENT') return res.redirect('/payment');
-  res.render('order-status', { order: order,
-    transaction: findTransactionById(demo.transactions, order.transactionId) });
-});
-app.get('/order/state', function(req, res) {
-  const order = req.session.demo.currentOrder;
-  res.json({ id: order ? order.id : null, status: order ? order.status : null });
-});
-app.post('/collection', function(req, res) {
-  const demo = req.session.demo;
-  const order = findOrderById(demo, req.body.journeyId);
-  if (order && req.body.journeyId === order.id && order.status === 'READY') {
-    const transaction = findTransactionById(demo.transactions, order.transactionId);
-    if (transaction && order.paymentRecorded) {
-      order.status = 'COLLECTED';
-      order.collected = true;
-      transaction.collected = true;
-      releaseMerchantReward(demo, transaction, order);
-    }
-  }
-  res.redirect('/order');
-});
-app.get('/collection', function(req, res) { res.redirect('/order'); });
+app.get('/order', function(req, res) { res.redirect('/home'); });
+app.get('/order/state', function(req, res) { res.json({ id: null, status: null }); });
+app.get('/collection', function(req, res) { res.redirect('/home'); });
+app.post('/collection', function(req, res) { res.redirect('/home'); });
 
 // Payment-Verified Vouches: one decision per transaction.
 app.get('/vouch', function(req, res) { res.redirect('/home'); });
@@ -1124,6 +1065,7 @@ app.post('/profile', function(req, res) {
   demo.profile = { dietaryPreference: req.body.dietaryPreference, budget: budget,
     maxDistanceMinutes: distance, notifications: req.body.notifications === 'on' };
   demo.selectedMerchantId = null;
+  demo.recommendationAccepted = false;
   res.redirect('/profile?saved=1');
 });
 app.get('/transactions/:id', function(req, res) {
@@ -1135,26 +1077,19 @@ app.get('/transactions/:id', function(req, res) {
 // Merchant demo: switch merchant without changing Jia's selected recommendation.
 app.get('/merchant', function(req, res) {
   const demo = req.session.demo;
-  const defaultId = demo.currentOrder ? demo.currentOrder.merchantId : fallbackMerchants[0].id;
+  const defaultId = demo.selectedMerchantId || fallbackMerchants[0].id;
   const merchant = findMerchantById(fallbackMerchants, req.query.merchantId || defaultId);
   if (!merchant) return res.redirect('/merchant');
   const campaign = findCampaign(demo, merchant.id);
   res.render('merchant', {
     merchants: fallbackMerchants, merchant: merchant, campaign: campaign,
-    tab: ['orders', 'results'].includes(req.query.tab) ? req.query.tab : 'campaign',
+    tab: req.query.tab === 'results' ? 'results' : 'campaign',
     availability: getCampaignAvailability(campaign, false),
-    order: demo.currentOrder && demo.currentOrder.merchantId === merchant.id ? demo.currentOrder : null,
     error: req.query.error === 'invalid'
   });
 });
-function merchantTransition(req, res, from, to) {
-  const order = findOrderById(req.session.demo, req.body.journeyId);
-  if (order && req.body.journeyId === order.id && req.body.merchantId === order.merchantId &&
-      order.status === from) order.status = to;
-  res.redirect('/merchant?tab=orders&merchantId=' + encodeURIComponent(req.body.merchantId || ''));
-}
-app.post('/merchant/start-preparing', function(req, res) { merchantTransition(req, res, 'PAID', 'PREPARING'); });
-app.post('/merchant/mark-ready', function(req, res) { merchantTransition(req, res, 'PREPARING', 'READY'); });
+app.post('/merchant/start-preparing', function(req, res) { res.redirect('/merchant'); });
+app.post('/merchant/mark-ready', function(req, res) { res.redirect('/merchant'); });
 app.post('/merchant/offer', function(req, res) {
   const campaign = findCampaign(req.session.demo, req.body.merchantId);
   const reward = Number(req.body.rewardAmount);
