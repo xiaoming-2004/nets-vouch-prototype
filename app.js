@@ -14,6 +14,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const MINIMUM_ELIGIBLE_PAYMENT = 1.00;
 const PLACES_REQUEST_TIMEOUT_MS = 3500;
+const AI_RANKING_TIMEOUT_MS = 3000;
 const CLAIM_EXPIRY_MS = 20 * 60 * 1000;
 const REFERRAL_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -500,6 +501,70 @@ function wasMerchantRejected(merchantId, rejectedMerchantIds) {
 function getLastFeedback(feedbackItems) {
   if (feedbackItems.length === 0) return null;
   return feedbackItems[feedbackItems.length - 1];
+}
+
+async function getAIRanking(profile, eligible, feedbackItems) {
+  const merchantSummaries = eligible.map(function(m) {
+    return {
+      id: m.id,
+      name: m.merchantName,
+      item: m.itemName || 'menu item',
+      price: m.price !== null ? '$' + m.price.toFixed(2) : 'varies',
+      walkMinutes: m.distanceMinutes,
+      dietary: m.dietary.length ? m.dietary.join(', ') : 'any'
+    };
+  });
+
+  const lastFeedback = getLastFeedback(feedbackItems);
+  const feedbackNote = lastFeedback
+    ? 'The user just rejected a previous suggestion because: ' + lastFeedback.reason + '.'
+    : '';
+
+  const prompt = [
+    'You are Smart Match, a food recommendation engine for NETS Vouch AI in Singapore.',
+    'Pick the single best merchant for this user from the eligible list.',
+    '',
+    'User profile:',
+    '- Dietary preference: ' + profile.dietaryPreference,
+    '- Budget: $' + profile.budget,
+    '- Max walking distance: ' + profile.maxDistanceMinutes + ' minutes',
+    feedbackNote,
+    '',
+    'Eligible merchants (JSON array):',
+    JSON.stringify(merchantSummaries),
+    '',
+    'Reply with valid JSON only — no markdown, no extra text:',
+    '{"merchantId":"<exact id from the list above>","reason":"<one sentence, under 12 words>"}'
+  ].join('\n');
+
+  const controller = new AbortController();
+  const timeout = setTimeout(function() { controller.abort(); }, AI_RANKING_TIMEOUT_MS);
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 100,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    if (!response.ok) throw new Error('Anthropic API returned ' + response.status);
+    const data = await response.json();
+    const parsed = JSON.parse(data.content[0].text.trim());
+    if (typeof parsed.merchantId !== 'string' || typeof parsed.reason !== 'string') {
+      throw new Error('AI response missing merchantId or reason');
+    }
+    return parsed;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function getEligibleMerchants(profile, nearbyMerchants, rejectedMerchantIds, demo) {
