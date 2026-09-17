@@ -7,7 +7,7 @@
 <% if (claimed && claim.status === 'REDEEMED') { %><div class="success-mark" aria-hidden="true">✓</div><h3>Reward unlocked</h3><p>Payment verified at <%= offer.merchantName %>.</p><a class="button" href="/home">Done</a>
 <% } else if (claimed) { %><div class="success-mark" aria-hidden="true">✓</div><h3>Offer saved</h3><p>Pay with NETS at <%= offer.merchantName %> to unlock $<%= offer.rewardAmount.toFixed(2) %> Vouch Credit.</p><a class="button" href="/scan">Scan to pay</a>
 <% } else if (own) { %><p class="privacy-note">This link is ready to send to a friend.</p><a class="button" href="/home">Done</a>
-<% } else { %><form method="POST" action="/offers/<%= offer.token %>/claim" data-single-submit><button class="button" type="submit">Claim Vouch</button></form><small>Claiming does not release credit. Pay with NETS at this merchant first.</small><% } %>
+<% } else { %><form method="POST" action="/offers/<%= offer.token %>/claim" data-single-submit><button class="button" type="submit">Claim offer</button></form><small>Claiming does not release credit. Pay with NETS at this merchant first.</small><% } %>
 </section>
 <% } %>
 <%- include('partials/end', { active: '' }) %>

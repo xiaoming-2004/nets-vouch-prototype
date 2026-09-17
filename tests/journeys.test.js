@@ -77,7 +77,7 @@ test('Smart Match recommends a merchant, keeps feedback and hands off to Scan', 
   const first = await match(v);
   assert.match(first.html, /felicia-chicken-rice/);
   assert.match(first.html, /Try: Chicken Rice · \$5\.00/);
-  assert.match(first.html, /Scan when you arrive/);
+  assert.match(first.html, /Choose this/);
   assert.ok(!first.html.includes('Go there'));
   assert.ok(!first.html.includes('after collection'));
   const feliciaId = (await v.state()).demo.selectedMerchantId;
@@ -103,7 +103,7 @@ test('Profile preferences still filter Smart Match', async function() {
     assert.equal(saved.location, '/home?matching=again');
     const result = await v.request('/smart-match/result');
     assert.equal(result.status, 200);
-    if (dietary !== 'none') assert.match(result.html, new RegExp(dietary));
+    if (dietary !== 'none') assert.match(result.html, new RegExp(dietary, 'i'));
   }
   await v.request('/profile', { dietaryPreference: 'none', budget: '1', maxDistanceMinutes: '1' });
   assert.match((await v.request('/smart-match/result')).html, /all we've got/);

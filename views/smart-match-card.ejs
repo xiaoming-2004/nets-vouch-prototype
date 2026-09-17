@@ -1,13 +1,13 @@
 <article class="match-card reveal" data-merchant-id="<%= recommendation.id %>">
 <div class="meal-visual" aria-hidden="true"><span><%= recommendation.merchantName.charAt(0) %></span><i>NETS Smart Match</i></div>
-<div class="match-copy"><% if (recommendationAccepted) { %><p class="eyebrow">Heading there?</p><% } %><h2><%= recommendation.merchantName %></h2><p class="item">Try: <%= recommendation.itemName %> · $<%= recommendation.price.toFixed(2) %></p>
-<p class="facts"><% if (recommendation.dietary.length) { %><%= recommendation.dietary[recommendation.dietary.length - 1] %> · <% } %><%= recommendation.distanceMinutes %> min away</p>
+<div class="match-copy"><% if (recommendationAccepted) { %><p class="eyebrow">Your pick</p><h2>Heading to <%= recommendation.merchantName %>?</h2><% } else { %><h2><%= recommendation.merchantName %></h2><% } %><p class="item">Try: <%= recommendation.itemName %> · $<%= recommendation.price.toFixed(2) %></p>
+<p class="facts"><% if (dietaryTagLabel) { %><%= dietaryTagLabel %> · <% } %><%= recommendation.distanceMinutes %> min away</p>
 <% if (campaign) { %><p class="reward">Earn $<%= campaign.rewardAmount.toFixed(2) %> <%= recommendation.merchantName %> Vouch Credit <small>on an eligible NETS purchase</small></p><% } else { %><p role="status">This offer has ended. Choose another spot.</p><% } %>
 <div class="why"><strong>Why this match?</strong><p><%= matchReasons.join(' · ') %></p></div>
 <% if (vouchCount > 0) { %><p class="trust"><%= vouchCount %> Payment-Verified <%= vouchCount === 1 ? 'Vouch' : 'Vouches' %></p><% } %>
-<% if (campaign && !recommendationAccepted) { %><form method="POST" action="/recommendation/accept" data-single-submit><input type="hidden" name="merchantId" value="<%= recommendation.id %>"><button class="button" type="submit">Scan when you arrive</button></form><% } %>
+<% if (campaign && !recommendationAccepted) { %><form method="POST" action="/recommendation/accept" data-single-submit><input type="hidden" name="merchantId" value="<%= recommendation.id %>"><button class="button" type="submit">Choose this</button></form><% } %>
 <% if (campaign && recommendationAccepted) { %><a class="button" href="/scan">Scan when you arrive</a><% } %>
-<details class="feedback" id="feedback"><summary>Not for me</summary>
+<details class="feedback" id="feedback"><summary><%= recommendationAccepted ? 'Changed your mind?' : 'Not for me' %></summary>
 <div class="feedback-sheet"><h3>What didn't fit?</h3><form method="POST" action="/recommendation/reject" data-feedback>
 <input type="hidden" name="merchantId" value="<%= recommendation.id %>">
 <% rejectionReasons.forEach(function(reason) { %><button type="submit" name="reason" value="<%= reason.id %>"><%= reason.label %><span aria-hidden="true">→</span></button><% }); %>

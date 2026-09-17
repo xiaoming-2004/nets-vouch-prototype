@@ -1,5 +1,6 @@
 <%- include('partials/start', { title: 'Pay with NETS' }) %>
 <div class="pay-head"><a class="back-icon" href="/home" aria-label="Back to Home">←</a><h1 class="pay-title">Pay with NETS</h1></div>
+<p class="eyebrow scan-found">✓ Merchant found</p>
 <div class="pay-merchant"><span class="monogram pay-monogram"><%= journey.merchantName.charAt(0) %></span><h2><%= journey.merchantName %></h2><p><%= journey.outlet %></p></div>
 <% if (error) { %><p class="error" role="alert"><%= error %></p><% } %>
 <form method="POST" action="/scan/payment" data-payment data-balance="<%= merchantCredit %>" data-amount="">

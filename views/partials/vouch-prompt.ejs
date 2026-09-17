@@ -1,5 +1,8 @@
 <section class="vouch-prompt">
-<p class="eyebrow">Enjoyed it?</p><h2>Vouch for this spot</h2><p><%= transaction.merchantName %><br>Help the next student choose.</p>
-<a class="button" href="/vouch/<%= transaction.id %>">Vouch this spot</a>
+<p class="eyebrow">Enjoyed this place?</p>
+<form method="POST" action="/vouch/<%= transaction.id %>" class="tag-form" data-single-submit>
+<input type="hidden" name="action" value="create"><fieldset><legend>Add a tag <span>(optional)</span></legend><div class="tag-grid">
+<% vouchTags.forEach(function(tag) { %><label><input type="radio" name="tag" value="<%= tag.id %>"><span><i aria-hidden="true">✓</i><%= tag.label %></span></label><% }); %>
+</div></fieldset><button class="button" type="submit">Vouch this spot</button></form>
 <form method="POST" action="/vouch/<%= transaction.id %>" data-single-submit><input type="hidden" name="action" value="skip"><button class="text-button" type="submit">Not now</button></form>
 </section>

@@ -742,7 +742,9 @@ function matchView(demo, recommendation) {
     campaign: recommendation ? findCampaignForMerchant(recommendation, demo) : null,
     matchReasons: recommendation ? getMatchReasons(demo.profile, recommendation, demo.recommendationFeedback) : [],
     rejectionReasons: rejectionReasons, recommendationAccepted: demo.recommendationAccepted,
-    vouchCount: recommendation ? countVouches(demo, recommendation.id) : 0
+    vouchCount: recommendation ? countVouches(demo, recommendation.id) : 0,
+    dietaryTagLabel: recommendation && recommendation.dietary.length ?
+      getDietaryPreferenceLabel(recommendation.dietary[recommendation.dietary.length - 1]) : null
   };
 }
 
@@ -953,7 +955,7 @@ app.get('/payment-success/:id', function(req, res) {
   const demo = req.session.demo;
   const transaction = findTransactionById(demo.transactions, req.params.id);
   if (!transaction) return res.redirect('/home');
-  res.render('payment-success', { transaction: transaction, canVouch: canVouch(transaction) });
+  res.render('payment-success', { transaction: transaction, canVouch: canVouch(transaction), vouchTags: vouchTags });
 });
 
 app.get('/order', function(req, res) { res.redirect('/home'); });
