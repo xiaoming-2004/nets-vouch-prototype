@@ -14,6 +14,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const MINIMUM_ELIGIBLE_PAYMENT = 1.00;
 const PLACES_REQUEST_TIMEOUT_MS = 3500;
+const CLAIM_EXPIRY_MS = 20 * 60 * 1000;
+const REFERRAL_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
 
 // Configure Express
 app.set('view engine', 'ejs');
@@ -165,39 +167,66 @@ const vouchTags = [
 // Shared links live across demo sessions, but disappear when this prototype restarts.
 const sharedOffers = new Map();
 
+// Prototype identity support: a stable userId per demo persona (no real auth). Lets
+// self-referral and cooldown rules key off who someone actually is, not just their browser session.
+const demoIdentities = {
+  jia: { id: 'jia', name: 'Jia', fullName: 'Jia Yi' },
+  darren: { id: 'darren', name: 'Darren', fullName: 'Darren Tan' }
+};
+function isValidDemoIdentity(id) { return Object.prototype.hasOwnProperty.call(demoIdentities, id); }
+
+// Caps how often the same sender/recipient/merchant referral loop can earn a reward.
+const referralCooldowns = new Map();
+function referralCooldownKey(senderUserId, recipientUserId, merchantId) {
+  return senderUserId + '|' + recipientUserId + '|' + merchantId;
+}
+function isReferralOnCooldown(senderUserId, recipientUserId, merchantId) {
+  const last = referralCooldowns.get(referralCooldownKey(senderUserId, recipientUserId, merchantId));
+  return Boolean(last && Date.now() - last < REFERRAL_COOLDOWN_MS);
+}
+function recordReferralConversion(senderUserId, recipientUserId, merchantId) {
+  referralCooldowns.set(referralCooldownKey(senderUserId, recipientUserId, merchantId), Date.now());
+}
+
 // Each fictional participating merchant owns its own campaign.
 function createCampaigns() {
   const campaigns = [];
   fallbackMerchants.forEach(function(merchant) {
     campaigns.push({
       id: merchant.id + '-campaign', merchantId: merchant.id,
-      rewardAmount: 0.50, dailyCap: 20, startTime: '00:00', endTime: '23:59',
+      rewardAmount: 0.50, minimumEligibleSpend: 5.00,
+      maxRewardedPaymentsPerDay: 20, maxRewardBudgetPerDay: 10.00,
+      startTime: '00:00', endTime: '23:59',
       senderReferralReward: 0.20, platformFeePerAttributedPayment: 0.10,
-      platformFeeAccrued: 0, status: 'ACTIVE', redemptionsToday: 0, day: singaporeDay(),
-      metrics: { recommendationsShown: 0, accepted: 0, scans: 0, claims: 0, payments: 0,
-        attributedPayments: 0, attributedValue: 0, rewardCost: 0, sharedVouchConversions: 0 }
+      platformFeeAccrued: 0, status: 'ACTIVE', redemptionsToday: 0, rewardBudgetSpentToday: 0, day: singaporeDay(),
+      metrics: { smartMatchShown: 0, smartMatchAccepted: 0, smartMatchPayments: 0, smartMatchSales: 0,
+        sharedVouchClaims: 0, sharedVouchPayments: 0, sharedVouchSales: 0,
+        directScanPayments: 0, directScanSales: 0, scans: 0, payments: 0, rewardCost: 0 }
     });
   });
   return campaigns;
 }
 
+// Merchant campaigns (caps, spend, metrics) are commercial state owned by the merchant,
+// not by any one visitor's browser. Kept at module scope so every session shares it.
+let merchantCampaignStore = createCampaigns();
+
 function createInitialDemo() {
   return {
-    version: 9,
-    user: { id: 'jia', name: 'Jia', fullName: 'Jia Yi' },
+    version: 10,
+    user: { ...demoIdentities.jia },
     profile: { dietaryPreference: 'none', budget: 10, maxDistanceMinutes: 10, notifications: true },
     vouchCredits: {},
     nearbyMerchants: [], selectedMerchantId: null, recommendationAccepted: false, rejectedMerchantIds: [],
     recommendationFeedback: [], shownMerchantIds: [],
     currentScanPayment: null, activeVouchClaim: null,
     transactions: [], paymentVerifiedVouches: [], promotionalRedemptions: [],
-    campaigns: createCampaigns(),
     nextScanNumber: 1, nextTransactionNumber: 1, nextVouchNumber: 1
   };
 }
 
 function initialiseDemoSession(req) {
-  if (!req.session.demo || req.session.demo.version !== 9) {
+  if (!req.session.demo || req.session.demo.version !== 10) {
     req.session.demo = createInitialDemo();
   }
 }
@@ -430,12 +459,13 @@ async function getNearbyMerchants() {
 }
 
 function findCampaign(demo, merchantId) {
-  for (let i = 0; i < demo.campaigns.length; i++) {
-    const campaign = demo.campaigns[i];
+  for (let i = 0; i < merchantCampaignStore.length; i++) {
+    const campaign = merchantCampaignStore[i];
     if (campaign.merchantId === merchantId) {
       if (campaign.day !== singaporeDay()) {
         campaign.day = singaporeDay();
         campaign.redemptionsToday = 0;
+        campaign.rewardBudgetSpentToday = 0;
       }
       return campaign;
     }
@@ -600,13 +630,29 @@ function getCampaignAvailability(campaign, alreadyRedeemed) {
   if (!withinWindow) {
     return { code: 'UNAVAILABLE', title: 'Vouch Currently Unavailable', available: false };
   }
-  if (campaign.redemptionsToday >= campaign.dailyCap) {
+  if (campaign.redemptionsToday >= campaign.maxRewardedPaymentsPerDay) {
     return { code: 'FULLY_REDEEMED', title: 'Fully Redeemed Today', available: false };
+  }
+  if (campaign.rewardBudgetSpentToday >= campaign.maxRewardBudgetPerDay) {
+    return { code: 'BUDGET_REACHED', title: 'Reward Budget Reached Today', available: false };
   }
   if (alreadyRedeemed) {
     return { code: 'ALREADY_REDEEMED', title: 'Already Redeemed', available: false };
   }
   return { code: 'AVAILABLE', title: 'Vouch Available', available: true };
+}
+
+// Worst-case daily spend if every reward slot were used - illustrative only, not a profit/ROI claim.
+function getMaxDailyCostEstimate(campaign) {
+  const platformFee = money(campaign.maxRewardedPaymentsPerDay * campaign.platformFeePerAttributedPayment);
+  const referralCost = campaign.senderReferralReward > 0 ?
+    money(campaign.maxRewardedPaymentsPerDay * campaign.senderReferralReward) : 0;
+  return {
+    rewardBudget: campaign.maxRewardBudgetPerDay,
+    platformFee: platformFee,
+    referralCost: referralCost,
+    total: money(campaign.maxRewardBudgetPerDay + platformFee + referralCost)
+  };
 }
 
 // Money is calculated in cents so offsets and rewards never drift.
@@ -636,24 +682,36 @@ function recordPayment(demo, journey, amount, useCashback) {
   const date = getCurrentDateAndTime();
   const campaign = findCampaign(demo, journey.merchantId);
   const eligible = breakdown.netsPaid >= MINIMUM_ELIGIBLE_PAYMENT;
-  const matchingClaim = demo.activeVouchClaim && demo.activeVouchClaim.status === 'CLAIMED' &&
-    demo.activeVouchClaim.merchantId === journey.merchantId ? demo.activeVouchClaim : null;
-  const rewardEligible = eligible && campaign && getCampaignAvailability(campaign, false).available;
-  const rewardSource = rewardEligible && matchingClaim ? 'shared-vouch' : (journey.attributionSource || journey.source);
+  const effectiveClaim = getEffectiveVouchClaim(demo);
+  const matchingClaim = effectiveClaim && effectiveClaim.status === 'CLAIMED' &&
+    effectiveClaim.merchantId === journey.merchantId &&
+    effectiveClaim.senderUserId !== effectiveClaim.recipientUserId &&
+    !isReferralOnCooldown(effectiveClaim.senderUserId, effectiveClaim.recipientUserId, journey.merchantId) ?
+    effectiveClaim : null;
+  // The acquisition channel is a fact about how this visit happened, not about reward eligibility -
+  // a Direct Scan must never be counted as a Smart Match conversion just because it was also eligible.
+  const acquisitionSource = matchingClaim ? 'SHARED_VOUCH' :
+    journey.attributionSource === 'smart-match' ? 'SMART_MATCH' : 'DIRECT_SCAN';
+  const potentialReward = matchingClaim ? matchingClaim.rewardAmount : (campaign ? campaign.rewardAmount : 0);
+  const meetsMinimumSpend = Boolean(campaign) && amount >= campaign.minimumEligibleSpend;
+  const withinRewardBudget = Boolean(campaign) &&
+    money(campaign.rewardBudgetSpentToday + potentialReward) <= campaign.maxRewardBudgetPerDay;
+  const rewardEligible = eligible && campaign && meetsMinimumSpend && withinRewardBudget &&
+    getCampaignAvailability(campaign, false).available;
   let senderReferralReward = 0;
   if (rewardEligible && matchingClaim && campaign.senderReferralReward > 0 &&
-      campaign.dailyCap - campaign.redemptionsToday >= 2) {
+      campaign.maxRewardedPaymentsPerDay - campaign.redemptionsToday >= 2) {
     senderReferralReward = campaign.senderReferralReward;
   }
   const transaction = {
     id: 'tx-' + demo.nextTransactionNumber++,
-    journeyId: journey.id, source: rewardSource, journeySource: journey.source,
+    journeyId: journey.id, source: acquisitionSource, journeySource: journey.source,
     merchantId: journey.merchantId, merchantName: journey.merchantName, outlet: journey.outlet,
     itemName: journey.source === 'smart-match' ? journey.itemName : null,
     purchaseAmount: amount, merchantCreditUsed: breakdown.merchantCreditUsed,
     cashbackUsed: breakdown.merchantCreditUsed, netsPaid: breakdown.netsPaid,
     merchantRewardEarned: 0, cashbackAwarded: 0,
-    promisedReward: rewardEligible ? (matchingClaim ? matchingClaim.rewardAmount : campaign.rewardAmount) : 0,
+    promisedReward: rewardEligible ? potentialReward : 0,
     rewardReleased: false, status: 'Successful', eligible: eligible,
     collected: false, vouchDecision: eligible ? 'pending' : 'not-eligible', vouchCreated: false,
     campaignId: campaign ? campaign.id : null,
@@ -670,15 +728,30 @@ function recordPayment(demo, journey, amount, useCashback) {
   journey.vouchDecision = transaction.vouchDecision;
   if (campaign) {
     campaign.metrics.payments += 1;
+    if (acquisitionSource === 'SMART_MATCH') {
+      campaign.metrics.smartMatchPayments += 1;
+      campaign.metrics.smartMatchSales = money(campaign.metrics.smartMatchSales + amount);
+    } else if (acquisitionSource === 'SHARED_VOUCH') {
+      campaign.metrics.sharedVouchPayments += 1;
+      campaign.metrics.sharedVouchSales = money(campaign.metrics.sharedVouchSales + amount);
+    } else {
+      campaign.metrics.directScanPayments += 1;
+      campaign.metrics.directScanSales = money(campaign.metrics.directScanSales + amount);
+    }
     if (rewardEligible) {
       campaign.redemptionsToday += 1 + (senderReferralReward > 0 ? 1 : 0);
-      campaign.metrics.attributedPayments += 1;
-      campaign.metrics.attributedValue = money(campaign.metrics.attributedValue + amount);
-      campaign.platformFeeAccrued = money(campaign.platformFeeAccrued + campaign.platformFeePerAttributedPayment);
+      // The daily reward budget genuinely caps merchant-funded spend: the customer reward and
+      // any sender referral bonus both count against it, not just the payment count.
+      campaign.rewardBudgetSpentToday = money(campaign.rewardBudgetSpentToday + potentialReward);
+      // Illustrative campaign success fee: only Smart Match and Shared Vouch are attributed
+      // acquisition channels. A Direct Scan is not a campaign conversion, so no fee applies.
+      if (acquisitionSource === 'SMART_MATCH' || acquisitionSource === 'SHARED_VOUCH') {
+        campaign.platformFeeAccrued = money(campaign.platformFeeAccrued + campaign.platformFeePerAttributedPayment);
+      }
       if (matchingClaim) {
         matchingClaim.status = 'REDEEMED';
         matchingClaim.transactionId = transaction.id;
-        campaign.metrics.sharedVouchConversions += 1;
+        recordReferralConversion(matchingClaim.senderUserId, matchingClaim.recipientUserId, journey.merchantId);
         const offer = sharedOffers.get(matchingClaim.token);
         if (offer) {
           offer.redeemed = true;
@@ -687,6 +760,7 @@ function recordPayment(demo, journey, amount, useCashback) {
           offer.senderReferralCredited = false;
         }
         if (senderReferralReward > 0) {
+          campaign.rewardBudgetSpentToday = money(campaign.rewardBudgetSpentToday + senderReferralReward);
           campaign.metrics.rewardCost = money(campaign.metrics.rewardCost + senderReferralReward);
         }
       }
@@ -718,6 +792,16 @@ function releaseMerchantReward(demo, transaction, journey) {
 function canVouch(transaction) {
   return transaction && transaction.status === 'Successful' && transaction.eligible &&
     transaction.journeySource === 'scan';
+}
+
+// A claim older than CLAIM_EXPIRY_MS can no longer be redeemed. Checked lazily wherever
+// the claim is read, so nothing needs a background timer to expire it.
+function getEffectiveVouchClaim(demo) {
+  const claim = demo.activeVouchClaim;
+  if (claim && claim.status === 'CLAIMED' && Date.now() > claim.expiresAt) {
+    claim.status = 'EXPIRED';
+  }
+  return claim;
 }
 
 function setVouchDecision(demo, transaction, decision) {
@@ -808,7 +892,7 @@ app.get('/smart-match/result', async function(req, res) {
       demo.selectedMerchantId = recommendation.id;
       if (!demo.shownMerchantIds.includes(recommendation.id)) {
         demo.shownMerchantIds.push(recommendation.id);
-        findCampaign(demo, recommendation.id).metrics.recommendationsShown += 1;
+        findCampaign(demo, recommendation.id).metrics.smartMatchShown += 1;
       }
     }
   }
@@ -827,7 +911,7 @@ app.get('/smart-match/static', function(req, res) {
       demo.selectedMerchantId = merchant.id;
       if (!demo.shownMerchantIds.includes(merchant.id)) {
         demo.shownMerchantIds.push(merchant.id);
-        findCampaign(demo, merchant.id).metrics.recommendationsShown += 1;
+        findCampaign(demo, merchant.id).metrics.smartMatchShown += 1;
       }
     }
   }
@@ -875,7 +959,7 @@ app.post('/recommendation/accept', function(req, res) {
       !merchantMatchesProfile(merchant, demo.profile) || !findCampaignForMerchant(merchant, demo)) {
     return res.redirect('/home?error=offer');
   }
-  if (!demo.recommendationAccepted) findCampaign(demo, merchant.id).metrics.accepted += 1;
+  if (!demo.recommendationAccepted) findCampaign(demo, merchant.id).metrics.smartMatchAccepted += 1;
   demo.recommendationAccepted = true;
   res.redirect('/scan');
 });
@@ -890,9 +974,10 @@ app.get('/scan', function(req, res) {
   const scan = demo.currentScanPayment;
   if (scan && scan.status === 'MERCHANT_FOUND') return res.redirect('/scan/payment');
   if (scan && scan.status === 'PAID') return res.redirect(receiptUrl(findTransactionById(demo.transactions, scan.transactionId)));
+  const activeClaim = getEffectiveVouchClaim(demo);
   res.render('scan', { error: req.query.error === 'invalid',
-    merchantId: demo.activeVouchClaim && demo.activeVouchClaim.status === 'CLAIMED' ?
-      demo.activeVouchClaim.merchantId :
+    merchantId: activeClaim && activeClaim.status === 'CLAIMED' ?
+      activeClaim.merchantId :
       demo.recommendationAccepted && demo.selectedMerchantId ? demo.selectedMerchantId : 'green-bowl' });
 });
 app.post('/scan', function(req, res) {
@@ -990,7 +1075,8 @@ app.post('/vouch/:id', function(req, res) {
     demo.paymentVerifiedVouches.unshift(vouch);
     const campaign = findCampaign(demo, transaction.merchantId);
     sharedOffers.set(shareToken, {
-      token: shareToken, vouchId: vouch.id, ownerSessionId: req.sessionID, merchantId: transaction.merchantId,
+      token: shareToken, vouchId: vouch.id, ownerSessionId: req.sessionID, senderUserId: demo.user.id,
+      merchantId: transaction.merchantId,
       merchantName: transaction.merchantName, user: demo.user.name, tagLabel: vouch.tagLabel,
       rewardAmount: campaign ? campaign.rewardAmount : 0.50
     });
@@ -1020,26 +1106,30 @@ app.get('/vouch/:id/success', function(req, res) {
 app.get('/offers/:token', function(req, res) {
   const offer = sharedOffers.get(req.params.token);
   if (!offer) return res.status(404).render('shared-offer', { offer: null, claimed: false, own: false });
-  const claim = req.session.demo.activeVouchClaim;
+  const demo = req.session.demo;
+  const claim = getEffectiveVouchClaim(demo);
   const claimed = Boolean(claim && claim.vouchId === offer.vouchId);
   res.render('shared-offer', { offer: offer, claimed: claimed, claim: claim,
-    own: offer.ownerSessionId === req.sessionID });
+    own: offer.ownerSessionId === req.sessionID || offer.senderUserId === demo.user.id });
 });
 app.post('/offers/:token/claim', function(req, res) {
   const demo = req.session.demo;
   const offer = sharedOffers.get(req.params.token);
-  if (!offer || offer.ownerSessionId === req.sessionID) return res.redirect('/offers/' + req.params.token);
+  // A person cannot refer themselves, even from a different browser/session - identity is what matters.
+  if (!offer || offer.senderUserId === demo.user.id) return res.redirect('/offers/' + req.params.token);
   const campaign = findCampaign(demo, offer.merchantId);
   if (!campaign || !getCampaignAvailability(campaign, false).available) {
     return res.redirect('/offers/' + req.params.token);
   }
-  if (!demo.activeVouchClaim || demo.activeVouchClaim.vouchId !== offer.vouchId) {
+  const activeClaim = getEffectiveVouchClaim(demo);
+  if (!activeClaim || activeClaim.vouchId !== offer.vouchId || activeClaim.status !== 'CLAIMED') {
     demo.activeVouchClaim = {
       vouchId: offer.vouchId, token: offer.token, merchantId: offer.merchantId,
       merchantName: offer.merchantName, rewardAmount: offer.rewardAmount, status: 'CLAIMED',
-      claimedAt: getCurrentDateAndTime().iso, transactionId: null
+      senderUserId: offer.senderUserId, recipientUserId: demo.user.id,
+      claimedAt: getCurrentDateAndTime().iso, expiresAt: Date.now() + CLAIM_EXPIRY_MS, transactionId: null
     };
-    campaign.metrics.claims += 1;
+    campaign.metrics.sharedVouchClaims += 1;
   }
   res.redirect('/offers/' + offer.token);
 });
@@ -1099,7 +1189,15 @@ app.get('/transactions/:id', function(req, res) {
   res.render('transaction-detail', { transaction: transaction });
 });
 
-app.get('/demo', function(req, res) { res.render('demo'); });
+app.get('/demo', function(req, res) {
+  res.render('demo', { user: req.session.demo.user, identities: demoIdentities });
+});
+app.post('/demo/identity', function(req, res) {
+  if (isValidDemoIdentity(req.body.userId)) {
+    req.session.demo.user = { ...demoIdentities[req.body.userId] };
+  }
+  res.redirect('/demo');
+});
 
 // Merchant demo: switch merchant without changing Jia's selected recommendation.
 app.get('/merchant', function(req, res) {
@@ -1112,6 +1210,7 @@ app.get('/merchant', function(req, res) {
     merchants: fallbackMerchants, merchant: merchant, campaign: campaign,
     tab: req.query.tab === 'results' ? 'results' : 'campaign',
     availability: getCampaignAvailability(campaign, false),
+    maxDailyCost: getMaxDailyCostEstimate(campaign),
     error: req.query.error === 'invalid'
   });
 });
@@ -1120,15 +1219,21 @@ app.post('/merchant/mark-ready', function(req, res) { res.redirect('/merchant');
 app.post('/merchant/offer', function(req, res) {
   const campaign = findCampaign(req.session.demo, req.body.merchantId);
   const reward = Number(req.body.rewardAmount);
-  const cap = Number(req.body.dailyCap);
+  const minimumSpend = Number(req.body.minimumEligibleSpend);
+  const paymentsCap = Number(req.body.maxRewardedPaymentsPerDay);
+  const budgetCap = Number(req.body.maxRewardBudgetPerDay);
   const destination = '/merchant?merchantId=' + encodeURIComponent(req.body.merchantId || '');
   if (!campaign || !Number.isFinite(reward) || reward < 0 || reward > 50 ||
-      !Number.isInteger(cap) || cap < 1 || cap > 1000 ||
+      !Number.isFinite(minimumSpend) || minimumSpend < 0 || minimumSpend > 1000 ||
+      !Number.isInteger(paymentsCap) || paymentsCap < 1 || paymentsCap > 1000 ||
+      !Number.isFinite(budgetCap) || budgetCap < 0 || budgetCap > 100000 ||
       timeToMinutes(req.body.startTime) === null || timeToMinutes(req.body.endTime) === null) {
     return res.redirect(destination + '&error=invalid');
   }
   campaign.rewardAmount = money(reward);
-  campaign.dailyCap = cap;
+  campaign.minimumEligibleSpend = money(minimumSpend);
+  campaign.maxRewardedPaymentsPerDay = paymentsCap;
+  campaign.maxRewardBudgetPerDay = money(budgetCap);
   campaign.startTime = req.body.startTime;
   campaign.endTime = req.body.endTime;
   campaign.status = req.body.status === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE';
@@ -1139,6 +1244,7 @@ app.post('/reset-demo', function(req, res) {
     if (offer.ownerSessionId === req.sessionID) sharedOffers.delete(token);
   });
   req.session.demo = createInitialDemo();
+  merchantCampaignStore = createCampaigns();
   res.redirect('/home');
 });
 
@@ -1146,4 +1252,7 @@ app.post('/reset-demo', function(req, res) {
 if (require.main === module) {
   app.listen(PORT, function() { console.log('NETS Vouch AI running on http://localhost:' + PORT); });
 }
-module.exports = { app: app, createInitialDemo: createInitialDemo, demoStore: demoStore };
+module.exports = { app: app, createInitialDemo: createInitialDemo, demoStore: demoStore,
+  getMerchantCampaigns: function() { return merchantCampaignStore; },
+  resetMerchantCampaigns: function() { merchantCampaignStore = createCampaigns(); },
+  resetReferralCooldowns: function() { referralCooldowns.clear(); } };

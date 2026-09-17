@@ -3,17 +3,30 @@
 <form method="GET" action="/merchant" class="merchant-picker"><input type="hidden" name="tab" value="<%= tab %>"><label class="field">Merchant<select name="merchantId"><% merchants.forEach(function(item) { %><option value="<%= item.id %>" <%= item.id === merchant.id ? 'selected' : '' %>><%= item.merchantName %></option><% }); %></select></label><button class="text-button" type="submit">Switch</button></form>
 <nav class="tabs" aria-label="Merchant sections"><% ['campaign', 'results'].forEach(function(item) { %><a href="/merchant?merchantId=<%= merchant.id %>&tab=<%= item %>" <%- tab === item ? 'aria-current="page"' : '' %>><%= item.charAt(0).toUpperCase() + item.slice(1) %></a><% }); %></nav>
 <% if (tab === 'campaign') { %>
-<p class="reward"><%= availability.title %></p><p><%= Math.max(0, campaign.dailyCap - campaign.redemptionsToday) %> rewards remaining today</p>
+<p class="reward"><%= availability.title %></p><p><%= Math.max(0, campaign.maxRewardedPaymentsPerDay - campaign.redemptionsToday) %> rewarded payments remaining today · $<%= Math.max(0, campaign.maxRewardBudgetPerDay - campaign.rewardBudgetSpentToday).toFixed(2) %> reward budget remaining today</p>
 <% if (error) { %><p class="error">Check the campaign values and try again.</p><% } %>
 <form method="POST" action="/merchant/offer" class="card form-stack">
 <input type="hidden" name="merchantId" value="<%= merchant.id %>">
-<label class="field">Reward ($)<input name="rewardAmount" type="number" min="0" max="50" step=".01" value="<%= campaign.rewardAmount.toFixed(2) %>" required></label>
-<label class="field">Daily cap<input name="dailyCap" type="number" min="1" max="1000" value="<%= campaign.dailyCap %>" required></label>
+<label class="field">Reward per qualifying payment ($)<input name="rewardAmount" type="number" min="0" max="50" step=".01" value="<%= campaign.rewardAmount.toFixed(2) %>" required></label>
+<label class="field">Minimum qualifying spend ($)<input name="minimumEligibleSpend" type="number" min="0" max="1000" step=".01" value="<%= campaign.minimumEligibleSpend.toFixed(2) %>" required></label>
+<label class="field">Maximum rewarded payments/day<input name="maxRewardedPaymentsPerDay" type="number" min="1" max="1000" value="<%= campaign.maxRewardedPaymentsPerDay %>" required></label>
+<label class="field">Maximum reward budget/day ($)<input name="maxRewardBudgetPerDay" type="number" min="0" max="100000" step=".01" value="<%= campaign.maxRewardBudgetPerDay.toFixed(2) %>" required></label>
 <label class="field">Start<input name="startTime" type="time" value="<%= campaign.startTime %>" required></label><label class="field">End<input name="endTime" type="time" value="<%= campaign.endTime %>" required></label>
 <label class="field">Status<select name="status"><option value="ACTIVE" <%= campaign.status === 'ACTIVE' ? 'selected' : '' %>>Active</option><option value="INACTIVE" <%= campaign.status === 'INACTIVE' ? 'selected' : '' %>>Inactive</option></select></label>
 <button class="button" type="submit">Save campaign</button></form>
+<section class="card">
+<p class="eyebrow">Estimated maximum daily cost</p>
+<p class="reward">$<%= maxDailyCost.total.toFixed(2) %></p>
+<p>Highest possible cost if every reward slot is used today. Not a guarantee of profit or return — actual cost is usually lower.</p>
+<dl class="receipt-lines">
+<div><dt>Merchant-funded reward budget</dt><dd>$<%= maxDailyCost.rewardBudget.toFixed(2) %></dd></div>
+<div><dt>Possible NETS success fees</dt><dd>$<%= maxDailyCost.platformFee.toFixed(2) %></dd></div>
+<% if (campaign.senderReferralReward > 0) { %><div><dt>Possible referral bonus cost</dt><dd>$<%= maxDailyCost.referralCost.toFixed(2) %></dd></div><% } %>
+</dl>
+<small>NETS success fee: $<%= campaign.platformFeePerAttributedPayment.toFixed(2) %> per Smart Match or Shared Vouch payment.<% if (campaign.senderReferralReward > 0) { %> Sender referral reward: $<%= campaign.senderReferralReward.toFixed(2) %> per eligible referral.<% } %></small>
+</section>
 <% } else { %>
 <p class="eyebrow">Illustrative Prototype Data · this session</p>
-<dl class="receipt-lines card"><div><dt>Recommendations shown</dt><dd><%= campaign.metrics.recommendationsShown %></dd></div><div><dt>Accepted</dt><dd><%= campaign.metrics.accepted %></dd></div><div><dt>QR scans</dt><dd><%= campaign.metrics.scans %></dd></div><div><dt>Shared Vouch claims</dt><dd><%= campaign.metrics.claims %></dd></div><div><dt>Completed payments</dt><dd><%= campaign.metrics.payments %></dd></div><div><dt>Attributed payments</dt><dd><%= campaign.metrics.attributedPayments %></dd></div><div><dt>Shared Vouch conversions</dt><dd><%= campaign.metrics.sharedVouchConversions %></dd></div><div><dt>Attributed purchase value</dt><dd>$<%= campaign.metrics.attributedValue.toFixed(2) %></dd></div><div><dt>Reward cost</dt><dd>$<%= campaign.metrics.rewardCost.toFixed(2) %></dd></div><div><dt>Platform fee accrued</dt><dd>$<%= campaign.platformFeeAccrued.toFixed(2) %></dd></div><div><dt>Match-to-payment conversion</dt><dd><%= campaign.metrics.recommendationsShown ? Math.round(100 * campaign.metrics.attributedPayments / campaign.metrics.recommendationsShown) : 0 %>%</dd></div></dl>
+<dl class="receipt-lines card"><div><dt>Smart Match shown</dt><dd><%= campaign.metrics.smartMatchShown %></dd></div><div><dt>Smart Match accepted</dt><dd><%= campaign.metrics.smartMatchAccepted %></dd></div><div><dt>Smart Match payments</dt><dd><%= campaign.metrics.smartMatchPayments %></dd></div><div><dt>Smart Match sales</dt><dd>$<%= campaign.metrics.smartMatchSales.toFixed(2) %></dd></div><div><dt>Shared Vouch claims</dt><dd><%= campaign.metrics.sharedVouchClaims %></dd></div><div><dt>Shared Vouch payments</dt><dd><%= campaign.metrics.sharedVouchPayments %></dd></div><div><dt>Shared Vouch sales</dt><dd>$<%= campaign.metrics.sharedVouchSales.toFixed(2) %></dd></div><div><dt>Direct Scan payments</dt><dd><%= campaign.metrics.directScanPayments %></dd></div><div><dt>Direct Scan sales</dt><dd>$<%= campaign.metrics.directScanSales.toFixed(2) %></dd></div><div><dt>QR scans</dt><dd><%= campaign.metrics.scans %></dd></div><div><dt>Completed payments</dt><dd><%= campaign.metrics.payments %></dd></div><div><dt>Reward cost</dt><dd>$<%= campaign.metrics.rewardCost.toFixed(2) %></dd></div><div><dt>Platform fee accrued</dt><dd>$<%= campaign.platformFeeAccrued.toFixed(2) %></dd></div><div><dt>Match-to-payment conversion</dt><dd><%= campaign.metrics.smartMatchShown ? Math.round(100 * campaign.metrics.smartMatchPayments / campaign.metrics.smartMatchShown) : 0 %>%</dd></div></dl>
 <% } %><a class="text-button" href="/home">Return to Jia</a>
 <%- include('partials/end', { active: 'profile' }) %>

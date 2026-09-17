@@ -1,6 +1,56 @@
 # NETS Vouch AI
 
-A Republic Polytechnic C237-style Open House prototype built with Node.js, Express, EJS, express-session, HTML, CSS and vanilla JavaScript.
+NETS Vouch AI helps Gen Z and Millennial consumers decide where to spend, connects that decision to a verified NETS payment, and turns eligible payments into trusted social discovery.
+
+**AI helps users decide. NETS verifies the payment. Vouch turns the verified transaction into trusted social discovery. Merchants measure campaign-linked outcomes.**
+
+## Current experience
+
+### Jia
+
+1. Smart Match recommends a participating merchant and may suggest an item. The item is not an order; Jia may buy anything at that merchant.
+2. Jia selects **Scan when you arrive**, visits the merchant, and scans its simulated QR.
+3. Jia enters the actual purchase amount, optionally applies that merchant's Vouch Credit, and pays with simulated NETS.
+4. An eligible payment earns merchant-specific Vouch Credit.
+5. Jia may create one Payment-Verified Vouch and share the same offer link through WhatsApp, Telegram, or Copy Link.
+
+Scan also works directly for a customer already at a participating merchant. There is no preorder, kitchen, preparation, fulfilment, or collection workflow.
+
+### Shared Vouch
+
+Jia shares a Payment-Verified Vouch → Darren claims the merchant offer → the claim gives no immediate reward → Darren pays with NETS at the same merchant → an eligible conversion releases that merchant's reward. A qualifying sender referral reward may also apply.
+
+### Profile
+
+Profile contains identity, merchant-specific rewards, My Vouches, NETS Activity, preferences, and notifications. Helper controls live separately at `/demo`.
+
+## Vouch Credit
+
+Vouch Credit is merchant-funded and merchant-specific:
+
+- Felicia Vouch Credit is usable only at Felicia.
+- Green Bowl Vouch Credit is usable only at Green Bowl.
+- Credit is not a universal NETS cashback wallet.
+- At least `$1.00` must remain payable through NETS for reward and Vouch eligibility.
+- A normal qualifying reward is earned from the payment, not from creating a Vouch.
+
+## Payment-Verified Vouch
+
+A Payment-Verified Vouch means the user completed an eligible simulated NETS payment at that merchant. It does not guarantee product quality, represent a NETS rating, or publicly reveal the payment amount. Vouch creation is optional and limited to one per eligible transaction.
+
+## Smart Match
+
+Rules determine what is possible: merchant participation, dietary preference, budget, distance, campaign availability, and eligibility. The current prototype then uses simple simulated/fallback ranking to select a merchant. A future AI service may improve relevance using accept, reject, and payment outcomes; production AI integration is not complete.
+
+## Technology
+
+- Node.js and Express.js
+- EJS
+- `express-session`
+- Vanilla JavaScript and CSS
+- CommonJS
+
+Consumer data is held under `req.session.demo`. Shared Vouch links are held in process memory. There is no database or production persistence.
 
 ## Run locally
 
@@ -11,39 +61,6 @@ npm start
 
 Open [http://localhost:3000](http://localhost:3000).
 
-## Optional nearby merchant discovery
-
-Smart Match works offline with local Open House demo merchants. To also retrieve nearby restaurants from Google Places, copy `.env.example` to `.env` and add a server-side Places API key:
-
-```text
-PLACES_API_KEY=your_key_here
-```
-
-The key is read only by `app.js` and is never sent to EJS or browser JavaScript.
-
-## Open House journey
-
-1. Open Jia's Home page, see her Vouch Cashback balance, and review the Smart Match.
-2. Accept the Felicia Smart Recommendation and review the collection order.
-3. Complete the simulated NETS payment, then optionally choose one tag and share a Payment-Verified Vouch.
-4. Switch to Felicia, start preparing, and mark the order ready.
-5. Switch back to Jia, collect the order, and release cashback.
-6. Copy the Vouch's friend-offer link using a simulated social button when Jia creates one.
-7. Independently use Scan: tap the camera-style card once, enter an amount, optionally use cashback, and Pay. Scan credits eligible rewards immediately and opens the Vouch screen; it never creates an order.
-8. Reset the demo for the next visitor.
-
-Home keeps Smart Match available after an order is paid, so Jia can place another collection order while earlier orders continue preparing. A separate status control below Smart Match lists every order. Smart Match rewards are released only after collection. Both journeys require at least $1 actually paid with simulated NETS to qualify for verification; rewards also depend on the merchant campaign. Copied Vouch links can be opened in another demo session and claimed once for prototype cashback. Profile contains transaction history and discreet merchant/reset controls.
-
-## Tests
-
-Run `npm test` for stateful journey, amount validation, duplicate-safety, navigation and reset tests. Run `node --check app.js` for a syntax check. Sessions are in memory and reset when the server restarts; run a single Node process for this demo.
-
 ## Prototype boundaries
 
-- All people, merchants, payments and campaign results are fictional or illustrative.
-- QR scanning, NETS payment verification, merchant handoff, fulfilment status and cashback are simulated.
-- The preorder journey is collection-only; there is no delivery or POS/kitchen integration.
-- There is no production NETS connection, real payout, database or authentication.
-- Smart Match uses simple server-side ranking, not a production AI model. Google Places is optional for discovery; campaign participation and rewards remain internal prototype data.
-
-See [PROTOTYPE_PLAN.md](PROTOTYPE_PLAN.md) for the canonical product direction.
+QR detection, NETS payment processing and verification, merchant participation, campaigns, Smart Match ranking, rewards, referral conversion, and platform-fee accounting are simulated for the Open House prototype. There is no production NETS API, settlement, POS, camera scanning, merchant billing, or live AI integration.

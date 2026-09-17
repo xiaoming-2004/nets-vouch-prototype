@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { app, demoStore } = require('../app');
+const { app, demoStore, getMerchantCampaigns, resetMerchantCampaigns, resetReferralCooldowns } = require('../app');
 let server;
 let base;
 
@@ -11,6 +11,8 @@ test.before(async function() {
   base = 'http://127.0.0.1:' + server.address().port;
 });
 test.after(function() { server.close(); });
+// Merchant campaigns are global (shared across every visitor), so each test starts from a clean cap/status.
+test.beforeEach(function() { resetMerchantCampaigns(); resetReferralCooldowns(); });
 
 function visitor() {
   let cookie = '';
@@ -126,7 +128,11 @@ test('Smart Match Scan accepts actual amount, merchant credit and optional Vouch
   assert.equal(transaction.merchantCreditUsed, .5);
   assert.equal(transaction.netsPaid, 5.5);
   assert.equal(transaction.merchantRewardEarned, .5);
-  assert.equal(transaction.source, 'smart-match');
+  assert.equal(transaction.source, 'SMART_MATCH');
+  const smartMatchCampaign = getMerchantCampaigns().find(function(item) { return item.merchantId === merchantId; });
+  assert.equal(smartMatchCampaign.metrics.smartMatchPayments, 1);
+  assert.equal(smartMatchCampaign.metrics.directScanPayments, 0);
+  assert.equal(smartMatchCampaign.platformFeeAccrued, smartMatchCampaign.platformFeePerAttributedPayment);
   assert.equal(credit(state, merchantId), .5);
   assert.match((await v.request('/payment-success/' + transaction.id)).html, /Paid with NETS/);
   await Promise.all([
@@ -150,10 +156,8 @@ test('Smart Match Scan accepts actual amount, merchant credit and optional Vouch
 test('Merchant Vouch Credit cannot be used at another merchant', async function() {
   const v = visitor();
   await v.request('/home');
-  await v.change(function(demo) {
-    demo.vouchCredits['felicia-chicken-rice'] = .5;
-    demo.campaigns.forEach(function(campaign) { campaign.status = 'INACTIVE'; });
-  });
+  await v.change(function(demo) { demo.vouchCredits['felicia-chicken-rice'] = .5; });
+  getMerchantCampaigns().forEach(function(campaign) { campaign.status = 'INACTIVE'; });
   const green = await scan(v, 'green-bowl');
   await v.request('/scan/payment', { journeyId: green.id, amount: '6.00', useCashback: 'on' });
   let state = (await v.state()).demo;
@@ -183,19 +187,133 @@ test('Amount validation, $1 NETS floor, campaign cap and duplicate payment safet
   assert.equal(state.transactions.length, 1);
   assert.equal(state.transactions[0].merchantCreditUsed, 3.8);
   assert.equal(state.transactions[0].netsPaid, 1);
-  assert.equal(credit(state, 'green-bowl'), 1.7);
+  // $4.80 is below the campaign's $5 minimum eligible spend, so no reward is added to the credit balance.
+  assert.equal(credit(state, 'green-bowl'), 1.2);
   await v.request('/vouch/' + state.transactions[0].id, { action: 'skip' });
   const next = await scan(v, 'green-bowl');
-  await v.change(function(demo) {
-    const campaign = demo.campaigns.find(function(item) { return item.merchantId === 'green-bowl'; });
-    campaign.redemptionsToday = campaign.dailyCap;
-  });
-  await v.request('/scan/payment', { journeyId: next.id, amount: '4.80' });
+  const cappedCampaign = getMerchantCampaigns().find(function(item) { return item.merchantId === 'green-bowl'; });
+  cappedCampaign.redemptionsToday = cappedCampaign.maxRewardedPaymentsPerDay;
+  await v.request('/scan/payment', { journeyId: next.id, amount: '6.00' });
   state = (await v.state()).demo;
   assert.equal(state.transactions[0].merchantRewardEarned, 0);
 });
 
+test('Reward eligibility respects minimum spend and daily reward budget, and merchant sees a max-cost estimate', async function() {
+  const v = visitor();
+  await v.request('/home');
+  const campaign = getMerchantCampaigns().find(function(item) { return item.merchantId === 'green-bowl'; });
+  assert.equal(campaign.minimumEligibleSpend, 5);
+
+  // Below minimum spend: no reward, even though the cap and budget are untouched.
+  const belowMinimum = await scan(v, 'green-bowl');
+  await v.request('/scan/payment', { journeyId: belowMinimum.id, amount: '4.00' });
+  let state = (await v.state()).demo;
+  assert.equal(state.transactions[0].merchantRewardEarned, 0);
+  assert.equal(campaign.rewardBudgetSpentToday, 0);
+
+  // Reward budget reached: the next qualifying payment earns no reward, though the payment-count cap is unused.
+  campaign.maxRewardBudgetPerDay = 0.5;
+  await v.request('/vouch/' + state.transactions[0].id, { action: 'skip' });
+  const first = await scan(v, 'green-bowl');
+  await v.request('/scan/payment', { journeyId: first.id, amount: '6.00' });
+  state = (await v.state()).demo;
+  assert.equal(state.transactions[0].merchantRewardEarned, .5);
+  assert.equal(campaign.rewardBudgetSpentToday, .5);
+
+  await v.request('/vouch/' + state.transactions[0].id, { action: 'skip' });
+  const second = await scan(v, 'green-bowl');
+  await v.request('/scan/payment', { journeyId: second.id, amount: '6.00' });
+  state = (await v.state()).demo;
+  assert.equal(state.transactions[0].merchantRewardEarned, 0);
+  assert.equal(campaign.redemptionsToday, 1);
+
+  const merchantPage = await v.request('/merchant?merchantId=green-bowl&tab=campaign');
+  assert.match(merchantPage.html, /Estimated maximum daily cost/);
+  assert.match(merchantPage.html, /Merchant-funded reward budget/);
+  assert.match(merchantPage.html, /Possible NETS success fees/);
+});
+
+test('Merchant campaign cap is shared across different user sessions, not per browser', async function() {
+  const jia = visitor();
+  const darren = visitor();
+  await jia.request('/home');
+  await darren.request('/home');
+  const campaign = getMerchantCampaigns().find(function(item) { return item.merchantId === 'green-bowl'; });
+  campaign.maxRewardedPaymentsPerDay = 2;
+
+  const jiaScan = await scan(jia, 'green-bowl');
+  await jia.request('/scan/payment', { journeyId: jiaScan.id, amount: '5.00' });
+  const jiaTransaction = (await jia.state()).demo.transactions[0];
+  assert.equal(jiaTransaction.merchantRewardEarned, .5);
+
+  const darrenScan = await scan(darren, 'green-bowl');
+  await darren.request('/scan/payment', { journeyId: darrenScan.id, amount: '5.00' });
+  const darrenTransaction = (await darren.state()).demo.transactions[0];
+  assert.equal(darrenTransaction.merchantRewardEarned, .5);
+  assert.equal(campaign.redemptionsToday, 2);
+
+  // Cap is now used up globally, so a third qualifying payment (back on Jia's own session) earns no reward.
+  await jia.request('/vouch/' + jiaTransaction.id, { action: 'skip' });
+  const jiaScanAgain = await scan(jia, 'green-bowl');
+  await jia.request('/scan/payment', { journeyId: jiaScanAgain.id, amount: '5.00' });
+  const jiaSecondTransaction = (await jia.state()).demo.transactions[0];
+  assert.equal(jiaSecondTransaction.merchantRewardEarned, 0);
+});
+
 test('Shared Vouch claim rewards only after same-merchant payment without stacking', async function() {
+  const sender = visitor();
+  await sender.request('/home');
+  const pending = await scan(sender, 'green-bowl');
+  await sender.request('/scan/payment', { journeyId: pending.id, amount: '7.20' });
+  const transaction = (await sender.state()).demo.transactions[0];
+  assert.equal(transaction.source, 'DIRECT_SCAN');
+  const greenBowlCampaign = getMerchantCampaigns().find(function(item) { return item.merchantId === 'green-bowl'; });
+  assert.equal(greenBowlCampaign.metrics.directScanPayments, 1);
+  assert.equal(greenBowlCampaign.metrics.smartMatchPayments, 0);
+  assert.equal(greenBowlCampaign.platformFeeAccrued, 0);
+  await sender.request('/vouch/' + transaction.id, { action: 'create' });
+  const vouch = (await sender.state()).demo.paymentVerifiedVouches[0];
+  const offerPath = '/offers/' + vouch.shareToken;
+
+  // Jia cannot claim her own Vouch, even from what looks like a fresh browser/session.
+  const selfReferral = visitor();
+  await selfReferral.request(offerPath);
+  await selfReferral.request(offerPath + '/claim', {});
+  assert.equal((await selfReferral.state()).demo.activeVouchClaim, null);
+
+  const receiver = visitor();
+  await receiver.request('/demo/identity', { userId: 'darren' });
+  await receiver.request(offerPath);
+  await receiver.request(offerPath + '/claim', {});
+  let state = (await receiver.state()).demo;
+  assert.equal(credit(state, 'green-bowl'), 0);
+  assert.equal(state.activeVouchClaim.status, 'CLAIMED');
+  const claimedScan = await scan(receiver, 'green-bowl');
+  await receiver.request('/scan/payment', { journeyId: claimedScan.id, amount: '6.00' });
+  state = (await receiver.state()).demo;
+  assert.equal(state.activeVouchClaim.status, 'REDEEMED');
+  assert.equal(credit(state, 'green-bowl'), .5);
+  assert.equal(state.transactions[0].source, 'SHARED_VOUCH');
+  assert.equal(state.transactions[0].merchantRewardEarned, .5);
+  assert.equal(greenBowlCampaign.metrics.sharedVouchPayments, 1);
+  assert.equal(greenBowlCampaign.platformFeeAccrued, greenBowlCampaign.platformFeePerAttributedPayment);
+  // Both the receiver's reward and the sender's referral bonus count against the merchant's budget
+  // (plus the $0.50 the sender's own earlier direct-scan payment already earned).
+  assert.equal(greenBowlCampaign.rewardBudgetSpentToday, .5 + .5 + greenBowlCampaign.senderReferralReward);
+  await receiver.request('/scan/payment', { journeyId: claimedScan.id, amount: '4.80' });
+  assert.equal(credit((await receiver.state()).demo, 'green-bowl'), .5);
+
+  const wrongMerchant = visitor();
+  await wrongMerchant.request('/demo/identity', { userId: 'darren' });
+  await wrongMerchant.request(offerPath + '/claim', {});
+  const wrongScan = await scan(wrongMerchant, 'spice-lane');
+  await wrongMerchant.request('/scan/payment', { journeyId: wrongScan.id, amount: '4.80' });
+  state = (await wrongMerchant.state()).demo;
+  assert.equal(state.activeVouchClaim.status, 'CLAIMED');
+  assert.equal(credit(state, 'green-bowl'), 0);
+});
+
+test('Shared Vouch claim expires after 20 minutes and stops redeeming as a referral', async function() {
   const sender = visitor();
   await sender.request('/home');
   const pending = await scan(sender, 'green-bowl');
@@ -206,28 +324,51 @@ test('Shared Vouch claim rewards only after same-merchant payment without stacki
   const offerPath = '/offers/' + vouch.shareToken;
 
   const receiver = visitor();
+  await receiver.request('/demo/identity', { userId: 'darren' });
   await receiver.request(offerPath);
   await receiver.request(offerPath + '/claim', {});
-  let state = (await receiver.state()).demo;
-  assert.equal(credit(state, 'green-bowl'), 0);
-  assert.equal(state.activeVouchClaim.status, 'CLAIMED');
-  const claimedScan = await scan(receiver, 'green-bowl');
-  await receiver.request('/scan/payment', { journeyId: claimedScan.id, amount: '4.80' });
-  state = (await receiver.state()).demo;
-  assert.equal(state.activeVouchClaim.status, 'REDEEMED');
-  assert.equal(credit(state, 'green-bowl'), .5);
-  assert.equal(state.transactions[0].source, 'shared-vouch');
-  assert.equal(state.transactions[0].merchantRewardEarned, .5);
-  await receiver.request('/scan/payment', { journeyId: claimedScan.id, amount: '4.80' });
-  assert.equal(credit((await receiver.state()).demo, 'green-bowl'), .5);
+  await receiver.change(function(demo) { demo.activeVouchClaim.expiresAt = Date.now() - 1000; });
 
-  const wrongMerchant = visitor();
-  await wrongMerchant.request(offerPath + '/claim', {});
-  const wrongScan = await scan(wrongMerchant, 'spice-lane');
-  await wrongMerchant.request('/scan/payment', { journeyId: wrongScan.id, amount: '4.80' });
-  state = (await wrongMerchant.state()).demo;
+  const expiredView = await receiver.request(offerPath);
+  assert.match(expiredView.html, /expired/i);
+
+  const scanned = await scan(receiver, 'green-bowl');
+  await receiver.request('/scan/payment', { journeyId: scanned.id, amount: '6.00' });
+  const state = (await receiver.state()).demo;
+  assert.equal(state.transactions[0].source, 'DIRECT_SCAN');
+  assert.equal(state.activeVouchClaim.status, 'EXPIRED');
+});
+
+test('Referral cooldown blocks repeated rewarded conversions for the same sender, recipient and merchant', async function() {
+  const sender = visitor();
+  await sender.request('/home');
+  async function payAndVouch(amount) {
+    const scanned = await scan(sender, 'green-bowl');
+    await sender.request('/scan/payment', { journeyId: scanned.id, amount: amount });
+    const tx = (await sender.state()).demo.transactions[0];
+    await sender.request('/vouch/' + tx.id, { action: 'create' });
+    return (await sender.state()).demo.paymentVerifiedVouches[0];
+  }
+
+  const firstVouch = await payAndVouch('7.20');
+  const receiver = visitor();
+  await receiver.request('/demo/identity', { userId: 'darren' });
+  await receiver.request('/offers/' + firstVouch.shareToken + '/claim', {});
+  const firstScan = await scan(receiver, 'green-bowl');
+  await receiver.request('/scan/payment', { journeyId: firstScan.id, amount: '6.00' });
+  let state = (await receiver.state()).demo;
+  assert.equal(state.transactions[0].source, 'SHARED_VOUCH');
+  assert.equal(state.transactions[0].merchantRewardEarned, .5);
+
+  // Same sender, recipient and merchant try to farm a second rewarded referral straight away.
+  const secondVouch = await payAndVouch('7.20');
+  await receiver.request('/vouch/' + state.transactions[0].id, { action: 'skip' });
+  await receiver.request('/offers/' + secondVouch.shareToken + '/claim', {});
+  const secondScan = await scan(receiver, 'green-bowl');
+  await receiver.request('/scan/payment', { journeyId: secondScan.id, amount: '6.00' });
+  state = (await receiver.state()).demo;
+  assert.equal(state.transactions[0].source, 'DIRECT_SCAN');
   assert.equal(state.activeVouchClaim.status, 'CLAIMED');
-  assert.equal(credit(state, 'green-bowl'), 0);
 });
 
 test('Retired preorder routes are safe and active pages render', async function() {

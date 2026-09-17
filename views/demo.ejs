@@ -1,3 +1,12 @@
 <%- include('partials/start', { title: 'Demo controls' }) %>
-<a class="back" href="/profile">← Profile</a><p class="eyebrow">Open House helper</p><h1>Demo controls</h1><p>Controls for student helpers are kept separate from Jia's profile.</p><a class="button" href="/merchant">Merchant view</a><form method="POST" action="/reset-demo" data-confirm-reset><button class="text-button" type="submit">Reset Demo</button></form>
+<a class="back" href="/profile">← Profile</a><p class="eyebrow">Open House helper</p><h1>Demo controls</h1><p>Controls for student helpers are kept separate from Jia's profile.</p>
+<section class="card">
+<p class="eyebrow">Acting as</p><h2><%= user.fullName %></h2>
+<form method="POST" action="/demo/identity" class="merchant-picker">
+<label class="field">Switch identity<select name="userId"><% Object.keys(identities).forEach(function(id) { %><option value="<%= id %>" <%= user.id === id ? 'selected' : '' %>><%= identities[id].fullName %></option><% }); %></select></label>
+<button class="text-button" type="submit">Switch</button>
+</form>
+<small>For testing Shared Vouch between two people on this one browser.</small>
+</section>
+<a class="button" href="/merchant">Merchant view</a><form method="POST" action="/reset-demo" data-confirm-reset><button class="text-button" type="submit">Reset Demo</button></form>
 <%- include('partials/end', { active: '' }) %>
