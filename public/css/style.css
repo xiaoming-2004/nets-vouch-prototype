@@ -67,7 +67,7 @@ button:disabled { opacity:.55; cursor:wait; }
 .why strong { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:1.5px; color:var(--muted); }
 .why p { font-size:13px; color:var(--navy); margin:6px 0 0; font-weight:500; line-height:1.5; }
 .trust { color:var(--green); font-size:12px; }
-.ai-badge { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; background:linear-gradient(135deg,#0a2d4a,#165585); color:white; font-size:9px; font-weight:800; letter-spacing:1px; text-transform:uppercase; border-radius:999px; margin-bottom:10px; }
+.ai-badge { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; background:linear-gradient(135deg,#0a2d4a,#165585); color:white; font-size:10px; font-weight:800; letter-spacing:1px; text-transform:uppercase; border-radius:999px; margin-bottom:10px; }
 .feedback summary { list-style:none; text-align:center; padding:15px 0 0; font-size:13px; color:var(--muted); cursor:pointer; min-height:44px; }
 .feedback summary::-webkit-details-marker { display:none; }
 .feedback[open] summary { color:var(--red); }
