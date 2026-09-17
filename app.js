@@ -33,6 +33,14 @@ app.use(session({
   saveUninitialized: false
 }));
 
+// Ensure demo session is always initialised before any route renders, even on fresh sessions
+// where req.session.reload() in the queue middleware below has not yet fired.
+app.use(function(req, res, next) {
+  initialiseDemoSession(req);
+  res.locals.demoUser = req.session.demo.user;
+  next();
+});
+
 // Mock data
 const merchants = {
   felicia: {
@@ -953,6 +961,7 @@ app.use(function(req, res, next) {
     req.session.reload(function() {
       initialiseDemoSession(req);
       applyPendingReferralCredits(req);
+      res.locals.demoUser = req.session.demo.user;
       res.set('Cache-Control', 'no-store');
       next();
     });

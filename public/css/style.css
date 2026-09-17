@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&display=swap');
 /* Global: restrained NETS colours and comfortable touch targets. */
 :root { --navy:#092c49; --red:#d32636; --muted:#647180; --line:#e3e8ec; --green:#15704c; --canvas:#f4f6f8; font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--navy); background:#e9eef2; }
 * { box-sizing:border-box; }
@@ -54,18 +55,19 @@ button:disabled { opacity:.55; cursor:wait; }
 .reward-note { margin:14px 0 4px; color:var(--red); font-size:13px; font-weight:650; }
 /* Smart Match and feedback. */
 .match-card { overflow:hidden; background:white; border-radius:26px; border:1px solid var(--line); box-shadow:0 12px 30px #173b5310; }
-.meal-visual { height:132px; display:grid; place-items:center; position:relative; background:linear-gradient(145deg,#edf2f5,#dce7ed); overflow:hidden; }
-.meal-visual::after { content:''; position:absolute; width:180px; height:180px; right:-55px; top:-80px; border-radius:50%; background:#d3263614; }
-.meal-visual span { width:68px; height:68px; display:grid; place-items:center; border-radius:22px; background:var(--navy); color:white; font-size:31px; font-weight:800; box-shadow:0 10px 24px #092c4920; }
-.meal-visual i { position:absolute; top:17px; left:19px; color:var(--red); font-size:10px; font-weight:800; letter-spacing:1px; text-transform:uppercase; font-style:normal; }
+.meal-visual { height:148px; display:grid; place-items:center; position:relative; background:linear-gradient(150deg,#0a2d4a 0%,#0e3d61 60%,#092c49 100%); overflow:hidden; }
+.meal-visual::after { content:''; position:absolute; width:220px; height:220px; right:-70px; top:-100px; border-radius:50%; background:rgba(211,38,54,0.13); }
+.meal-visual span { width:68px; height:68px; display:grid; place-items:center; border-radius:20px; background:linear-gradient(135deg,#d32636,#a81d2a); color:white; font-size:31px; font-weight:800; box-shadow:0 10px 28px rgba(211,38,54,0.4); }
+.meal-visual i { position:absolute; top:16px; left:18px; color:rgba(255,255,255,0.6); font-size:10px; font-weight:800; letter-spacing:1.2px; text-transform:uppercase; font-style:normal; }
 .match-copy { padding:22px; }
 .match-copy h2 { font-size:23px; margin-bottom:4px; }
 .item { margin-bottom:9px; }
 .facts { font-size:13px; text-transform:capitalize; margin-bottom:14px; }
-.why { padding:12px 0 17px; border-top:1px solid var(--line); }
-.why strong { font-size:12px; }
-.why p { font-size:12px; margin:5px 0 0; }
+.why { padding:14px 0 18px; border-top:1px solid var(--line); }
+.why strong { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:1.5px; color:var(--muted); }
+.why p { font-size:13px; color:var(--navy); margin:6px 0 0; font-weight:500; line-height:1.5; }
 .trust { color:var(--green); font-size:12px; }
+.ai-badge { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; background:linear-gradient(135deg,#0a2d4a,#165585); color:white; font-size:9px; font-weight:800; letter-spacing:1px; text-transform:uppercase; border-radius:999px; margin-bottom:10px; }
 .feedback summary { list-style:none; text-align:center; padding:15px 0 0; font-size:13px; color:var(--muted); cursor:pointer; min-height:44px; }
 .feedback summary::-webkit-details-marker { display:none; }
 .feedback[open] summary { color:var(--red); }
@@ -130,7 +132,8 @@ button:disabled { opacity:.55; cursor:wait; }
 .camera-card small { color:var(--muted); margin-top:7px; }
 .camera-view { position:relative; width:154px; height:154px; display:grid; place-items:center; border:2px solid #b9c9d3; border-radius:30px; overflow:hidden; background:white; }
 .camera-view::before,.camera-view::after { content:''; position:absolute; inset:14px; border:3px solid transparent; border-top-color:#ff6372; border-bottom-color:#ff6372; border-radius:25px; }
-.camera-view b { font-size:70px; font-weight:400; color:var(--navy); }
+.camera-view b { display:none; }
+.qr-icon { width:58px; height:58px; color:var(--navy); opacity:0.5; }
 .camera-view i { position:absolute; left:15px; right:15px; height:2px; top:50%; background:#ff6372; box-shadow:0 0 12px #ff6372; }
 .is-processing .camera-view i { animation:scanning .7s ease-in-out infinite alternate; }
 .scan-launch .form-status { color:var(--muted); }
