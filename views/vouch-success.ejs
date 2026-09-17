@@ -1,6 +1,6 @@
 <%- include('partials/start', { title: 'Vouched' }) %>
-<section class="share-vouch"><div class="success-mark" aria-hidden="true">✓</div><h1>Payment-Verified Vouch created ✓</h1><p>Share your Vouch:</p>
-<article class="share-preview"><small>NETS Vouch</small><h2><%= vouch.user %> Vouched for <%= transaction.merchantName %></h2><span><%= vouch.tagLabel %></span><span>✓ Verified NETS Visit</span></article>
-<div class="share-grid" data-share-path="<%= sharePath %>"><button type="button" data-copy-share><b>◉</b>WhatsApp</button><button type="button" data-copy-share><b>➤</b>Telegram</button><button type="button" data-copy-share><b>▣</b>Copy link</button></div><p class="share-status" role="status"></p><small>Your payment amount stays private. Prototype sharing copies the same claim link; no external app opens.</small>
+<section class="share-vouch"><div class="success-mark" aria-hidden="true">✓</div><h1>Payment-Verified Vouch created</h1><p><%= transaction.merchantName %> · Verified NETS Visit</p>
+<article class="share-preview"><small>NETS Vouch</small><h2><%= vouch.user %> Vouched for <%= transaction.merchantName %></h2><span><%= vouch.tagLabel %></span><span>✓ Payment-Verified</span></article>
+<h2>Share with a friend</h2><div class="share-grid" data-share-path="<%= sharePath %>" data-share-merchant="<%= transaction.merchantName %>"><button type="button" data-share-platform="whatsapp"><b>W</b>WhatsApp</button><button type="button" data-share-platform="telegram"><b>T</b>Telegram</button><button type="button" data-share-platform="copy"><b>⌁</b>Copy Link</button></div><p class="share-status" role="status"></p><small>Your payment amount stays private.</small>
 <form method="POST" action="/transactions/<%= transaction.id %>/done"><button class="button" type="submit">Done</button></form></section>
 <%- include('partials/end', { active: transaction.journeySource === 'scan' ? 'scan' : 'home' }) %>

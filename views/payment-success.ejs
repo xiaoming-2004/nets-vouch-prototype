@@ -1,6 +1,6 @@
 <%- include('partials/start', { title: 'Payment successful' }) %>
 <section class="receipt"><div class="success-mark" aria-hidden="true">✓</div><h1>Payment successful</h1><h2><%= transaction.merchantName %></h2>
-<dl class="receipt-lines"><div><dt>Purchase</dt><dd>$<%= transaction.purchaseAmount.toFixed(2) %></dd></div><div><dt><%= transaction.merchantName %> credit used</dt><dd>−$<%= transaction.merchantCreditUsed.toFixed(2) %></dd></div><div><dt>Paid with NETS</dt><dd>$<%= transaction.netsPaid.toFixed(2) %></dd></div></dl>
+<div class="payment-total"><span>Paid with NETS</span><strong>$<%= transaction.netsPaid.toFixed(2) %></strong></div>
 <% if (transaction.merchantRewardEarned > 0) { %><p class="reward">+$<%= transaction.merchantRewardEarned.toFixed(2) %> <%= transaction.merchantName %> Vouch Credit</p><% } %>
 <% if (canVouch && transaction.vouchDecision === 'pending') { %><%- include('partials/vouch-prompt', { transaction: transaction }) %>
 <% } else { %><form method="POST" action="/transactions/<%= transaction.id %>/done"><button class="button" type="submit">Done</button></form><% } %>

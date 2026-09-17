@@ -56,6 +56,7 @@ if (paymentForm) {
     const maximumCashback = Math.max(0, cents - 100);
     const used = checkbox.checked ? Math.min(Math.round(Number(paymentForm.dataset.balance) * 100), maximumCashback) : 0;
     const paid = (cents - used) / 100;
+    paymentForm.querySelector('[data-purchase-amount]').textContent = '$' + (cents / 100).toFixed(2);
     paymentForm.querySelector('[data-cashback-used]').textContent = '−$' + (used / 100).toFixed(2);
     paymentForm.querySelector('[data-nets-total]').textContent = '$' + paid.toFixed(2);
     paymentForm.querySelector('[data-pay-button]').textContent = valid ? 'Pay $' + paid.toFixed(2) : 'Pay';
@@ -64,13 +65,10 @@ if (paymentForm) {
   updateTotal();
 }
 
-// Social buttons are deliberately simulated: each copies the same claimable link.
+// Every share action uses the same claimable Vouch link.
 const shareGrid = document.querySelector('[data-share-path]');
 if (shareGrid) {
-  shareGrid.addEventListener('click', async function(event) {
-    const button = event.target.closest('[data-copy-share]');
-    if (!button) return;
-    const link = new URL(shareGrid.dataset.sharePath, window.location.origin).href;
+  async function copyShareLink(link) {
     try {
       await navigator.clipboard.writeText(link);
     } catch (error) {
@@ -78,9 +76,24 @@ if (shareGrid) {
       input.value = link; input.setAttribute('readonly', ''); input.style.position = 'fixed'; input.style.opacity = '0';
       document.body.appendChild(input); input.select(); document.execCommand('copy'); input.remove();
     }
+  }
+  shareGrid.addEventListener('click', async function(event) {
+    const button = event.target.closest('[data-share-platform]');
+    if (!button) return;
+    const link = new URL(shareGrid.dataset.sharePath, window.location.origin).href;
+    const text = 'I Vouched for ' + shareGrid.dataset.shareMerchant + ' on NETS Vouch. Claim the offer: ';
+    const platform = button.dataset.sharePlatform;
+    if (platform === 'copy') {
+      await copyShareLink(link);
+    } else {
+      const shareUrl = platform === 'whatsapp'
+        ? 'https://wa.me/?text=' + encodeURIComponent(text + link)
+        : 'https://t.me/share/url?url=' + encodeURIComponent(link) + '&text=' + encodeURIComponent(text);
+      const opened = window.open(shareUrl, '_blank', 'noopener,noreferrer');
+      if (!opened) await copyShareLink(link);
+    }
     const status = document.querySelector('.share-status');
-    status.textContent = 'Claim link copied ✓';
-    button.setAttribute('aria-label', button.textContent.trim() + ' link copied');
+    status.textContent = platform === 'copy' ? 'Copied ✓' : 'Share ready ✓';
   });
 }
 

@@ -77,7 +77,8 @@ test('Smart Match recommends a merchant, keeps feedback and hands off to Scan', 
   const first = await match(v);
   assert.match(first.html, /felicia-chicken-rice/);
   assert.match(first.html, /Try: Chicken Rice · \$5\.00/);
-  assert.match(first.html, /Go there/);
+  assert.match(first.html, /Scan when you arrive/);
+  assert.ok(!first.html.includes('Go there'));
   assert.ok(!first.html.includes('after collection'));
   const feliciaId = (await v.state()).demo.selectedMerchantId;
   await v.request('/recommendation/accept', { merchantId: feliciaId });
@@ -98,7 +99,8 @@ test('Profile preferences still filter Smart Match', async function() {
   const v = visitor();
   await v.request('/home');
   for (const dietary of ['halal', 'vegetarian', 'vegan', 'none']) {
-    await v.request('/profile', { dietaryPreference: dietary, budget: '10', maxDistanceMinutes: '10' });
+    const saved = await v.request('/profile', { dietaryPreference: dietary, budget: '10', maxDistanceMinutes: '10' });
+    assert.equal(saved.location, '/home?matching=again');
     const result = await v.request('/smart-match/result');
     assert.equal(result.status, 200);
     if (dietary !== 'none') assert.match(result.html, new RegExp(dietary));
@@ -114,10 +116,10 @@ test('Smart Match Scan accepts actual amount, merchant credit and optional Vouch
   const pending = await scan(v);
   assert.equal(pending.merchantId, merchantId);
   const page = await v.request('/scan/payment');
-  assert.match(page.html, /How much are you paying/);
+  assert.match(page.html, /Pay with NETS/);
   assert.match(page.html, /\$0\.50 available/);
   const paid = await v.request('/scan/payment', { journeyId: pending.id, amount: '6.00', useCashback: 'on' });
-  assert.match(paid.location, /^\/vouch\/tx-/);
+  assert.match(paid.location, /^\/payment-success\/tx-/);
   let state = (await v.state()).demo;
   const transaction = state.transactions[0];
   assert.equal(transaction.purchaseAmount, 6);
@@ -136,7 +138,13 @@ test('Smart Match Scan accepts actual amount, merchant credit and optional Vouch
   const share = await v.request('/vouch/' + transaction.id + '/success');
   assert.match(share.html, /WhatsApp/);
   assert.match(share.html, /Telegram/);
-  assert.match(share.html, /Copy link/);
+  assert.match(share.html, /Copy Link/);
+  const vouches = await v.request('/profile/vouches');
+  assert.match(vouches.html, /Payment-Verified/);
+  assert.ok(!vouches.html.includes('Simulated verification'));
+  const profile = await v.request('/profile');
+  assert.match(profile.html, /Jia Yi/);
+  assert.ok(!profile.html.includes('Open House controls'));
 });
 
 test('Merchant Vouch Credit cannot be used at another merchant', async function() {
@@ -233,10 +241,13 @@ test('Retired preorder routes are safe and active pages render', async function(
   await v.request('/scan/payment', { journeyId: pending.id, amount: '6.00' });
   const id = (await v.state()).demo.transactions[0].id;
   await v.request('/vouch/' + id, { action: 'skip' });
-  const pages = ['/home', '/profile', '/profile?tab=vouches', '/profile?tab=transactions',
+  const pages = ['/home', '/profile', '/profile/preferences', '/profile/rewards', '/profile/vouches', '/profile/activity',
     '/transactions/' + id, '/merchant', '/merchant?tab=results', '/scan',
-    '/payment-success/' + id, '/css/style.css', '/js/script.js'];
+    '/payment-success/' + id, '/demo', '/css/style.css', '/js/script.js'];
   for (const path of pages) assert.equal((await v.request(path)).status, 200, path);
   assert.equal((await v.request('/merchant?tab=orders')).status, 200);
   assert.ok(!(await v.request('/merchant?tab=orders')).html.includes('Start preparing'));
+  const script = await v.request('/js/script.js');
+  assert.match(script.html, /wa\.me/);
+  assert.match(script.html, /t\.me\/share/);
 });

@@ -1,9 +1,9 @@
 <%- include('partials/start', { title: 'Vouch this spot' }) %>
-<a class="back" href="/home">← Home</a><p class="eyebrow">After a completed payment</p><h1>Worth sharing?</h1>
-<section class="verified-visit card"><span class="monogram"><%= transaction.merchantName.charAt(0) %></span><span><small>Jia's verified visit</small><strong>Vouch for <%= transaction.merchantName %></strong><em>Pick the one thing you'd tell a friend.</em></span></section>
+<a class="back" href="/payment-success/<%= transaction.id %>">← Payment</a><p class="eyebrow">Payment-Verified</p><h1>Enjoyed this place?</h1>
+<section class="verified-visit"><span class="monogram"><%= transaction.merchantName.charAt(0) %></span><span><small>Verified NETS visit</small><strong><%= transaction.merchantName %></strong><em>Choose a quick tag, or simply Vouch.</em></span></section>
 <form method="POST" action="/vouch/<%= transaction.id %>" class="tag-form" data-single-submit>
 <input type="hidden" name="action" value="create"><fieldset><legend>Add a tag <span>(optional)</span></legend><div class="tag-grid">
 <% vouchTags.forEach(function(tag) { %><label><input type="radio" name="tag" value="<%= tag.id %>"><span><i aria-hidden="true">✓</i><%= tag.label %></span></label><% }); %>
-</div></fieldset><p class="privacy-note">A simple recommendation from a verified NETS visit — no rating or review needed.</p><button class="button" type="submit">Vouch this spot</button></form>
+</div></fieldset><button class="button" type="submit">Vouch this spot</button></form>
 <form method="POST" action="/vouch/<%= transaction.id %>" data-single-submit><input type="hidden" name="action" value="skip"><button class="text-button" type="submit">Not now</button></form>
 <%- include('partials/end', { active: transaction.journeySource === 'scan' ? 'scan' : 'home' }) %>

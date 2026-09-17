@@ -1,0 +1,4 @@
+<%- include('partials/start', { title: 'Your Rewards' }) %>
+<a class="back" href="/profile">← Profile</a><h1>Your Rewards</h1><p>Each Vouch Credit is only usable at that merchant.</p>
+<% if (!rewardCredits.length) { %><p class="empty-line">Your merchant Vouch Credits will appear here.</p><% } else { %><div class="reward-passes rewards-page"><% rewardCredits.forEach(function(credit) { %><article class="reward-pass"><span class="merchant-badge"><%= credit.merchantName.charAt(0) %></span><div><strong><%= credit.merchantName %></strong><small>Use only at <%= credit.merchantName %></small></div><b>$<%= credit.amount.toFixed(2) %><small>Vouch Credit</small></b></article><% }); %></div><% } %>
+<%- include('partials/end', { active: 'profile' }) %>

@@ -1,10 +1,11 @@
 <%- include('partials/start', { title: 'Scan to Pay' }) %>
+<header class="page-heading"><h1>Scan to Pay</h1><p>Point your camera at a participating merchant QR.</p></header>
 <% if (error) { %><p class="error" role="alert">That QR wasn't recognised. Try a participating merchant.</p><% } %>
 <form method="POST" action="/scan" class="scan-launch" data-scan>
 <input type="hidden" name="merchantId" value="<%= merchantId %>">
-<button class="camera-card" type="submit" aria-label="Tap to pay at the detected merchant">
+<button class="camera-card" type="submit" aria-label="Scan merchant QR">
 <span class="camera-view" aria-hidden="true"><i></i><b>⌗</b></span>
-<strong>Scan Merchant QR</strong><small>Hold near the merchant code</small>
+<strong>Scan Merchant QR</strong><small>Camera simulation for Open House</small>
 </button><p class="form-status" role="status"></p>
 </form>
 <%- include('partials/end', { active: 'scan' }) %>

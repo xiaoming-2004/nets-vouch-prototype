@@ -156,10 +156,10 @@ const dietaryPreferenceOptions = [
 ];
 
 const vouchTags = [
-  { id: 'vouch-pick', label: 'Vouch Pick' },
-  { id: 'good-value', label: 'Good Value' },
   { id: 'worth-it', label: 'Worth It' },
-  { id: 'good-hangout', label: 'Good Hangout' }
+  { id: 'tasty', label: 'Tasty' },
+  { id: 'hidden-gem', label: 'Hidden gem' },
+  { id: 'would-return', label: 'Would return' }
 ];
 
 // Shared links live across demo sessions, but disappear when this prototype restarts.
@@ -183,8 +183,8 @@ function createCampaigns() {
 
 function createInitialDemo() {
   return {
-    version: 8,
-    user: { id: 'jia', name: 'Jia' },
+    version: 9,
+    user: { id: 'jia', name: 'Jia', fullName: 'Jia Yi' },
     profile: { dietaryPreference: 'none', budget: 10, maxDistanceMinutes: 10, notifications: true },
     vouchCredits: {},
     nearbyMerchants: [], selectedMerchantId: null, recommendationAccepted: false, rejectedMerchantIds: [],
@@ -197,7 +197,7 @@ function createInitialDemo() {
 }
 
 function initialiseDemoSession(req) {
-  if (!req.session.demo || req.session.demo.version !== 8) {
+  if (!req.session.demo || req.session.demo.version !== 9) {
     req.session.demo = createInitialDemo();
   }
 }
@@ -546,6 +546,13 @@ function getCurrentDateAndTime() {
   };
 }
 
+function getHomeGreeting() {
+  const hour = Math.floor(getSingaporeMinutesNow() / 60);
+  if (hour < 12) return { greeting: 'Good morning', prompt: 'Finding something nearby?' };
+  if (hour < 17) return { greeting: 'Good afternoon', prompt: 'Lunch in 10 minutes?' };
+  return { greeting: 'Good evening', prompt: 'Looking for a quick bite?' };
+}
+
 function timeToMinutes(timeText) {
   if (typeof timeText !== 'string') return null;
   const parts = timeText.split(':');
@@ -784,7 +791,7 @@ app.get('/home', function(req, res) {
   const recommendation = findMerchantForDemo(demo, demo.selectedMerchantId);
   res.render('home', {
     ...matchView(demo, recommendation), user: demo.user,
-    matchingAgain: req.query.matching === 'again'
+    matchingAgain: req.query.matching === 'again', homeGreeting: getHomeGreeting()
   });
 });
 
@@ -868,7 +875,7 @@ app.post('/recommendation/accept', function(req, res) {
   }
   if (!demo.recommendationAccepted) findCampaign(demo, merchant.id).metrics.accepted += 1;
   demo.recommendationAccepted = true;
-  res.redirect('/home');
+  res.redirect('/scan');
 });
 
 // Preorder payment is retired. In-store Scan is the only payment entry.
@@ -880,7 +887,7 @@ app.get('/scan', function(req, res) {
   const demo = req.session.demo;
   const scan = demo.currentScanPayment;
   if (scan && scan.status === 'MERCHANT_FOUND') return res.redirect('/scan/payment');
-  if (scan && scan.status === 'PAID') return res.redirect('/vouch/' + scan.transactionId);
+  if (scan && scan.status === 'PAID') return res.redirect(receiptUrl(findTransactionById(demo.transactions, scan.transactionId)));
   res.render('scan', { error: req.query.error === 'invalid',
     merchantId: demo.activeVouchClaim && demo.activeVouchClaim.status === 'CLAIMED' ?
       demo.activeVouchClaim.merchantId :
@@ -912,7 +919,7 @@ app.get('/scan/payment', function(req, res) {
   if (!scan || scan.status === 'COMPLETE') return res.redirect('/scan');
   if (scan.transactionId) {
     const existingTransaction = findTransactionById(demo.transactions, scan.transactionId);
-    return res.redirect(canVouch(existingTransaction) ? '/vouch/' + scan.transactionId : receiptUrl(existingTransaction));
+    return res.redirect(receiptUrl(existingTransaction));
   }
   res.render('payment', { journey: scan, scan: true,
     merchantCredit: getMerchantCredit(demo, scan.merchantId),
@@ -925,13 +932,12 @@ app.post('/scan/payment', function(req, res) {
   if (!scan || req.body.journeyId !== scan.id) return res.redirect('/scan');
   if (scan.transactionId) {
     const existingTransaction = findTransactionById(demo.transactions, scan.transactionId);
-    return res.redirect(canVouch(existingTransaction) ? '/vouch/' + scan.transactionId : receiptUrl(existingTransaction));
+    return res.redirect(receiptUrl(existingTransaction));
   }
   const amount = parsePaymentAmount(req.body.amount);
   if (amount === null) return res.redirect('/scan/payment?error=amount');
   scan.enteredAmount = amount;
   const transaction = recordPayment(demo, scan, amount, req.body.useCashback === 'on');
-  if (canVouch(transaction)) return res.redirect('/vouch/' + transaction.id);
   res.redirect(receiptUrl(transaction));
 });
 app.post('/scan/cancel', function(req, res) {
@@ -1047,12 +1053,25 @@ app.post('/transactions/:id/done', function(req, res) {
 
 // Profile and history
 app.get('/profile', function(req, res) {
+  if (req.query.tab === 'vouches') return res.redirect('/profile/vouches');
+  if (req.query.tab === 'transactions') return res.redirect('/profile/activity');
   const demo = req.session.demo;
-  const tab = ['transactions', 'vouches'].includes(req.query.tab) ? req.query.tab : 'settings';
-  res.render('profile', { user: demo.user, profile: demo.profile, dietaryPreferenceOptions: dietaryPreferenceOptions,
-    tab: tab, transactions: demo.transactions, promotionalRedemptions: demo.promotionalRedemptions,
-    paymentVerifiedVouches: demo.paymentVerifiedVouches, rewardCredits: getRewardCredits(demo),
-    settingsError: req.query.error === 'invalid' });
+  res.render('profile', { user: demo.user, profile: demo.profile,
+    rewardCredits: getRewardCredits(demo), dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference) });
+});
+app.get('/profile/rewards', function(req, res) {
+  res.render('profile-rewards', { rewardCredits: getRewardCredits(req.session.demo) });
+});
+app.get('/profile/preferences', function(req, res) {
+  const demo = req.session.demo;
+  res.render('profile-preferences', { profile: demo.profile,
+    dietaryPreferenceOptions: dietaryPreferenceOptions, settingsError: req.query.error === 'invalid' });
+});
+app.get('/profile/vouches', function(req, res) {
+  res.render('profile-vouches', { paymentVerifiedVouches: req.session.demo.paymentVerifiedVouches });
+});
+app.get('/profile/activity', function(req, res) {
+  res.render('profile-activity', { transactions: req.session.demo.transactions });
 });
 app.post('/profile', function(req, res) {
   const demo = req.session.demo;
@@ -1060,19 +1079,25 @@ app.post('/profile', function(req, res) {
   const distance = Number(req.body.maxDistanceMinutes);
   if (!isValidDietaryPreference(req.body.dietaryPreference) || budget === null || budget > 100 ||
       !Number.isInteger(distance) || distance < 1 || distance > 60) {
-    return res.redirect('/profile?error=invalid');
+    return res.redirect('/profile/preferences?error=invalid');
   }
   demo.profile = { dietaryPreference: req.body.dietaryPreference, budget: budget,
     maxDistanceMinutes: distance, notifications: req.body.notifications === 'on' };
   demo.selectedMerchantId = null;
   demo.recommendationAccepted = false;
-  res.redirect('/profile?saved=1');
+  demo.rejectedMerchantIds = [];
+  demo.recommendationFeedback = [];
+  demo.shownMerchantIds = [];
+  demo.nearbyMerchants = [];
+  res.redirect('/home?matching=again');
 });
 app.get('/transactions/:id', function(req, res) {
   const transaction = findTransactionById(req.session.demo.transactions, req.params.id);
-  if (!transaction) return res.redirect('/profile?tab=transactions');
+  if (!transaction) return res.redirect('/profile/activity');
   res.render('transaction-detail', { transaction: transaction });
 });
+
+app.get('/demo', function(req, res) { res.render('demo'); });
 
 // Merchant demo: switch merchant without changing Jia's selected recommendation.
 app.get('/merchant', function(req, res) {

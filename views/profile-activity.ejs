@@ -1,0 +1,4 @@
+<%- include('partials/start', { title: 'NETS Activity' }) %>
+<a class="back" href="/profile">← Profile</a><h1>NETS Activity</h1><p>Your recent NETS payments.</p>
+<% if (!transactions.length) { %><p class="empty-line">Your payments will appear here.</p><% } %><div class="activity-list"><% transactions.forEach(function(transaction) { %><a class="payment-row" href="/transactions/<%= transaction.id %>"><span class="merchant-badge"><%= transaction.merchantName.charAt(0) %></span><span><strong><%= transaction.merchantName %></strong><small><%= transaction.date %> · <%= transaction.time %></small><em>NETS</em></span><b>$<%= transaction.netsPaid.toFixed(2) %><% if (transaction.merchantRewardEarned > 0) { %><small>+$<%= transaction.merchantRewardEarned.toFixed(2) %> reward</small><% } %></b></a><% }); %></div>
+<%- include('partials/end', { active: 'profile' }) %>

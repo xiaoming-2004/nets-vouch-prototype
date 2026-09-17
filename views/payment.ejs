@@ -1,17 +1,17 @@
-<%- include('partials/start', { title: 'Scan to Pay' }) %>
-<a class="back" href="/home">← Home</a><p class="eyebrow">Merchant found ✓</p><h1>How much are you paying?</h1>
-<div class="merchant-heading"><span class="monogram"><%= journey.merchantName.charAt(0) %></span><div><h2><%= journey.merchantName %></h2><p><%= scan ? journey.outlet : journey.itemName %></p></div></div>
+<%- include('partials/start', { title: 'Pay with NETS' }) %>
+<div class="pay-head"><a class="back-icon" href="/home" aria-label="Back to Home">←</a><h1 class="pay-title">Pay with NETS</h1></div>
+<div class="pay-merchant"><span class="monogram pay-monogram"><%= journey.merchantName.charAt(0) %></span><h2><%= journey.merchantName %></h2><p><%= journey.outlet %></p></div>
 <% if (error) { %><p class="error" role="alert"><%= error %></p><% } %>
 <form method="POST" action="/scan/payment" data-payment data-balance="<%= merchantCredit %>" data-amount="">
 <input type="hidden" name="journeyId" value="<%= journey.id %>">
-<section class="card">
-<label class="field">Purchase amount
-<span class="amount-input"><span>$</span><input name="amount" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" maxlength="7" placeholder="0.00" required aria-label="Purchase amount in dollars" value="<%= journey.enteredAmount || '' %>"></span></label>
-<label class="cashback-toggle"><span><strong>Use <%= journey.merchantName %> Vouch Credit</strong><small>$<%= merchantCredit.toFixed(2) %> available</small></span><input type="checkbox" name="useCashback" <%= merchantCredit > 0 ? '' : 'disabled' %>></label>
-<div class="line"><span>Vouch Credit used</span><strong data-cashback-used>−$0.00</strong></div>
+<label class="pay-amount-block"><span class="eyebrow">You're paying</span><span class="amount-input"><span>$</span><input name="amount" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" maxlength="7" placeholder="0.00" required aria-label="Purchase amount in dollars" value="<%= journey.enteredAmount || '' %>"></span></label>
+<label class="credit-toggle"><span><strong><%= journey.merchantName %> Vouch Credit</strong><small><%= merchantCredit > 0 ? '$' + merchantCredit.toFixed(2) + ' available · use only at ' + journey.merchantName : 'No credit available yet' %></small></span><span class="switch"><input type="checkbox" name="useCashback" <%= merchantCredit > 0 ? '' : 'disabled' %>><span class="switch-track"></span></span></label>
+<div class="pay-summary">
+<div class="line"><span>Purchase amount</span><strong data-purchase-amount>$0.00</strong></div>
+<div class="line"><span><%= journey.merchantName %> Vouch Credit</span><strong data-cashback-used>−$0.00</strong></div>
 <div class="total"><span>Pay with NETS</span><strong data-nets-total>$0.00</strong></div>
-<% if (campaign) { %><p class="reward-note">Earn $<%= campaign.rewardAmount.toFixed(2) %> <%= journey.merchantName %> Vouch Credit after payment.</p><small>At least $1 must be paid with NETS. Subject to campaign availability.</small><% } %>
-</section>
+</div>
+<% if (campaign) { %><p class="pay-hint">Keep at least $1 paid with NETS to earn <%= journey.merchantName %> Vouch Credit.</p><% } %>
 <button class="button" type="submit" data-pay-button>Pay</button>
 <p class="form-status" role="status"></p>
 </form>

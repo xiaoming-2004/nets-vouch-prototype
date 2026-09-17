@@ -1,23 +1,4 @@
 <%- include('partials/start', { title: 'Profile' }) %>
-<p class="eyebrow">Your space</p><h1><%= user.name %></h1>
-<section><p class="eyebrow">Your rewards</p><% if (!rewardCredits.length) { %><p class="card">Your merchant Vouch Credits will appear here.</p><% } %><div class="list"><% rewardCredits.forEach(function(credit) { %><article class="activity-row"><span class="monogram"><%= credit.merchantName.charAt(0) %></span><span><strong><%= credit.merchantName %></strong><small>Vouch Credit</small></span><b>$<%= credit.amount.toFixed(2) %></b></article><% }); %></div></section>
-<nav class="tabs" aria-label="Profile sections"><a href="/profile" <%- tab === 'settings' ? 'aria-current="page"' : '' %>>Preferences</a><a href="/profile?tab=vouches" <%- tab === 'vouches' ? 'aria-current="page"' : '' %>>My Vouches</a><a href="/profile?tab=transactions" <%- tab === 'transactions' ? 'aria-current="page"' : '' %>>NETS Activity</a></nav>
-<% if (tab === 'settings') { %>
-<% if (settingsError) { %><p class="error">Please choose valid settings.</p><% } %>
-<form method="POST" action="/profile" class="card form-stack">
-<label class="field">Dietary preference<select name="dietaryPreference"><% dietaryPreferenceOptions.forEach(function(option) { %><option value="<%= option.value %>" <%= profile.dietaryPreference === option.value ? 'selected' : '' %>><%= option.label %></option><% }); %></select></label>
-<label class="field">Budget ($)<input type="number" name="budget" value="<%= profile.budget.toFixed(2) %>" min="1" max="100" step=".01" required></label>
-<label class="field">Maximum walk (minutes)<input type="number" name="maxDistanceMinutes" value="<%= profile.maxDistanceMinutes %>" min="1" max="60" required></label>
-<label class="cashback-toggle"><span>Notifications<small>In-app readiness updates</small></span><input type="checkbox" name="notifications" <%= profile.notifications ? 'checked' : '' %>></label>
-<button class="button" type="submit">Save preferences</button></form>
-<% } else if (tab === 'transactions') { %>
-<h2>NETS Activity</h2><% if (!transactions.length) { %><p class="card">Your payments will appear here.</p><% } %>
-<div class="list"><% transactions.forEach(function(transaction) { %><a class="activity-row" href="/transactions/<%= transaction.id %>"><span class="monogram"><%= transaction.merchantName.charAt(0) %></span><span><strong><%= transaction.merchantName %></strong><small><%= transaction.date %> · <%= transaction.time %></small></span><b>$<%= transaction.netsPaid.toFixed(2) %></b></a><% }); %></div>
-<% } else { %>
-<h2>Payment-Verified Vouches</h2><% if (!paymentVerifiedVouches.length) { %><p class="card">Your first Vouch starts with a NETS payment.</p><% } %>
-<% paymentVerifiedVouches.forEach(function(vouch) { %><article class="card"><span class="eyebrow">Payment-Verified ✓</span><h3><%= vouch.merchantName %></h3><p><%= vouch.tagLabel %> · <%= vouch.date %> · <%= vouch.user %></p><small>Transaction <%= vouch.transactionId %> · Simulated verification</small></article><% }); %>
-<h2>Vouch Credit earned</h2><% if (!promotionalRedemptions.length) { %><p>No rewards earned yet.</p><% } %>
-<% promotionalRedemptions.forEach(function(redemption) { %><article class="card"><h3><%= redemption.merchantName %></h3><p class="reward">+$<%= redemption.rewardAmount.toFixed(2) %></p><small><%= redemption.date %></small></article><% }); %>
-<% } %>
-<details class="demo-controls"><summary>Open House controls</summary><a class="text-button" href="/merchant">Merchant view</a><form method="POST" action="/reset-demo" data-confirm-reset><button class="text-button" type="submit">Reset Demo</button></form></details>
+<section class="profile-hero"><span class="profile-avatar">J</span><h1><%= user.fullName || user.name %></h1><p>NETS Vouch Member</p><div class="preference-chips"><span><%= dietaryLabel %></span><span>≤ $<%= profile.budget.toFixed(0) %></span><span><%= profile.maxDistanceMinutes %> min</span></div><a href="/profile/preferences">Edit preferences →</a></section>
+<nav class="profile-menu" aria-label="Profile menu"><a href="/profile/rewards"><span><strong>Your Rewards</strong><small><%= rewardCredits.length ? rewardCredits.length + (rewardCredits.length === 1 ? ' merchant credit' : ' merchant credits') : 'No merchant credits yet' %></small></span><b>›</b></a><a href="/profile/vouches"><span><strong>My Vouches</strong><small>Payment-Verified Vouches</small></span><b>›</b></a><a href="/profile/activity"><span><strong>NETS Activity</strong><small>Recent NETS payments</small></span><b>›</b></a><a href="/profile/preferences"><span><strong>Preferences</strong><small><%= dietaryLabel %> · $<%= profile.budget.toFixed(0) %> · <%= profile.maxDistanceMinutes %> min</small></span><b>›</b></a><a href="/profile/preferences"><span><strong>Notifications</strong><small>Payment and reward updates</small></span><em><%= profile.notifications ? 'On' : 'Off' %></em></a></nav>
 <%- include('partials/end', { active: 'profile' }) %>
