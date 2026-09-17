@@ -502,6 +502,52 @@ test('Task 3 regression — Smart Match route resolves correctly after async ref
   assert.match(result.html, /Why this match/);
 });
 
+test('Task 6 — full Open House story: Jia Smart Match → Vouch → Darren pays → Felicia sees both conversions', async function() {
+  const jia = visitor();
+  const darren = visitor();
+
+  // Jia: Smart Match → accept → scan → pay → vouch → share
+  await jia.request('/home');
+  const matchResult = await jia.request('/smart-match/result');
+  assert.match(matchResult.html, /felicia-chicken-rice/);
+  const feliciaId = (await jia.state()).demo.selectedMerchantId;
+  await jia.request('/recommendation/accept', { merchantId: feliciaId });
+  const jiaScan = await scan(jia, feliciaId);
+  await jia.request('/scan/payment', { journeyId: jiaScan.id, amount: '5.00' });
+  const jiaTx = (await jia.state()).demo.transactions[0];
+  assert.equal(jiaTx.source, 'SMART_MATCH');
+  assert.equal(jiaTx.merchantRewardEarned, 0.50);
+  await jia.request('/vouch/' + jiaTx.id, { action: 'create', tag: 'worth-it' });
+  const jiaVouch = (await jia.state()).demo.paymentVerifiedVouches[0];
+  const offerPath = '/offers/' + jiaVouch.shareToken;
+
+  // Darren: switch identity → claim offer → pay at same merchant
+  await darren.request('/demo/identity', { userId: 'darren' });
+  await darren.request(offerPath);
+  await darren.request(offerPath + '/claim', {});
+  const darrenScan = await scan(darren, feliciaId);
+  await darren.request('/scan/payment', { journeyId: darrenScan.id, amount: '5.00' });
+  const darrenTx = (await darren.state()).demo.transactions[0];
+  assert.equal(darrenTx.source, 'SHARED_VOUCH');
+  assert.equal(darrenTx.merchantRewardEarned, 0.50);
+
+  // Felicia's campaign metrics reflect both attributed channels
+  const campaign = getMerchantCampaigns().find(function(c) { return c.merchantId === feliciaId; });
+  assert.equal(campaign.metrics.smartMatchPayments, 1);
+  assert.equal(campaign.metrics.sharedVouchPayments, 1);
+  assert.equal(campaign.metrics.directScanPayments, 0);
+  assert.ok(campaign.metrics.smartMatchSales > 0);
+  assert.ok(campaign.metrics.sharedVouchSales > 0);
+  assert.equal(campaign.metrics.sharedVouchClaims, 1);
+  assert.ok(campaign.platformFeeAccrued > 0);
+
+  // Merchant results page renders without error and shows both channels
+  const merchantPage = await jia.request('/merchant?merchantId=' + feliciaId + '&tab=results');
+  assert.equal(merchantPage.status, 200);
+  assert.match(merchantPage.html, /Smart Match payments/);
+  assert.match(merchantPage.html, /Shared Vouch conversion/);
+});
+
 test('Task 5 — merchant results tab shows Shared Vouch conversion rate', async function() {
   const v = visitor();
   await v.request('/home');
