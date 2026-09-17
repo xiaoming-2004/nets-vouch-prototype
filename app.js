@@ -215,11 +215,11 @@ let merchantCampaignStore = createCampaigns();
 function createInitialDemo(userId) {
   const identityId = isValidDemoIdentity(userId) ? userId : 'jia';
   return {
-    version: 12,
+    version: 13,
     user: { ...demoIdentities[identityId] },
     profile: { dietaryPreference: 'none', budget: 10, maxDistanceMinutes: 10, notifications: true },
     vouchCredits: {}, dailyMerchantRewards: {},
-    nearbyMerchants: [], selectedMerchantId: null, recommendationAccepted: false, rejectedMerchantIds: [],
+    nearbyMerchants: [], selectedMerchantId: null, selectedMerchantReason: null, recommendationAccepted: false, rejectedMerchantIds: [],
     recommendationFeedback: [], shownMerchantIds: [],
     currentScanPayment: null, activeVouchClaim: null,
     transactions: [], paymentVerifiedVouches: [], promotionalRedemptions: [],
@@ -228,7 +228,7 @@ function createInitialDemo(userId) {
 }
 
 function initialiseDemoSession(req) {
-  if (!req.session.demo || req.session.demo.version !== 12) {
+  if (!req.session.demo || req.session.demo.version !== 13) {
     req.session.demo = createInitialDemo('jia');
     req.session.demoUserStates = {};
   }
@@ -601,10 +601,21 @@ function getFallbackRecommendation(eligible, feedbackItems, profile) {
   return bestMerchant;
 }
 
-function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchantIds, feedbackItems, demo) {
+async function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchantIds, feedbackItems, demo) {
   const eligible = getEligibleMerchants(profile, nearbyMerchants, rejectedMerchantIds, demo);
-  if (eligible.length === 0) return null;
-  return getFallbackRecommendation(eligible, feedbackItems, profile);
+  if (eligible.length === 0) return { merchant: null, reason: null };
+
+  if (process.env.ANTHROPIC_API_KEY) {
+    try {
+      const ranking = await getAIRanking(profile, eligible, feedbackItems);
+      const aiMerchant = findMerchantById(eligible, ranking.merchantId);
+      if (aiMerchant) return { merchant: aiMerchant, reason: ranking.reason };
+    } catch (error) {
+      console.log('AI ranking unavailable, using rule-based fallback:', error.message);
+    }
+  }
+
+  return { merchant: getFallbackRecommendation(eligible, feedbackItems, profile), reason: null };
 }
 
 function getMatchReasons(profile, merchant, feedbackItems) {
@@ -963,10 +974,12 @@ app.get('/smart-match/result', async function(req, res) {
   let recommendation = findMerchantForDemo(demo, demo.selectedMerchantId);
   if (!recommendation) {
     if (!demo.nearbyMerchants.length) demo.nearbyMerchants = (await getNearbyMerchants()).merchants;
-    recommendation = getSmartRecommendation(demo.profile, demo.nearbyMerchants,
+    const result = await getSmartRecommendation(demo.profile, demo.nearbyMerchants,
       demo.rejectedMerchantIds, demo.recommendationFeedback, demo);
+    recommendation = result.merchant;
     if (recommendation) {
       demo.selectedMerchantId = recommendation.id;
+      demo.selectedMerchantReason = result.reason;
       if (!demo.shownMerchantIds.includes(recommendation.id)) {
         demo.shownMerchantIds.push(recommendation.id);
         findCampaign(demo, recommendation.id).metrics.smartMatchShown += 1;
@@ -978,14 +991,16 @@ app.get('/smart-match/result', async function(req, res) {
 });
 
 // Plain HTML fallback for visitors with JavaScript disabled.
-app.get('/smart-match/static', function(req, res) {
+app.get('/smart-match/static', async function(req, res) {
   const demo = req.session.demo;
   if (!demo.selectedMerchantId) {
     demo.nearbyMerchants = copyObjects(fallbackMerchants);
-    const merchant = getSmartRecommendation(demo.profile, demo.nearbyMerchants,
+    const result = await getSmartRecommendation(demo.profile, demo.nearbyMerchants,
       demo.rejectedMerchantIds, demo.recommendationFeedback, demo);
+    const merchant = result.merchant;
     if (merchant) {
       demo.selectedMerchantId = merchant.id;
+      demo.selectedMerchantReason = result.reason;
       if (!demo.shownMerchantIds.includes(merchant.id)) {
         demo.shownMerchantIds.push(merchant.id);
         findCampaign(demo, merchant.id).metrics.smartMatchShown += 1;

@@ -492,3 +492,12 @@ test('Task 1 regression — Smart Match still recommends Felicia first by defaul
   assert.match(result.html, /felicia-chicken-rice/);
   assert.match(result.html, /Choose this/);
 });
+
+test('Task 3 regression — Smart Match route resolves correctly after async refactor', async function() {
+  const v = visitor();
+  await v.request('/home');
+  const result = await v.request('/smart-match/result');
+  assert.equal(result.status, 200);
+  assert.match(result.html, /felicia-chicken-rice/);
+  assert.match(result.html, /Why this match/);
+});
