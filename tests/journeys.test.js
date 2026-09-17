@@ -502,6 +502,14 @@ test('Task 3 regression — Smart Match route resolves correctly after async ref
   assert.match(result.html, /Why this match/);
 });
 
+test('Task 5 — merchant results tab shows Shared Vouch conversion rate', async function() {
+  const v = visitor();
+  await v.request('/home');
+  const page = await v.request('/merchant?merchantId=green-bowl&tab=results');
+  assert.equal(page.status, 200);
+  assert.match(page.html, /Shared Vouch conversion/);
+});
+
 test('Task 4 — smart-match-card renders Why this match section with a non-empty reason', async function() {
   const v = visitor();
   await v.request('/home');
