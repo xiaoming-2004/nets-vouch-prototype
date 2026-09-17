@@ -13,6 +13,6 @@
 <%- include('vouch-prompt', { transaction: transaction }) %>
 <% } else { %>
 <div class="success-mark" aria-hidden="true">✓</div><p class="eyebrow">Journey complete</p><h1><%= order.vouchDecision === 'created' ? 'Thanks for the Vouch' : 'Enjoy your day' %></h1><p>Your payment and rewards are saved in Profile.</p>
-<a class="button" href="/home">Back to Smart Match</a>
+<form method="POST" action="/recommendation/next" data-single-submit><button class="button" type="submit">Find my next match</button></form>
 <% } %>
 </section>

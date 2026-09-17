@@ -111,18 +111,17 @@ test('Smart Match payment, concurrent duplicate protection, merchant readiness, 
   assert.equal(state.cashbackBalance, 0);
   assert.equal(state.currentOrder.status, 'PAID');
   const tx = state.transactions[0];
-  assert.match((await v.request(pays[0].location)).html, /Worth sharing/);
+  assert.match((await v.request(pays[0].location)).html, /Track order/);
   await v.request('/vouch/' + tx.id, { action: 'create', tag: 'worth-it' });
-  assert.equal((await v.state()).demo.paymentVerifiedVouches.length, 1);
+  assert.equal((await v.state()).demo.paymentVerifiedVouches.length, 0);
   await collect(v, order);
   await v.request('/collection', { journeyId: order.id });
   state = (await v.state()).demo;
   assert.equal(state.cashbackBalance, .5);
   assert.equal(state.transactions[0].cashbackAwarded, .5);
   const homeWithOrder = await v.request('/home');
-  assert.match(homeWithOrder.html, /Your Smart Match/);
-  assert.match(homeWithOrder.html, /View order status/);
-  assert.match((await v.request('/order')).html, /Thanks for the Vouch/);
+  assert.match(homeWithOrder.html, /Vouch this spot/);
+  assert.match((await v.request('/order')).html, /Vouch this spot/);
   await Promise.all([v.request('/vouch/' + tx.id, { action: 'create', tag: 'worth-it' }), v.request('/vouch/' + tx.id, { action: 'create', tag: 'worth-it' })]);
   state = (await v.state()).demo;
   assert.equal(state.paymentVerifiedVouches.length, 1);
@@ -130,36 +129,31 @@ test('Smart Match payment, concurrent duplicate protection, merchant readiness, 
   const success = await v.request('/vouch/' + tx.id + '/success');
   assert.match(success.html, /amount stays private/);
   assert.ok(!success.html.includes('$7.50'));
-  assert.match((await v.request('/home')).html, /Your Smart Match/);
+  assert.match((await v.request('/home')).html, /Journey complete/);
+  await v.request('/recommendation/next', {});
   assert.equal((await v.request('/smart-match/result')).status, 200);
   assert.notEqual((await v.state()).demo.selectedMerchantId, order.merchantId);
 });
 
-test('Home keeps Smart Match available and tracks multiple collection orders', async function() {
+test('One Smart Match order stays active until collection and Vouch decision', async function() {
   const v = visitor();
-  const first = await accept(v);
-  await v.request('/payment', { journeyId: first.id });
+  const order = await accept(v);
+  await v.request('/payment', { journeyId: order.id });
   const home = await v.request('/home');
-  assert.match(home.html, /Your Smart Match/);
-  assert.match(home.html, /View order status/);
-  await match(v);
-  const secondMerchantId = (await v.state()).demo.selectedMerchantId;
-  assert.notEqual(secondMerchantId, first.merchantId);
-  await v.request('/recommendation/accept', { merchantId: secondMerchantId });
+  assert.match(home.html, /Preparing your order/);
+  assert.ok(!home.html.includes('Your Smart Match'));
+  assert.equal((await v.request('/smart-match/result')).status, 409);
+  await collect(v, order);
+  const txId = (await v.state()).demo.currentOrder.transactionId;
+  assert.equal((await v.state()).demo.cashbackBalance, .5);
+  await v.request('/vouch/' + txId, { action: 'skip' });
   let state = (await v.state()).demo;
-  const second = state.currentOrder;
-  assert.notEqual(second.id, first.id);
-  assert.equal(state.orders.length, 1);
-  assert.equal(state.orders[0].id, first.id);
-  await v.request('/payment', { journeyId: second.id });
-  const statusPage = await v.request('/order');
-  assert.match(statusPage.html, new RegExp('Order #' + first.orderNumber));
-  assert.match(statusPage.html, new RegExp('Order #' + second.orderNumber));
-  await collect(v, first);
+  assert.equal(state.currentOrder.vouchDecision, 'skipped');
+  assert.equal(state.cashbackBalance, .5);
+  await v.request('/recommendation/next', {});
   state = (await v.state()).demo;
-  assert.equal(state.orders[0].status, 'COLLECTED');
-  assert.equal(state.currentOrder.id, second.id);
-  assert.match((await v.request('/home')).html, /2 orders/);
+  assert.equal(state.currentOrder, null);
+  assert.equal((await v.request('/smart-match/result')).status, 200);
 });
 
 test('Scan is standalone; custom amount, offset, immediate cashback, Vouch merchant and later journeys', async function() {
@@ -215,7 +209,7 @@ test('Scan is standalone; custom amount, offset, immediate cashback, Vouch merch
   assert.equal(state.currentOrder.transactionId, orderTx);
 });
 
-test('Amount validation, stale forms, exhausted campaign, zero NETS payment and reset', async function() {
+test('Amount validation, stale forms, $1 NETS floor and reset', async function() {
   const v = visitor();
   const pending = await scan(v);
   for (const value of ['', '-1', '0', '1.234', '1000.01', 'Infinity', 'abc', '1e2']) {
@@ -231,11 +225,12 @@ test('Amount validation, stale forms, exhausted campaign, zero NETS payment and 
   });
   await v.request('/scan/payment', { journeyId: pending.id, amount: '4.80', useCashback: 'on' });
   let state = (await v.state()).demo;
-  assert.equal(state.transactions[0].netsPaid, 0);
+  assert.equal(state.transactions[0].cashbackUsed, 3.8);
+  assert.equal(state.transactions[0].netsPaid, 1);
   assert.equal(state.transactions[0].cashbackAwarded, 0);
-  assert.equal(state.transactions[0].eligible, false);
-  assert.equal(state.cashbackBalance, .2);
-  await v.request('/vouch/' + state.transactions[0].id, { action: 'create', tag: 'worth-it' });
+  assert.equal(state.transactions[0].eligible, true);
+  assert.equal(state.cashbackBalance, 1.2);
+  await v.request('/vouch/' + state.transactions[0].id, { action: 'skip' });
   assert.equal((await v.state()).demo.paymentVerifiedVouches.length, 0);
   await v.request('/transactions/' + state.transactions[0].id + '/done', {});
   await v.request('/reset-demo', {});
@@ -302,31 +297,39 @@ test('Home balance, one-tap scan, tagged Vouch sharing and friend claim', async 
   assert.ok(home.html.indexOf('Your Vouch Cashback') < home.html.indexOf('Your Smart Match'));
   assert.ok(!home.html.includes('Already at a merchant'));
   const scanPage = await sender.request('/scan');
-  assert.match(scanPage.html, /Tap to Pay/);
+  assert.match(scanPage.html, /Scan Merchant QR/);
   assert.ok(!scanPage.html.includes('Demo merchant'));
   const pending = await scan(sender);
   const paid = await sender.request('/scan/payment', { journeyId: pending.id, amount: '7.20' });
   assert.match(paid.location, /^\/vouch\/tx-/);
   const transaction = (await sender.state()).demo.transactions[0];
   await sender.request('/vouch/' + transaction.id, { action: 'create' });
-  assert.equal((await sender.state()).demo.paymentVerifiedVouches.length, 0);
-  await sender.request('/vouch/' + transaction.id, { action: 'create', tag: 'good-hangout' });
   const vouch = (await sender.state()).demo.paymentVerifiedVouches[0];
-  assert.equal(vouch.tagLabel, 'Good Hangout');
+  assert.equal(vouch.tagLabel, 'Payment-Verified');
   const share = await sender.request('/vouch/' + transaction.id + '/success');
   assert.match(share.html, /WhatsApp/);
   assert.match(share.html, /Telegram/);
-  assert.match(share.html, /Instagram/);
+  assert.match(share.html, /Copy link/);
   const receiver = visitor();
   const offerPath = '/offers/' + vouch.shareToken;
   assert.match((await receiver.request(offerPath)).html, /Claim offer/);
   await receiver.request(offerPath + '/claim', {});
   let receiverState = (await receiver.state()).demo;
-  assert.equal(receiverState.cashbackBalance, .5);
-  assert.equal(receiverState.claimedSharedOffers.length, 1);
+  assert.equal(receiverState.cashbackBalance, 0);
+  assert.equal(receiverState.activeVouchClaim.status, 'CLAIMED');
   await receiver.request(offerPath + '/claim', {});
   receiverState = (await receiver.state()).demo;
+  assert.equal(receiverState.cashbackBalance, 0);
+  const claimedScan = await scan(receiver, 'green-bowl');
+  await receiver.change(function(demo) {
+    demo.campaigns.find(function(campaign) { return campaign.merchantId === 'green-bowl'; }).status = 'INACTIVE';
+  });
+  await receiver.request('/scan/payment', { journeyId: claimedScan.id, amount: '4.80' });
+  receiverState = (await receiver.state()).demo;
+  assert.equal(receiverState.activeVouchClaim.status, 'REDEEMED');
   assert.equal(receiverState.cashbackBalance, .5);
+  await receiver.request('/scan/payment', { journeyId: claimedScan.id, amount: '4.80' });
+  assert.equal((await receiver.state()).demo.cashbackBalance, .5);
 });
 
 test('Direct guards and all rendered pages / navigation destinations', async function() {

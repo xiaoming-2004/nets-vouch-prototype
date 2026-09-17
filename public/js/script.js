@@ -53,7 +53,8 @@ if (paymentForm) {
     const amount = Number(amountInput ? amountInput.value : paymentForm.dataset.amount);
     const valid = Number.isFinite(amount) && amount > 0 && amount <= 1000;
     const cents = valid ? Math.round(amount * 100) : 0;
-    const used = checkbox.checked ? Math.min(Math.round(Number(paymentForm.dataset.balance) * 100), cents) : 0;
+    const maximumCashback = Math.max(0, cents - 100);
+    const used = checkbox.checked ? Math.min(Math.round(Number(paymentForm.dataset.balance) * 100), maximumCashback) : 0;
     const paid = (cents - used) / 100;
     paymentForm.querySelector('[data-cashback-used]').textContent = '−$' + (used / 100).toFixed(2);
     paymentForm.querySelector('[data-nets-total]').textContent = '$' + paid.toFixed(2);
@@ -125,18 +126,14 @@ window.addEventListener('pageshow', function(event) {
 });
 
 // Reflect merchant readiness without fake preparation timers.
-const orderCards = Array.from(document.querySelectorAll('[data-order-id]'));
-if (orderCards.some(function(card) { return ['PAID', 'PREPARING'].includes(card.dataset.orderStatus); })) {
+const orderCard = document.querySelector('[data-order-id]');
+if (orderCard && ['PAID', 'PREPARING'].includes(orderCard.dataset.orderStatus)) {
   window.setInterval(async function() {
     if (document.hidden) return;
     try {
       const response = await fetch('/order/state');
       const state = await response.json();
-      const changed = orderCards.some(function(card) {
-        const latest = state.orders.find(function(order) { return order.id === card.dataset.orderId; });
-        return !latest || latest.status !== card.dataset.orderStatus;
-      });
-      if (changed) location.reload();
+      if (state.id !== orderCard.dataset.orderId || state.status !== orderCard.dataset.orderStatus) location.reload();
     } catch (error) { /* The next poll can recover from temporary loss of connection. */ }
   }, 4000);
 }

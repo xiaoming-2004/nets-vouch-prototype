@@ -147,12 +147,11 @@ button:disabled { opacity:.55; cursor:wait; }
 .share-preview h2 { margin:8px 0 14px; font-size:16px; }
 .share-preview span,.shared-vouch-card span { display:inline-flex; padding:7px 9px; margin:3px 3px 0 0; border-radius:10px; background:#fff0f1; color:var(--red); font-size:10px; font-weight:750; }
 .share-preview span+span,.shared-vouch-card span+span { color:#265b78; background:#eaf3f7; }
-.share-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin:20px 0 12px; }
+.share-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:20px 0 12px; }
 .share-grid button { min-height:78px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; border:1px solid var(--line); background:white; color:var(--navy); border-radius:15px; font-size:9px; cursor:pointer; }
 .share-grid b { width:35px; height:35px; display:grid; place-items:center; border-radius:12px; color:white; background:var(--green); font-size:18px; }
 .share-grid button:nth-child(2) b { background:#278ac0; }
-.share-grid button:nth-child(3) b { background:#b4487d; }
-.share-grid button:nth-child(4) b { background:var(--navy); }
+.share-grid button:nth-child(3) b { background:var(--navy); }
 .share-status { min-height:20px; color:var(--green); font-weight:700; }
 .claim-state { text-align:center; padding-top:50px; }
 .shared-vouch-card { background:linear-gradient(145deg,#fff,#f5fafc); }

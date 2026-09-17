@@ -1,6 +1,9 @@
 <%- include('partials/start', { title: 'Home' }) %>
 <header class="greeting"><p>Good afternoon, <%= user.name %> 👋</p><h1>Lunch in 10 minutes?</h1></header>
 <section class="home-balance" aria-label="Vouch Cashback balance"><span><small>Your Vouch Cashback</small><strong>$<%= cashbackBalance.toFixed(2) %></strong></span><span class="balance-spark" aria-hidden="true">✦</span></section>
+<% if (order) { %>
+<%- include('partials/order-card', { order: order, transaction: transaction, onHome: true }) %>
+<% } else { %>
 <section id="smart-match"><p class="eyebrow">Your Smart Match</p>
 <div data-match-region aria-live="polite" aria-busy="<%= recommendation ? 'false' : 'true' %>">
 <% if (recommendation) { %><%- include('smart-match-card') %><% } else { %>
@@ -8,5 +11,5 @@
 <noscript><a class="button" href="/smart-match/static">Find my match</a></noscript>
 <% } %>
 </div></section>
-<% if (orders.length) { %><a class="order-status-link" href="/order"><span><small><%= orders.length %> <%= orders.length === 1 ? 'order' : 'orders' %></small><strong>View order status</strong></span><span aria-hidden="true">→</span></a><% } %>
+<% } %>
 <%- include('partials/end', { active: 'home' }) %>

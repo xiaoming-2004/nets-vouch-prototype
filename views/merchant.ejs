@@ -3,11 +3,10 @@
 <form method="GET" action="/merchant" class="merchant-picker"><input type="hidden" name="tab" value="<%= tab %>"><label class="field">Merchant<select name="merchantId"><% merchants.forEach(function(item) { %><option value="<%= item.id %>" <%= item.id === merchant.id ? 'selected' : '' %>><%= item.merchantName %></option><% }); %></select></label><button class="text-button" type="submit">Switch</button></form>
 <nav class="tabs" aria-label="Merchant sections"><% ['campaign', 'orders', 'results'].forEach(function(item) { %><a href="/merchant?merchantId=<%= merchant.id %>&tab=<%= item %>" <%- tab === item ? 'aria-current="page"' : '' %>><%= item.charAt(0).toUpperCase() + item.slice(1) %></a><% }); %></nav>
 <% if (tab === 'orders') { %>
-<% const paidOrders = orders.filter(function(order) { return order.status !== 'PENDING_PAYMENT'; }); %>
-<% if (!paidOrders.length) { %><p class="card">No paid collection orders.</p><% } else { %><div class="order-list"><% paidOrders.forEach(function(order) { %>
+<% if (!order || order.status === 'PENDING_PAYMENT') { %><p class="card">No paid collection orders.</p><% } else { %>
 <section class="card"><p class="eyebrow">Order #<%= order.orderNumber %> · <%= order.status %></p><h2><%= order.itemName %></h2><p>Simulated merchant handoff</p>
 <% if (order.status === 'PAID' || order.status === 'PREPARING') { %><form method="POST" action="<%= order.status === 'PAID' ? '/merchant/start-preparing' : '/merchant/mark-ready' %>" data-single-submit><input type="hidden" name="journeyId" value="<%= order.id %>"><input type="hidden" name="merchantId" value="<%= merchant.id %>"><button class="button" type="submit"><%= order.status === 'PAID' ? 'Start preparing' : 'Mark ready' %></button></form><% } %>
-<% if (order.status === 'READY') { %><p>Ready for collection ✓</p><% } %><% if (order.collected) { %><p>Collected ✓</p><% } %></section><% }); %></div><% } %>
+<% if (order.status === 'READY') { %><p>Ready for collection ✓</p><% } %><% if (order.collected) { %><p>Collected ✓</p><% } %></section><% } %>
 <% } else if (tab === 'campaign') { %>
 <p class="reward"><%= availability.title %></p><p><%= Math.max(0, campaign.dailyCap - campaign.redemptionsToday) %> rewards remaining today</p>
 <% if (error) { %><p class="error">Check the campaign values and try again.</p><% } %>

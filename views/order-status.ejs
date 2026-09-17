@@ -1,6 +1,4 @@
-<%- include('partials/start', { title: 'Your orders' }) %>
-<a class="back" href="/home">← Home</a><p class="eyebrow">Collection orders</p><h1>Your order status</h1>
-<div class="order-list"><% orders.forEach(function(order) { const transaction = transactions.find(function(item) { return item.id === order.transactionId; }); %>
+<%- include('partials/start', { title: 'Your order' }) %>
+<a class="back" href="/home">← Home</a>
 <%- include('partials/order-card', { order: order, transaction: transaction, onHome: false }) %>
-<% }); %></div>
 <%- include('partials/end', { active: 'home' }) %>
