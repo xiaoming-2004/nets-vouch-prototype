@@ -916,7 +916,8 @@ function matchView(demo, recommendation) {
     dailyRewardEarned: recommendation ? hasEarnedNormalRewardToday(demo, recommendation.id) : false,
     vouchCount: recommendation ? countVouches(demo, recommendation.id) : 0,
     dietaryTagLabel: recommendation && recommendation.dietary.length ?
-      getDietaryPreferenceLabel(recommendation.dietary[recommendation.dietary.length - 1]) : null
+      getDietaryPreferenceLabel(recommendation.dietary[recommendation.dietary.length - 1]) : null,
+    aiReason: demo.selectedMerchantReason || null
   };
 }
 

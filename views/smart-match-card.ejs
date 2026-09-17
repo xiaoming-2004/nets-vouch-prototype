@@ -3,7 +3,7 @@
 <div class="match-copy"><% if (recommendationAccepted) { %><p class="eyebrow">Your pick</p><h2>Heading to <%= recommendation.merchantName %>?</h2><% } else { %><h2><%= recommendation.merchantName %></h2><% } %><p class="item">Try: <%= recommendation.itemName %> · $<%= recommendation.price.toFixed(2) %></p>
 <p class="facts"><% if (dietaryTagLabel) { %><%= dietaryTagLabel %> · <% } %><%= recommendation.distanceMinutes %> min away</p>
 <% if (campaign && dailyRewardEarned) { %><p class="reward earned">Today's Vouch Credit earned ✓<small>You can still use your available <%= recommendation.merchantName %> Vouch Credit.</small></p><% } else if (campaign) { %><p class="reward">Earn $<%= campaign.rewardAmount.toFixed(2) %> <%= recommendation.merchantName %> Vouch Credit <small>Once daily · Spend $<%= campaign.minimumEligibleSpend.toFixed(2) %>+ and keep at least $1 paid with NETS.</small></p><% } else { %><p role="status">This offer has ended. Choose another spot.</p><% } %>
-<div class="why"><strong>Why this match?</strong><p><%= matchReasons.join(' · ') %></p></div>
+<div class="why"><strong>Why this match?</strong><p><%= aiReason || matchReasons.join(' · ') %></p></div>
 <% if (vouchCount > 0) { %><p class="trust"><%= vouchCount %> Payment-Verified <%= vouchCount === 1 ? 'Vouch' : 'Vouches' %></p><% } %>
 <% if (campaign && !recommendationAccepted) { %><form method="POST" action="/recommendation/accept" data-single-submit><input type="hidden" name="merchantId" value="<%= recommendation.id %>"><button class="button" type="submit">Choose this</button></form><% } %>
 <% if (campaign && recommendationAccepted) { %><a class="button" href="/scan">Scan when you arrive</a><% } %>

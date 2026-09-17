@@ -501,3 +501,12 @@ test('Task 3 regression — Smart Match route resolves correctly after async ref
   assert.match(result.html, /felicia-chicken-rice/);
   assert.match(result.html, /Why this match/);
 });
+
+test('Task 4 — smart-match-card renders Why this match section with a non-empty reason', async function() {
+  const v = visitor();
+  await v.request('/home');
+  const result = await v.request('/smart-match/result');
+  assert.equal(result.status, 200);
+  // The why block must exist and contain some text after the heading
+  assert.match(result.html, /Why this match\?<\/strong><p>[^<]+<\/p>/);
+});
