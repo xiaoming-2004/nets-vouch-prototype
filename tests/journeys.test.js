@@ -603,3 +603,14 @@ test('Task 4 — smart-match-card renders Why this match section with a non-empt
   // The why block must exist and contain some text after the heading
   assert.match(result.html, /Why this match\?<\/strong><p>[^<]+<\/p>/);
 });
+
+test('merchant results tab shows channel attribution chart', async function() {
+  const v = visitor();
+  await v.request('/home');
+  const page = await v.request('/merchant?merchantId=felicia-chicken-rice&tab=results');
+  assert.equal(page.status, 200);
+  assert.match(page.html, /Payments by channel/);
+  assert.match(page.html, /chart-fill--smart/);
+  assert.match(page.html, /chart-fill--vouch/);
+  assert.match(page.html, /chart-fill--direct/);
+});

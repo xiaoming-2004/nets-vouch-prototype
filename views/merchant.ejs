@@ -27,6 +27,15 @@
 </section>
 <% } else { %>
 <p class="eyebrow">Illustrative Prototype Data · this session</p>
+<% var _maxP = Math.max(campaign.metrics.smartMatchPayments, campaign.metrics.sharedVouchPayments, campaign.metrics.directScanPayments, 1); %>
+<section class="card channel-chart">
+<p class="eyebrow">Payments by channel</p>
+<div class="chart-bars">
+<div class="chart-row"><div class="chart-label-row"><b>Smart Match</b><small><%= campaign.metrics.smartMatchPayments %> payments · $<%= campaign.metrics.smartMatchSales.toFixed(2) %></small></div><div class="chart-track"><div class="chart-fill chart-fill--smart" style="width:<%= Math.round(100 * campaign.metrics.smartMatchPayments / _maxP) %>%"></div></div></div>
+<div class="chart-row"><div class="chart-label-row"><b>Shared Vouch</b><small><%= campaign.metrics.sharedVouchPayments %> payments · $<%= campaign.metrics.sharedVouchSales.toFixed(2) %></small></div><div class="chart-track"><div class="chart-fill chart-fill--vouch" style="width:<%= Math.round(100 * campaign.metrics.sharedVouchPayments / _maxP) %>%"></div></div></div>
+<div class="chart-row"><div class="chart-label-row"><b>Direct Scan</b><small><%= campaign.metrics.directScanPayments %> payments · $<%= campaign.metrics.directScanSales.toFixed(2) %></small></div><div class="chart-track"><div class="chart-fill chart-fill--direct" style="width:<%= Math.round(100 * campaign.metrics.directScanPayments / _maxP) %>%"></div></div></div>
+</div>
+</section>
 <dl class="receipt-lines card"><div><dt>Smart Match shown</dt><dd><%= campaign.metrics.smartMatchShown %></dd></div><div><dt>Smart Match accepted</dt><dd><%= campaign.metrics.smartMatchAccepted %></dd></div><div><dt>Smart Match payments</dt><dd><%= campaign.metrics.smartMatchPayments %></dd></div><div><dt>Smart Match sales</dt><dd>$<%= campaign.metrics.smartMatchSales.toFixed(2) %></dd></div><div><dt>Shared Vouch claims</dt><dd><%= campaign.metrics.sharedVouchClaims %></dd></div><div><dt>Shared Vouch payments</dt><dd><%= campaign.metrics.sharedVouchPayments %></dd></div><div><dt>Shared Vouch sales</dt><dd>$<%= campaign.metrics.sharedVouchSales.toFixed(2) %></dd></div><div><dt>Shared Vouch conversion</dt><dd><%= campaign.metrics.sharedVouchClaims ? Math.round(100 * campaign.metrics.sharedVouchPayments / campaign.metrics.sharedVouchClaims) : 0 %>%</dd></div><div><dt>Direct Scan payments</dt><dd><%= campaign.metrics.directScanPayments %></dd></div><div><dt>Direct Scan sales</dt><dd>$<%= campaign.metrics.directScanSales.toFixed(2) %></dd></div><div><dt>QR scans</dt><dd><%= campaign.metrics.scans %></dd></div><div><dt>Completed payments</dt><dd><%= campaign.metrics.payments %></dd></div><div><dt>Reward cost</dt><dd>$<%= campaign.metrics.rewardCost.toFixed(2) %></dd></div><div><dt>Platform fee accrued</dt><dd>$<%= campaign.platformFeeAccrued.toFixed(2) %></dd></div><div><dt>Match-to-payment conversion</dt><dd><%= campaign.metrics.smartMatchShown ? Math.round(100 * campaign.metrics.smartMatchPayments / campaign.metrics.smartMatchShown) : 0 %>%</dd></div></dl>
 <% } %><a class="text-button" href="/home">Return to Jia</a>
 <%- include('partials/end', { active: 'profile' }) %>
