@@ -485,3 +485,10 @@ test('Retired preorder routes are safe and active pages render', async function(
   assert.match(script.html, /wa\.me/);
   assert.match(script.html, /t\.me\/share/);
 });
+
+test('Task 1 regression — Smart Match still recommends Felicia first by default', async function() {
+  const v = visitor();
+  const result = await match(v);
+  assert.match(result.html, /felicia-chicken-rice/);
+  assert.match(result.html, /Choose this/);
+});

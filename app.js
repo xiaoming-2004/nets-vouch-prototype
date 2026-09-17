@@ -502,25 +502,24 @@ function getLastFeedback(feedbackItems) {
   return feedbackItems[feedbackItems.length - 1];
 }
 
-// Simulated Smart Match for Open House prototype.
-// Replace the internal matching logic with the AI API later.
-function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchantIds, feedbackItems, demo) {
+function getEligibleMerchants(profile, nearbyMerchants, rejectedMerchantIds, demo) {
+  return nearbyMerchants.filter(function(merchant) {
+    return merchant.available &&
+      !wasMerchantRejected(merchant.id, rejectedMerchantIds) &&
+      merchantMatchesProfile(merchant, profile) &&
+      Boolean(findCampaignForMerchant(merchant, demo));
+  });
+}
+
+function getFallbackRecommendation(eligible, feedbackItems, profile) {
   let bestMerchant = null;
   let bestScore = -1000;
   const lastFeedback = getLastFeedback(feedbackItems);
-
-  for (let i = 0; i < nearbyMerchants.length; i++) {
-    const merchant = nearbyMerchants[i];
-    if (!merchant.available) continue;
-    if (!findCampaignForMerchant(merchant, demo)) continue;
-    if (wasMerchantRejected(merchant.id, rejectedMerchantIds)) continue;
-    if (!merchantMatchesProfile(merchant, profile)) continue;
-
-    let score = 100 - merchant.distanceMinutes;
+  for (let i = 0; i < eligible.length; i++) {
+    const merchant = eligible[i];
+    let score = 100 - merchant.distanceMinutes + 50;
     if (!lastFeedback && merchant.id === 'felicia-chicken-rice') score += 15;
     if (merchant.price !== null) score += Math.max(0, profile.budget - merchant.price);
-    if (findCampaignForMerchant(merchant, demo)) score += 50;
-
     if (lastFeedback && lastFeedback.reason === 'too-far') {
       score += Math.max(0, 20 - merchant.distanceMinutes * 2);
     }
@@ -532,13 +531,15 @@ function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchantIds, f
         merchant.category === lastFeedback.category) {
       score -= 30;
     }
-
-    if (score > bestScore) {
-      bestMerchant = merchant;
-      bestScore = score;
-    }
+    if (score > bestScore) { bestMerchant = merchant; bestScore = score; }
   }
   return bestMerchant;
+}
+
+function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchantIds, feedbackItems, demo) {
+  const eligible = getEligibleMerchants(profile, nearbyMerchants, rejectedMerchantIds, demo);
+  if (eligible.length === 0) return null;
+  return getFallbackRecommendation(eligible, feedbackItems, profile);
 }
 
 function getMatchReasons(profile, merchant, feedbackItems) {
