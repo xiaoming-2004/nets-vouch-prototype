@@ -211,10 +211,11 @@ function createCampaigns() {
 // not by any one visitor's browser. Kept at module scope so every session shares it.
 let merchantCampaignStore = createCampaigns();
 
-function createInitialDemo() {
+function createInitialDemo(userId) {
+  const identityId = isValidDemoIdentity(userId) ? userId : 'jia';
   return {
-    version: 10,
-    user: { ...demoIdentities.jia },
+    version: 11,
+    user: { ...demoIdentities[identityId] },
     profile: { dietaryPreference: 'none', budget: 10, maxDistanceMinutes: 10, notifications: true },
     vouchCredits: {},
     nearbyMerchants: [], selectedMerchantId: null, recommendationAccepted: false, rejectedMerchantIds: [],
@@ -226,9 +227,11 @@ function createInitialDemo() {
 }
 
 function initialiseDemoSession(req) {
-  if (!req.session.demo || req.session.demo.version !== 10) {
-    req.session.demo = createInitialDemo();
+  if (!req.session.demo || req.session.demo.version !== 11) {
+    req.session.demo = createInitialDemo('jia');
+    req.session.demoUserStates = {};
   }
+  if (!req.session.demoUserStates) req.session.demoUserStates = {};
 }
 
 function copyObjects(items) {
@@ -645,13 +648,10 @@ function getCampaignAvailability(campaign, alreadyRedeemed) {
 // Worst-case daily spend if every reward slot were used - illustrative only, not a profit/ROI claim.
 function getMaxDailyCostEstimate(campaign) {
   const platformFee = money(campaign.maxRewardedPaymentsPerDay * campaign.platformFeePerAttributedPayment);
-  const referralCost = campaign.senderReferralReward > 0 ?
-    money(campaign.maxRewardedPaymentsPerDay * campaign.senderReferralReward) : 0;
   return {
     rewardBudget: campaign.maxRewardBudgetPerDay,
     platformFee: platformFee,
-    referralCost: referralCost,
-    total: money(campaign.maxRewardBudgetPerDay + platformFee + referralCost)
+    total: money(campaign.maxRewardBudgetPerDay + platformFee)
   };
 }
 
@@ -699,8 +699,11 @@ function recordPayment(demo, journey, amount, useCashback) {
   const rewardEligible = eligible && campaign && meetsMinimumSpend && withinRewardBudget &&
     getCampaignAvailability(campaign, false).available;
   let senderReferralReward = 0;
+  const remainingBudgetAfterCustomerReward = campaign ? money(
+    campaign.maxRewardBudgetPerDay - campaign.rewardBudgetSpentToday - potentialReward
+  ) : 0;
   if (rewardEligible && matchingClaim && campaign.senderReferralReward > 0 &&
-      campaign.maxRewardedPaymentsPerDay - campaign.redemptionsToday >= 2) {
+      campaign.senderReferralReward <= remainingBudgetAfterCustomerReward) {
     senderReferralReward = campaign.senderReferralReward;
   }
   const transaction = {
@@ -739,7 +742,7 @@ function recordPayment(demo, journey, amount, useCashback) {
       campaign.metrics.directScanSales = money(campaign.metrics.directScanSales + amount);
     }
     if (rewardEligible) {
-      campaign.redemptionsToday += 1 + (senderReferralReward > 0 ? 1 : 0);
+      campaign.redemptionsToday += 1;
       // The daily reward budget genuinely caps merchant-funded spend: the customer reward and
       // any sender referral bonus both count against it, not just the payment count.
       campaign.rewardBudgetSpentToday = money(campaign.rewardBudgetSpentToday + potentialReward);
@@ -834,7 +837,7 @@ function matchView(demo, recommendation) {
 
 function applyPendingReferralCredits(req) {
   sharedOffers.forEach(function(offer) {
-    if (offer.ownerSessionId === req.sessionID && offer.senderReferralPending > 0 &&
+    if (offer.senderUserId === req.session.demo.user.id && offer.senderReferralPending > 0 &&
         offer.senderReferralCredited === false) {
       addMerchantCredit(req.session.demo, offer.merchantId, offer.senderReferralPending);
       offer.senderReferralCredited = true;
@@ -1110,7 +1113,7 @@ app.get('/offers/:token', function(req, res) {
   const claim = getEffectiveVouchClaim(demo);
   const claimed = Boolean(claim && claim.vouchId === offer.vouchId);
   res.render('shared-offer', { offer: offer, claimed: claimed, claim: claim,
-    own: offer.ownerSessionId === req.sessionID || offer.senderUserId === demo.user.id });
+    own: offer.senderUserId === demo.user.id });
 });
 app.post('/offers/:token/claim', function(req, res) {
   const demo = req.session.demo;
@@ -1194,7 +1197,12 @@ app.get('/demo', function(req, res) {
 });
 app.post('/demo/identity', function(req, res) {
   if (isValidDemoIdentity(req.body.userId)) {
-    req.session.demo.user = { ...demoIdentities[req.body.userId] };
+    const currentUserId = req.session.demo.user.id;
+    req.session.demoUserStates[currentUserId] = req.session.demo;
+    if (!req.session.demoUserStates[req.body.userId]) {
+      req.session.demoUserStates[req.body.userId] = createInitialDemo(req.body.userId);
+    }
+    req.session.demo = req.session.demoUserStates[req.body.userId];
   }
   res.redirect('/demo');
 });
@@ -1243,7 +1251,8 @@ app.post('/reset-demo', function(req, res) {
   sharedOffers.forEach(function(offer, token) {
     if (offer.ownerSessionId === req.sessionID) sharedOffers.delete(token);
   });
-  req.session.demo = createInitialDemo();
+  req.session.demo = createInitialDemo('jia');
+  req.session.demoUserStates = {};
   merchantCampaignStore = createCampaigns();
   res.redirect('/home');
 });

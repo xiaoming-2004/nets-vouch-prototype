@@ -203,9 +203,21 @@ test('Reward eligibility respects minimum spend and daily reward budget, and mer
   await v.request('/home');
   const campaign = getMerchantCampaigns().find(function(item) { return item.merchantId === 'green-bowl'; });
   assert.equal(campaign.minimumEligibleSpend, 5);
+  const initialMerchantPage = await v.request('/merchant?merchantId=green-bowl&tab=campaign');
+  assert.match(initialMerchantPage.html, /Maximum merchant reward spend[\s\S]*\$10\.00/);
+  assert.match(initialMerchantPage.html, /Maximum NETS success fees[\s\S]*\$2\.00/);
+  assert.match(initialMerchantPage.html, /Maximum campaign cost[\s\S]*\$12\.00/);
+  assert.match(initialMerchantPage.html, /Referral rewards are included within the reward budget/);
+  assert.ok(!initialMerchantPage.html.includes('Possible referral bonus cost'));
 
   // Below minimum spend: no reward, even though the cap and budget are untouched.
   const belowMinimum = await scan(v, 'green-bowl');
+  const paymentPage = await v.request('/scan/payment');
+  assert.match(paymentPage.html, /Spend \$5\.00\+ and keep at least \$1 paid with NETS/);
+  assert.ok(!paymentPage.html.includes('credit-toggle'));
+  assert.ok(!paymentPage.html.includes('−$0.00'));
+  const browserScript = await v.request('/js/script.js');
+  assert.match(browserScript.html, /This payment won't earn Vouch Credit/);
   await v.request('/scan/payment', { journeyId: belowMinimum.id, amount: '4.00' });
   let state = (await v.state()).demo;
   assert.equal(state.transactions[0].merchantRewardEarned, 0);
@@ -229,8 +241,8 @@ test('Reward eligibility respects minimum spend and daily reward budget, and mer
 
   const merchantPage = await v.request('/merchant?merchantId=green-bowl&tab=campaign');
   assert.match(merchantPage.html, /Estimated maximum daily cost/);
-  assert.match(merchantPage.html, /Merchant-funded reward budget/);
-  assert.match(merchantPage.html, /Possible NETS success fees/);
+  assert.match(merchantPage.html, /Maximum merchant reward spend/);
+  assert.match(merchantPage.html, /Maximum NETS success fees/);
 });
 
 test('Merchant campaign cap is shared across different user sessions, not per browser', async function() {
@@ -288,6 +300,8 @@ test('Shared Vouch claim rewards only after same-merchant payment without stacki
   let state = (await receiver.state()).demo;
   assert.equal(credit(state, 'green-bowl'), 0);
   assert.equal(state.activeVouchClaim.status, 'CLAIMED');
+  // Only $0.60 remains: prioritise the $0.50 receiver reward and skip the $0.20 sender reward.
+  greenBowlCampaign.maxRewardBudgetPerDay = 1.10;
   const claimedScan = await scan(receiver, 'green-bowl');
   await receiver.request('/scan/payment', { journeyId: claimedScan.id, amount: '6.00' });
   state = (await receiver.state()).demo;
@@ -297,9 +311,11 @@ test('Shared Vouch claim rewards only after same-merchant payment without stacki
   assert.equal(state.transactions[0].merchantRewardEarned, .5);
   assert.equal(greenBowlCampaign.metrics.sharedVouchPayments, 1);
   assert.equal(greenBowlCampaign.platformFeeAccrued, greenBowlCampaign.platformFeePerAttributedPayment);
-  // Both the receiver's reward and the sender's referral bonus count against the merchant's budget
-  // (plus the $0.50 the sender's own earlier direct-scan payment already earned).
-  assert.equal(greenBowlCampaign.rewardBudgetSpentToday, .5 + .5 + greenBowlCampaign.senderReferralReward);
+  assert.equal(greenBowlCampaign.rewardBudgetSpentToday, 1);
+  assert.ok(greenBowlCampaign.rewardBudgetSpentToday <= greenBowlCampaign.maxRewardBudgetPerDay);
+  assert.equal(greenBowlCampaign.redemptionsToday, 2);
+  await sender.request('/home');
+  assert.equal(credit((await sender.state()).demo, 'green-bowl'), .5);
   await receiver.request('/scan/payment', { journeyId: claimedScan.id, amount: '4.80' });
   assert.equal(credit((await receiver.state()).demo, 'green-bowl'), .5);
 
@@ -311,6 +327,25 @@ test('Shared Vouch claim rewards only after same-merchant payment without stacki
   state = (await wrongMerchant.state()).demo;
   assert.equal(state.activeVouchClaim.status, 'CLAIMED');
   assert.equal(credit(state, 'green-bowl'), 0);
+});
+
+test('Switching demo identity keeps Jia and Darren consumer state separate', async function() {
+  const v = visitor();
+  await v.request('/home');
+  await v.change(function(demo) {
+    demo.vouchCredits['green-bowl'] = 1;
+    demo.transactions.push({ id: 'jia-only' });
+  });
+  await v.request('/demo/identity', { userId: 'darren' });
+  let state = (await v.state()).demo;
+  assert.equal(state.user.id, 'darren');
+  assert.equal(credit(state, 'green-bowl'), 0);
+  assert.equal(state.transactions.length, 0);
+  await v.request('/demo/identity', { userId: 'jia' });
+  state = (await v.state()).demo;
+  assert.equal(state.user.id, 'jia');
+  assert.equal(credit(state, 'green-bowl'), 1);
+  assert.equal(state.transactions[0].id, 'jia-only');
 });
 
 test('Shared Vouch claim expires after 20 minutes and stops redeeming as a referral', async function() {

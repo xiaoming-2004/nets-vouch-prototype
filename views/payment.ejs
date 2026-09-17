@@ -6,13 +6,13 @@
 <form method="POST" action="/scan/payment" data-payment data-balance="<%= merchantCredit %>" data-amount="">
 <input type="hidden" name="journeyId" value="<%= journey.id %>">
 <label class="pay-amount-block"><span class="eyebrow">You're paying</span><span class="amount-input"><span>$</span><input name="amount" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" maxlength="7" placeholder="0.00" required aria-label="Purchase amount in dollars" value="<%= journey.enteredAmount || '' %>"></span></label>
-<label class="credit-toggle"><span><strong><%= journey.merchantName %> Vouch Credit</strong><small><%= merchantCredit > 0 ? '$' + merchantCredit.toFixed(2) + ' available · use only at ' + journey.merchantName : 'No credit available yet' %></small></span><span class="switch"><input type="checkbox" name="useCashback" <%= merchantCredit > 0 ? '' : 'disabled' %>><span class="switch-track"></span></span></label>
+<% if (merchantCredit > 0) { %><label class="credit-toggle"><span><strong><%= journey.merchantName %> Vouch Credit</strong><small>$<%= merchantCredit.toFixed(2) %> available · use only at <%= journey.merchantName %></small></span><span class="switch"><input type="checkbox" name="useCashback"><span class="switch-track"></span></span></label><% } %>
 <div class="pay-summary">
 <div class="line"><span>Purchase amount</span><strong data-purchase-amount>$0.00</strong></div>
-<div class="line"><span><%= journey.merchantName %> Vouch Credit</span><strong data-cashback-used>−$0.00</strong></div>
+<% if (merchantCredit > 0) { %><div class="line"><span><%= journey.merchantName %> Vouch Credit</span><strong data-cashback-used>Not applied</strong></div><% } %>
 <div class="total"><span>Pay with NETS</span><strong data-nets-total>$0.00</strong></div>
 </div>
-<% if (campaign) { %><p class="pay-hint">Keep at least $1 paid with NETS to earn <%= journey.merchantName %> Vouch Credit.</p><% } %>
+<% if (campaign) { %><p class="pay-hint" data-reward-eligibility data-minimum-spend="<%= campaign.minimumEligibleSpend %>" data-reward-amount="<%= campaign.rewardAmount %>" data-merchant-name="<%= journey.merchantName %>">Earn $<%= campaign.rewardAmount.toFixed(2) %> <%= journey.merchantName %> Vouch Credit. Spend $<%= campaign.minimumEligibleSpend.toFixed(2) %>+ and keep at least $1 paid with NETS.</p><% } %>
 <button class="button" type="submit" data-pay-button>Pay</button>
 <p class="form-status" role="status"></p>
 </form>

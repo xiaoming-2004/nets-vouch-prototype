@@ -49,17 +49,34 @@ const paymentForm = document.querySelector('[data-payment]');
 if (paymentForm) {
   const amountInput = paymentForm.querySelector('[name="amount"]');
   const checkbox = paymentForm.querySelector('[name="useCashback"]');
+  const eligibility = paymentForm.querySelector('[data-reward-eligibility]');
   function updateTotal() {
     const amount = Number(amountInput ? amountInput.value : paymentForm.dataset.amount);
     const valid = Number.isFinite(amount) && amount > 0 && amount <= 1000;
     const cents = valid ? Math.round(amount * 100) : 0;
     const maximumCashback = Math.max(0, cents - 100);
-    const used = checkbox.checked ? Math.min(Math.round(Number(paymentForm.dataset.balance) * 100), maximumCashback) : 0;
+    const used = checkbox && checkbox.checked ? Math.min(Math.round(Number(paymentForm.dataset.balance) * 100), maximumCashback) : 0;
     const paid = (cents - used) / 100;
     paymentForm.querySelector('[data-purchase-amount]').textContent = '$' + (cents / 100).toFixed(2);
-    paymentForm.querySelector('[data-cashback-used]').textContent = '−$' + (used / 100).toFixed(2);
+    const creditUsed = paymentForm.querySelector('[data-cashback-used]');
+    if (creditUsed) creditUsed.textContent = used > 0 ? '−$' + (used / 100).toFixed(2) : 'Not applied';
     paymentForm.querySelector('[data-nets-total]').textContent = '$' + paid.toFixed(2);
     paymentForm.querySelector('[data-pay-button]').textContent = valid ? 'Pay $' + paid.toFixed(2) : 'Pay';
+    if (eligibility) {
+      const minimum = Number(eligibility.dataset.minimumSpend);
+      const reward = Number(eligibility.dataset.rewardAmount).toFixed(2);
+      const merchant = eligibility.dataset.merchantName;
+      eligibility.classList.toggle('is-ineligible', valid && amount < minimum);
+      if (!valid) {
+        eligibility.textContent = 'Earn $' + reward + ' ' + merchant + ' Vouch Credit. Spend $' + minimum.toFixed(2) + '+ and keep at least $1 paid with NETS.';
+      } else if (amount < minimum) {
+        eligibility.textContent = "This payment won't earn Vouch Credit. Minimum spend is $" + minimum.toFixed(2) + '.';
+      } else if (paid < 1) {
+        eligibility.textContent = "This payment won't earn Vouch Credit. Keep at least $1 paid with NETS.";
+      } else {
+        eligibility.textContent = "You'll earn $" + reward + ' ' + merchant + ' Vouch Credit.';
+      }
+    }
   }
   paymentForm.addEventListener('input', updateTotal);
   updateTotal();
