@@ -502,6 +502,45 @@ test('Task 3 regression — Smart Match route resolves correctly after async ref
   assert.match(result.html, /Why this match/);
 });
 
+test('Task 7 — daily reward is per-user; campaign cap is shared globally across sessions', async function() {
+  const jia = visitor();
+  const darren = visitor();
+  await jia.request('/home');
+  await darren.request('/demo/identity', { userId: 'darren' });
+
+  // Both pay Felicia — each earns their own first daily reward independently
+  const jiaScan = await scan(jia, 'felicia-chicken-rice');
+  await jia.request('/scan/payment', { journeyId: jiaScan.id, amount: '5.00' });
+  const jiaTx = (await jia.state()).demo.transactions[0];
+  assert.equal(jiaTx.merchantRewardEarned, 0.50);
+  await jia.request('/vouch/' + jiaTx.id, { action: 'skip' });
+
+  const darrenScan = await scan(darren, 'felicia-chicken-rice');
+  await darren.request('/scan/payment', { journeyId: darrenScan.id, amount: '5.00' });
+  const darrenTx = (await darren.state()).demo.transactions[0];
+  assert.equal(darrenTx.merchantRewardEarned, 0.50);
+  await darren.request('/vouch/' + darrenTx.id, { action: 'skip' });
+
+  // Jia's second visit today earns no repeat reward — daily limit is per-user
+  const jiaSecondScan = await scan(jia, 'felicia-chicken-rice');
+  await jia.request('/scan/payment', { journeyId: jiaSecondScan.id, amount: '5.00' });
+  const jiaSecondTx = (await jia.state()).demo.transactions[0];
+  assert.equal(jiaSecondTx.merchantRewardEarned, 0);
+  await jia.request('/vouch/' + jiaSecondTx.id, { action: 'skip' });
+
+  // Campaign cap is global: set cap to current redemptions (2), then clear Jia's daily limit
+  const campaign = getMerchantCampaigns().find(function(c) { return c.merchantId === 'felicia-chicken-rice'; });
+  assert.equal(campaign.redemptionsToday, 2);
+  campaign.maxRewardedPaymentsPerDay = 2;
+  await jia.change(function(demo) { demo.dailyMerchantRewards['felicia-chicken-rice'] = '2000-01-01'; });
+
+  // Even though Jia's daily limit is cleared, global cap is exhausted → no reward
+  const jiaCappedScan = await scan(jia, 'felicia-chicken-rice');
+  await jia.request('/scan/payment', { journeyId: jiaCappedScan.id, amount: '5.00' });
+  const jiaCappedTx = (await jia.state()).demo.transactions[0];
+  assert.equal(jiaCappedTx.merchantRewardEarned, 0);
+});
+
 test('Task 6 — full Open House story: Jia Smart Match → Vouch → Darren pays → Felicia sees both conversions', async function() {
   const jia = visitor();
   const darren = visitor();
