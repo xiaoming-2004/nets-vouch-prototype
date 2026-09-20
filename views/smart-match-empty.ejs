@@ -1,8 +1,21 @@
 <section class="card empty reveal">
 <div class="empty-icon" aria-hidden="true"><svg viewBox="0 0 52 52" fill="none"><circle cx="22" cy="22" r="14" stroke-width="2.5" stroke-linecap="round"/><path d="m32 32 10 10" stroke-width="2.5" stroke-linecap="round"/><path d="M18 22h8M22 18v8" stroke-width="2" stroke-linecap="round"/></svg></div>
 <h2>No spots nearby right now</h2>
-<p>No participating merchants match your preferences. Try widening your search or adjusting your settings.</p>
-<form method="POST" action="/recommendation/try-again" data-single-submit><button class="button" type="submit">Try again</button></form>
+<p>No participating merchants match your current filters. Try adjusting below.</p>
+<% if (profile) { %>
+<div class="refine-chips refine-chips--center"><span class="refine-chip"><%= profile.dietaryPreference === 'none' ? 'Any diet' : profile.dietaryPreference %></span><span class="refine-chip">≤ $<%= profile.budget %></span><span class="refine-chip"><%= profile.maxDistanceMinutes %> min</span></div>
+<details class="refine-prefs refine-prefs--flat">
+<summary class="refine-summary refine-summary--link">Adjust filters</summary>
+<div class="refine-sheet">
+<form method="POST" action="/profile" class="form-stack">
+<label class="field">Dietary<select name="dietaryPreference"><% dietaryPreferenceOptions.forEach(function(opt) { %><option value="<%= opt.value %>" <%= opt.value === profile.dietaryPreference ? 'selected' : '' %>><%= opt.label %></option><% }); %></select></label>
+<label class="field">Budget (max $)<input name="budget" type="number" min="1" max="100" step="1" value="<%= profile.budget %>"></label>
+<label class="field">Walking distance (max min)<input name="maxDistanceMinutes" type="number" min="1" max="60" step="1" value="<%= profile.maxDistanceMinutes %>"></label>
+<input type="hidden" name="notifications" value="<%= profile.notifications ? 'on' : '' %>">
+<button class="button" type="submit">Apply &amp; search again</button>
+</form>
+</div>
+</details>
+<% } %>
 <form method="POST" action="/recommendation/widen-distance"><button class="text-button" type="submit">Widen distance by 5 minutes</button></form>
-<a class="text-button" href="/profile/preferences">Edit preferences</a>
 </section>

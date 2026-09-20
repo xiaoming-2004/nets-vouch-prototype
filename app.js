@@ -1089,7 +1089,10 @@ function matchView(demo, recommendation) {
     vouchCount: recommendation ? countVouches(demo, recommendation.id) : 0,
     dietaryTagLabel: recommendation && recommendation.dietary.length ?
       getDietaryPreferenceLabel(recommendation.dietary[recommendation.dietary.length - 1]) : null,
-    aiReason: demo.selectedMerchantReason || null
+    aiReason: demo.selectedMerchantReason || null,
+    profile: demo.profile,
+    dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference),
+    dietaryPreferenceOptions: dietaryPreferenceOptions
   };
 }
 
@@ -1161,7 +1164,9 @@ app.get('/smart-match/result', async function(req, res) {
       }
     }
   }
-  if (!recommendation) return res.render('smart-match-empty', { profile: demo.profile });
+  if (!recommendation) return res.render('smart-match-empty', { profile: demo.profile,
+    dietaryPreferenceOptions: dietaryPreferenceOptions,
+    dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference) });
   res.render('smart-match-card', matchView(demo, recommendation));
 });
 
