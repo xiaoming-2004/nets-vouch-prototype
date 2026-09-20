@@ -3,6 +3,69 @@ function wait(milliseconds) {
   return new Promise(function(resolve) { window.setTimeout(resolve, milliseconds); });
 }
 
+(function initQRScanner() {
+  const video = document.getElementById('qr-video');
+  const canvas = document.getElementById('qr-canvas');
+  const statusEl = document.getElementById('camera-status');
+  const placeholder = document.getElementById('camera-placeholder');
+  const placeholderText = document.getElementById('placeholder-text');
+  const form = document.getElementById('qr-scan-form');
+  const fallback = document.getElementById('scan-fallback');
+  if (!video || !canvas || !form) return;
+
+  function setStatus(text) { if (statusEl) statusEl.textContent = text; }
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    if (placeholderText) placeholderText.textContent = 'Camera not supported';
+    setStatus('Use the list below to select a merchant');
+    if (fallback) fallback.open = true;
+    return;
+  }
+
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } })
+    .then(function(stream) {
+      video.srcObject = stream;
+      if (placeholder) placeholder.hidden = true;
+      setStatus('Point at a merchant NETS QR code');
+
+      let active = true;
+      function tick() {
+        if (!active) return;
+        if (video.readyState >= video.HAVE_ENOUGH_DATA) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0);
+          const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          if (typeof jsQR !== 'undefined') {
+            const code = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+            if (code) {
+              active = false;
+              stream.getTracks().forEach(function(t) { t.stop(); });
+              const raw = code.data.trim();
+              let merchantId = raw;
+              if (raw.indexOf('merchantId=') !== -1) {
+                try { merchantId = new URL(raw).searchParams.get('merchantId') || raw; }
+                catch (e) { const m = raw.match(/merchantId=([^&]+)/); if (m) merchantId = decodeURIComponent(m[1]); }
+              }
+              setStatus('QR detected — opening payment…');
+              document.getElementById('qr-merchant-id').value = merchantId;
+              form.submit();
+              return;
+            }
+          }
+        }
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    })
+    .catch(function() {
+      if (placeholderText) placeholderText.textContent = 'Camera unavailable';
+      setStatus('Tap a merchant below to pay');
+      if (fallback) fallback.open = true;
+    });
+}());
+
 function initMerchantMap() {
   const el = document.querySelector(‘.match-map:not([data-map-ready])’);
   if (!el || typeof L === ‘undefined’) return;

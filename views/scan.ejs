@@ -1,22 +1,55 @@
 <%- include('partials/start', { title: 'Scan to Pay' }) %>
 <header class="page-heading">
   <h1>Scan to Pay</h1>
-  <p>Tap a participating merchant to scan their NETS QR.</p>
 </header>
-<% if (error) { %><p class="error" role="alert">That QR wasn't recognised. Try a participating merchant.</p><% } %>
+<% if (error) { %><p class="error" role="alert">QR not recognised — try a participating merchant.</p><% } %>
 
-<div class="scan-merchants">
-<% merchants.forEach(function(m) { var isActive = activeMerchantId === m.id; %>
-<form method="POST" action="/scan" data-scan>
-  <input type="hidden" name="merchantId" value="<%= m.id %>">
-  <button type="submit" class="scan-merchant-row<%= isActive ? ' scan-merchant-row--active' : '' %>">
-    <span class="scan-merchant-mono"><%= m.merchantName.charAt(0) %></span>
-    <span class="scan-merchant-info">
-      <strong><%= m.merchantName %></strong>
-      <span><%= m.address %> · <%= m.distanceMinutes %> min</span>
-    </span>
-    <span class="scan-qr-btn" aria-hidden="true">
-      <svg viewBox="0 0 100 100" width="34" height="34">
+<div class="camera-section">
+  <div class="camera-frame" id="camera-frame">
+    <video id="qr-video" playsinline autoplay muted></video>
+    <svg class="camera-overlay-svg" viewBox="0 0 100 75" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <defs>
+        <linearGradient id="sg" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="transparent"/>
+          <stop offset="50%" stop-color="#d32636" stop-opacity="0.9"/>
+          <stop offset="100%" stop-color="transparent"/>
+        </linearGradient>
+      </defs>
+      <path d="M0 0H100V75H0Z M22 10H78V65H22Z" fill="rgba(0,0,0,0.52)" fill-rule="evenodd"/>
+      <path d="M22 20 L22 10 L32 10" fill="none" stroke="#d32636" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M68 10 L78 10 L78 20" fill="none" stroke="#d32636" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M78 55 L78 65 L68 65" fill="none" stroke="#d32636" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M32 65 L22 65 L22 55" fill="none" stroke="#d32636" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect id="scan-beam" x="22" y="10" width="56" height="1.5" fill="url(#sg)" opacity="0.9">
+        <animate attributeName="y" values="13;62;13" dur="2.2s" repeatCount="indefinite" calcMode="ease-in-out"/>
+      </rect>
+    </svg>
+    <div class="camera-placeholder" id="camera-placeholder">
+      <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      <span id="placeholder-text">Starting camera…</span>
+    </div>
+  </div>
+  <p class="camera-status" id="camera-status" role="status">Point at a merchant NETS QR code</p>
+</div>
+
+<canvas id="qr-canvas" hidden></canvas>
+<form id="qr-scan-form" method="POST" action="/scan" hidden>
+  <input type="hidden" name="merchantId" id="qr-merchant-id" value="">
+</form>
+
+<details class="scan-fallback" id="scan-fallback">
+  <summary>No camera? Tap a merchant</summary>
+  <div class="scan-merchants">
+  <% merchants.forEach(function(m) { var isActive = activeMerchantId === m.id; %>
+  <form method="POST" action="/scan" data-scan>
+    <input type="hidden" name="merchantId" value="<%= m.id %>">
+    <button type="submit" class="scan-merchant-row<%= isActive ? ' scan-merchant-row--active' : '' %>">
+      <span class="scan-merchant-mono"><%= m.merchantName.charAt(0) %></span>
+      <span class="scan-merchant-info">
+        <strong><%= m.merchantName %></strong>
+        <span><%= m.address %> · <%= m.distanceMinutes %> min</span>
+      </span>
+      <svg class="scan-qr-btn" viewBox="0 0 100 100" width="32" height="32" aria-hidden="true">
         <rect x="4" y="4" width="34" height="34" rx="4" fill="none" stroke="currentColor" stroke-width="6"/>
         <rect x="14" y="14" width="14" height="14" fill="currentColor"/>
         <rect x="62" y="4" width="34" height="34" rx="4" fill="none" stroke="currentColor" stroke-width="6"/>
@@ -25,15 +58,13 @@
         <rect x="14" y="72" width="14" height="14" fill="currentColor"/>
         <rect x="48" y="48" width="9" height="9" rx="1" fill="currentColor"/>
         <rect x="62" y="48" width="9" height="9" rx="1" fill="currentColor"/>
-        <rect x="76" y="48" width="9" height="9" rx="1" fill="currentColor"/>
         <rect x="48" y="62" width="9" height="9" rx="1" fill="currentColor"/>
-        <rect x="62" y="76" width="9" height="9" rx="1" fill="currentColor"/>
         <rect x="76" y="62" width="9" height="9" rx="1" fill="currentColor"/>
       </svg>
-    </span>
-    <p class="form-status" role="status"></p>
-  </button>
-</form>
-<% }); %>
-</div>
+      <p class="form-status" role="status"></p>
+    </button>
+  </form>
+  <% }); %>
+  </div>
+</details>
 <%- include('partials/end', { active: 'scan' }) %>

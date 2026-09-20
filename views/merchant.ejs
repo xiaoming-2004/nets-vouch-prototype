@@ -14,6 +14,14 @@
 <label class="field">Start<input name="startTime" type="time" value="<%= campaign.startTime %>" required></label><label class="field">End<input name="endTime" type="time" value="<%= campaign.endTime %>" required></label>
 <label class="field">Status<select name="status"><option value="ACTIVE" <%= campaign.status === 'ACTIVE' ? 'selected' : '' %>>Active</option><option value="INACTIVE" <%= campaign.status === 'INACTIVE' ? 'selected' : '' %>>Inactive</option></select></label>
 <button class="button" type="submit">Save campaign</button></form>
+<section class="card qr-card">
+<p class="eyebrow">Your NETS QR code</p>
+<p>Display this at your counter. Customers scan it to pay with NETS Vouch.</p>
+<div class="merchant-qr-wrap">
+  <img class="merchant-qr-img" src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=10&data=<%= encodeURIComponent(merchant.id) %>" alt="QR code for <%= merchant.merchantName %>" width="160" height="160">
+  <p class="merchant-qr-id"><%= merchant.id %></p>
+</div>
+</section>
 <section class="card">
 <p class="eyebrow">Estimated maximum daily cost</p>
 <p class="reward">$<%= maxDailyCost.total.toFixed(2) %></p>

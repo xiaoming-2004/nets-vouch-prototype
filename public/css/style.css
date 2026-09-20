@@ -161,18 +161,32 @@ button:disabled { opacity:.55; cursor:wait; }
 .is-processing { opacity:.8; }
 .is-processing .button::before { content:''; width:14px; height:14px; border:2px solid #fff7; border-top-color:white; border-radius:50%; margin-right:9px; animation:spin .7s linear infinite; }
 .page-heading { margin-bottom:18px; }
+.camera-section { margin-bottom:16px; }
+.camera-frame { position:relative; width:100%; aspect-ratio:4/3; border-radius:20px; overflow:hidden; background:#0d1f2d; }
+#qr-video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block; }
+.camera-overlay-svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+.camera-placeholder { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:rgba(255,255,255,.45); font-size:13px; }
+.camera-status { text-align:center; font-size:13px; color:var(--muted); margin:10px 0 18px; min-height:20px; }
+.scan-fallback { border:1px solid var(--line); border-radius:18px; overflow:hidden; margin-bottom:4px; }
+.scan-fallback>summary { list-style:none; padding:14px 18px; font-size:14px; font-weight:700; color:var(--navy); cursor:pointer; background:white; display:flex; align-items:center; justify-content:space-between; }
+.scan-fallback>summary::after { content:'▾'; color:var(--muted); font-size:12px; }
+.scan-fallback[open]>summary::after { content:'▴'; }
+.scan-fallback .scan-merchants { padding:12px; background:#fafbfc; display:grid; gap:8px; }
 .scan-merchants { display:grid; gap:10px; }
-.scan-merchant-row { width:100%; display:flex; align-items:center; gap:14px; padding:14px 16px; border:1px solid var(--line); border-radius:18px; background:white; color:var(--navy); cursor:pointer; text-align:left; transition:box-shadow .15s,border-color .15s; box-shadow:0 2px 8px #092c490a; }
-.scan-merchant-row:active { box-shadow:0 1px 4px #092c4910; }
+.scan-merchant-row { width:100%; display:flex; align-items:center; gap:14px; padding:14px 16px; border:1px solid var(--line); border-radius:16px; background:white; color:var(--navy); cursor:pointer; text-align:left; transition:box-shadow .15s,border-color .15s; box-shadow:0 2px 8px #092c490a; }
+.scan-merchant-row:active { box-shadow:0 1px 4px #092c4910; transform:scale(.99); }
 .scan-merchant-row--active { border-color:#a8c8e0; background:#f0f7fd; }
-.scan-merchant-mono { width:46px; height:46px; flex-shrink:0; display:grid; place-items:center; border-radius:14px; background:var(--navy); color:white; font-size:20px; font-weight:800; }
+.scan-merchant-mono { width:44px; height:44px; flex-shrink:0; display:grid; place-items:center; border-radius:13px; background:var(--navy); color:white; font-size:19px; font-weight:800; }
 .scan-merchant-row--active .scan-merchant-mono { background:var(--red); }
 .scan-merchant-info { flex:1; min-width:0; display:grid; gap:3px; }
-.scan-merchant-info strong { font-size:15px; font-weight:750; }
+.scan-merchant-info strong { font-size:14px; font-weight:750; }
 .scan-merchant-info span { font-size:12px; color:var(--muted); }
-.scan-qr-btn { flex-shrink:0; color:var(--muted); }
+.scan-qr-btn { flex-shrink:0; color:#b0bec7; }
 .scan-merchant-row--active .scan-qr-btn { color:var(--red); }
 .scan-launch { min-height:380px; display:grid; place-items:center; align-content:center; }
+.merchant-qr-wrap { display:flex; flex-direction:column; align-items:center; gap:10px; margin-top:14px; }
+.merchant-qr-img { border-radius:12px; border:1px solid var(--line); background:white; padding:6px; }
+.merchant-qr-id { font-size:11px; color:var(--muted); font-family:monospace; }
 .camera-card { width:100%; min-height:310px; padding:32px 24px; border:1px solid #d6e0e6; border-radius:26px; display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--navy); background:#f9fbfc; cursor:pointer; box-shadow:0 12px 30px #092c490c; transition:transform .2s,box-shadow .2s; }
 .camera-card:active { transform:scale(.985); box-shadow:0 10px 25px #092c4926; }
 .camera-card strong { margin-top:23px; font-size:21px; letter-spacing:-.4px; }
