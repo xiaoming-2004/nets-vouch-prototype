@@ -15,8 +15,8 @@ p { font-size:14px; line-height:1.55; color:var(--muted); }
 small { color:var(--muted); font-size:12px; line-height:1.5; }
 a { color:var(--navy); }
 form { margin:0; }
-.stage { min-height:100dvh; display:grid; place-items:center; padding:20px; background:radial-gradient(at 15% 10%,#f2e6e9,transparent 55%),#e9eef2; }
-.phone { width:min(420px,100%); height:min(870px,calc(100dvh - 40px)); display:grid; grid-template-rows:72px minmax(0,1fr) 76px 24px; background:var(--canvas); border:1px solid #dbe1e6; border-radius:34px; overflow:hidden; box-shadow:0 24px 80px #112b4226; }
+.stage { min-height:100dvh; display:grid; place-items:center; padding:24px; background:radial-gradient(ellipse at 20% 10%,#f0e3e6 0%,transparent 50%),radial-gradient(ellipse at 80% 90%,#dde6f0 0%,transparent 50%),#e9eef2; }
+.phone { width:min(460px,100%); height:min(900px,calc(100dvh - 48px)); display:grid; grid-template-rows:72px minmax(0,1fr) 76px 24px; background:var(--canvas); border:1px solid #dbe1e6; border-radius:36px; overflow:hidden; box-shadow:0 32px 96px #112b4230,0 2px 8px #112b420f; }
 .app-header { display:flex; align-items:center; justify-content:space-between; padding:18px 24px; background:#ffffffd9; }
 .brand { display:flex; align-items:center; gap:7px; text-decoration:none; font-size:17px; font-weight:800; letter-spacing:-.5px; }
 .brand b { padding:5px 6px; border-radius:6px 2px; background:var(--red); color:white; font-size:14px; letter-spacing:.3px; }
@@ -380,5 +380,5 @@ button:disabled { opacity:.55; cursor:wait; }
 .trend-bar { width:100%; background:linear-gradient(180deg,#1a5a7d,#092c49); border-radius:4px 4px 0 0; animation:bar-up .5s cubic-bezier(.4,0,.2,1) both; min-height:3px; }
 .trend-date { font-size:8px; color:var(--muted); white-space:nowrap; text-align:center; }
 @keyframes bar-up { from { height:0!important; } }
-@media (max-width:460px) { .stage { padding:0; } .phone { width:100%; height:100dvh; border:0; border-radius:0; box-shadow:none; } .screen { padding:22px 22px 30px; } }
+@media (max-width:560px) { .stage { padding:0; background:var(--canvas); } .phone { width:100%; height:100dvh; border:0; border-radius:0; box-shadow:none; } .screen { padding:20px 20px calc(24px + env(safe-area-inset-bottom)); } .phone-foot { display:none; } }
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }
