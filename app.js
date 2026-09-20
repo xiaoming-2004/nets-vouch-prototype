@@ -709,24 +709,25 @@ async function getAIRanking(profile, eligible, feedbackItems) {
   const timeout = setTimeout(function() { controller.abort(); }, AI_RANKING_TIMEOUT_MS);
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01'
+        'Authorization': 'Bearer ' + process.env.OPENAI_API_KEY
       },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'gpt-4o-mini',
         max_tokens: 100,
-        system: system,
-        messages: [{ role: 'user', content: userMessage }]
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: userMessage }
+        ]
       })
     });
-    if (!response.ok) throw new Error('Anthropic API returned ' + response.status);
+    if (!response.ok) throw new Error('OpenAI API returned ' + response.status);
     const data = await response.json();
-    const parsed = JSON.parse(data.content[0].text.trim());
+    const parsed = JSON.parse(data.choices[0].message.content.trim());
     if (typeof parsed.merchantId !== 'string' || typeof parsed.reason !== 'string') {
       throw new Error('AI response missing merchantId or reason');
     }
@@ -774,7 +775,7 @@ async function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchant
   const eligible = getEligibleMerchants(profile, nearbyMerchants, rejectedMerchantIds, demo);
   if (eligible.length === 0) return { merchant: null, reason: null };
 
-  if (process.env.ANTHROPIC_API_KEY) {
+  if (process.env.OPENAI_API_KEY) {
     try {
       const ranking = await getAIRanking(profile, eligible, feedbackItems);
       const aiMerchant = findMerchantById(eligible, ranking.merchantId);
