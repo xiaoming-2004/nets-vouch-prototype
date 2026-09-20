@@ -516,34 +516,57 @@ async function getAIRanking(profile, eligible, feedbackItems) {
     return {
       id: m.id,
       name: m.merchantName,
-      item: m.itemName || 'menu item',
+      dish: m.itemName || 'menu item',
       price: m.price !== null ? '$' + m.price.toFixed(2) : 'varies',
-      walkMinutes: m.distanceMinutes,
-      dietary: m.dietary.length ? m.dietary.join(', ') : 'any'
+      walk: m.distanceMinutes + ' min',
+      dietary: m.dietary.length ? m.dietary.join(', ') : 'any',
+      location: m.address || ''
     };
   });
 
   const lastFeedback = getLastFeedback(feedbackItems);
-  const feedbackNote = lastFeedback
-    ? 'The user just rejected a previous suggestion because: ' + lastFeedback.reason + '.'
-    : '';
+  let feedbackNote = '';
+  if (lastFeedback) {
+    if (lastFeedback.reason === 'too-far') {
+      feedbackNote = 'The user rejected a merchant at ' + lastFeedback.distanceMinutes + ' min away as too far. Prioritise the nearest option and mention its walk time in the reason.';
+    } else if (lastFeedback.reason === 'too-expensive') {
+      const rejPrice = lastFeedback.price !== null ? '$' + lastFeedback.price.toFixed(2) : 'an unknown price';
+      feedbackNote = 'The user rejected a merchant priced at ' + rejPrice + ' as too expensive. Prioritise the cheapest option and mention the price in the reason.';
+    } else {
+      feedbackNote = 'The user rejected a previous suggestion. Pick something meaningfully different.';
+    }
+  }
 
-  const prompt = [
-    'You are Smart Match, a food recommendation engine for NETS Vouch AI in Singapore.',
-    'Pick the single best merchant for this user from the eligible list.',
+  const system = [
+    'You are Smart Match, the recommendation engine in NETS Vouch AI — a Singapore payments app rewarding people for eating at local merchants.',
+    'Pick the single best merchant for this user. Write a short, specific reason a real person would find useful.',
     '',
+    'GOOD reasons name a concrete detail — dish, price, or walk time:',
+    '  {"merchantId":"felicia-chicken-rice","reason":"Chicken Rice for $5 — closest halal option here."}',
+    '  {"merchantId":"green-bowl","reason":"Vegan grain bowl, 6 min walk, well under your budget."}',
+    '  {"merchantId":"felicia-chicken-rice","reason":"Much closer than your last suggestion at just 3 min."}',
+    '',
+    'BAD reasons are vague and must never be written:',
+    '  "Best match for your preferences."  "Matches your dietary preference and budget."  "Good option for you."',
+    '',
+    'Reply with valid JSON only — no markdown, no extra text.'
+  ].join('\n');
+
+  const userParts = [
     'User profile:',
-    '- Dietary preference: ' + profile.dietaryPreference,
+    '- Dietary: ' + profile.dietaryPreference,
     '- Budget: $' + profile.budget,
-    '- Max walking distance: ' + profile.maxDistanceMinutes + ' minutes',
-    feedbackNote,
-    '',
-    'Eligible merchants (JSON array):',
+    '- Max walk: ' + profile.maxDistanceMinutes + ' min',
+    ''
+  ];
+  if (feedbackNote) userParts.push(feedbackNote, '');
+  userParts.push(
+    'Eligible merchants:',
     JSON.stringify(merchantSummaries),
     '',
-    'Reply with valid JSON only — no markdown, no extra text:',
-    '{"merchantId":"<exact id from the list above>","reason":"<one sentence, under 12 words>"}'
-  ].join('\n');
+    'Output: {"merchantId":"<exact id>","reason":"<specific one sentence, max 15 words>"}'
+  );
+  const userMessage = userParts.join('\n');
 
   const controller = new AbortController();
   const timeout = setTimeout(function() { controller.abort(); }, AI_RANKING_TIMEOUT_MS);
@@ -560,7 +583,8 @@ async function getAIRanking(profile, eligible, feedbackItems) {
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 100,
-        messages: [{ role: 'user', content: prompt }]
+        system: system,
+        messages: [{ role: 'user', content: userMessage }]
       })
     });
     if (!response.ok) throw new Error('Anthropic API returned ' + response.status);
