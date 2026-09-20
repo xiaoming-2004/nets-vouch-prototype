@@ -1,7 +1,22 @@
 <%- include('partials/start', { title: 'Payment successful' }) %>
-<section class="receipt"><div class="success-mark" aria-hidden="true">✓</div><h1>Payment successful</h1><h2><%= transaction.merchantName %></h2>
-<div class="payment-total"><span>Paid with NETS</span><strong>$<%= transaction.netsPaid.toFixed(2) %></strong></div>
-<% if (transaction.merchantRewardEarned > 0) { %><p class="reward">+$<%= transaction.merchantRewardEarned.toFixed(2) %> <%= transaction.merchantName %> Vouch Credit</p><% } %>
+<section class="receipt">
+<div class="receipt-success-icon" aria-hidden="true"><svg viewBox="0 0 52 52" fill="none"><circle cx="26" cy="26" r="25" stroke-width="2"/><polyline points="14 27 22 35 38 18" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+<p class="receipt-label">Payment successful</p>
+<h1 class="receipt-merchant"><%= transaction.merchantName %></h1>
+<% if (transaction.outlet) { %><p class="receipt-outlet"><%= transaction.outlet %></p><% } %>
+<p class="receipt-meta"><%= transaction.date %> · <%= transaction.time %></p>
+<div class="receipt-amount-hero">$<%= transaction.netsPaid.toFixed(2) %></div>
+<p class="receipt-method">Paid with NETS</p>
+<% if (transaction.merchantCreditUsed > 0) { %>
+<dl class="receipt-lines receipt-breakdown">
+<div><dt>Purchase total</dt><dd>$<%= transaction.purchaseAmount.toFixed(2) %></dd></div>
+<div><dt>Vouch Credit applied</dt><dd class="credit-applied">−$<%= transaction.merchantCreditUsed.toFixed(2) %></dd></div>
+<div class="receipt-net"><dt>Paid with NETS</dt><dd>$<%= transaction.netsPaid.toFixed(2) %></dd></div>
+</dl>
+<% } %>
+<% if (transaction.merchantRewardEarned > 0) { %>
+<div class="receipt-reward"><svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg><div><strong>+$<%= transaction.merchantRewardEarned.toFixed(2) %> Vouch Credit earned</strong><small>Added to your <%= transaction.merchantName %> balance</small></div></div>
+<% } %>
 <% if (canVouch && transaction.vouchDecision === 'pending') { %><%- include('partials/vouch-prompt', { transaction: transaction, vouchTags: vouchTags }) %>
 <% } else { %><form method="POST" action="/transactions/<%= transaction.id %>/done"><button class="button" type="submit">Done</button></form><% } %>
 </section>

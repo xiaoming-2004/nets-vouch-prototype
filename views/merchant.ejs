@@ -26,7 +26,14 @@
 <small>Referral rewards are included within the reward budget. NETS success fee: $<%= campaign.platformFeePerAttributedPayment.toFixed(2) %> per Smart Match or Shared Vouch payment. Illustrative prototype pricing only.</small>
 </section>
 <% } else { %>
-<p class="eyebrow">Illustrative Prototype Data · this session</p>
+<p class="eyebrow">Illustrative Prototype Data · last 14 days</p>
+<% var _totalSales = campaign.metrics.smartMatchSales + campaign.metrics.sharedVouchSales + campaign.metrics.directScanSales; var _totalPayments = campaign.metrics.payments; var _cpa = campaign.metrics.smartMatchPayments + campaign.metrics.sharedVouchPayments > 0 ? (campaign.metrics.rewardCost + campaign.platformFeeAccrued) / (campaign.metrics.smartMatchPayments + campaign.metrics.sharedVouchPayments) : 0; %>
+<section class="card roi-summary">
+<div class="roi-stat"><small>Total revenue</small><b>$<%= _totalSales.toFixed(2) %></b></div>
+<div class="roi-stat"><small>Attributed payments</small><b><%= campaign.metrics.smartMatchPayments + campaign.metrics.sharedVouchPayments %></b></div>
+<div class="roi-stat"><small>Cost per acquisition</small><b>$<%= _cpa.toFixed(2) %></b></div>
+<div class="roi-stat"><small>Total reward cost</small><b>$<%= (campaign.metrics.rewardCost + campaign.platformFeeAccrued).toFixed(2) %></b></div>
+</section>
 <% var _maxP = Math.max(campaign.metrics.smartMatchPayments, campaign.metrics.sharedVouchPayments, campaign.metrics.directScanPayments, 1); %>
 <section class="card channel-chart">
 <p class="eyebrow">Payments by channel</p>
@@ -36,6 +43,14 @@
 <div class="chart-row"><div class="chart-label-row"><b>Direct Scan</b><small><%= campaign.metrics.directScanPayments %> payments · $<%= campaign.metrics.directScanSales.toFixed(2) %></small></div><div class="chart-track"><div class="chart-fill chart-fill--direct" style="width:<%= Math.round(100 * campaign.metrics.directScanPayments / _maxP) %>%"></div></div></div>
 </div>
 </section>
+<% if (recentPayments && recentPayments.length) { %>
+<section class="card">
+<p class="eyebrow">Recent payments</p>
+<div class="payment-feed">
+<% recentPayments.forEach(function(p) { %><div class="feed-row"><span class="feed-source feed-source--<%= p.source.toLowerCase().replace('_','-') %>"><%= p.source === 'SMART_MATCH' ? 'Smart Match' : p.source === 'SHARED_VOUCH' ? 'Shared Vouch' : 'Direct Scan' %></span><span class="feed-item"><%= p.itemName || 'In-store purchase' %></span><span class="feed-meta"><%= p.date %> · <%= p.time %></span><b><%= p.displayAmount %></b></div><% }); %>
+</div>
+</section>
+<% } %>
 <dl class="receipt-lines card"><div><dt>Smart Match shown</dt><dd><%= campaign.metrics.smartMatchShown %></dd></div><div><dt>Smart Match accepted</dt><dd><%= campaign.metrics.smartMatchAccepted %></dd></div><div><dt>Smart Match payments</dt><dd><%= campaign.metrics.smartMatchPayments %></dd></div><div><dt>Smart Match sales</dt><dd>$<%= campaign.metrics.smartMatchSales.toFixed(2) %></dd></div><div><dt>Shared Vouch claims</dt><dd><%= campaign.metrics.sharedVouchClaims %></dd></div><div><dt>Shared Vouch payments</dt><dd><%= campaign.metrics.sharedVouchPayments %></dd></div><div><dt>Shared Vouch sales</dt><dd>$<%= campaign.metrics.sharedVouchSales.toFixed(2) %></dd></div><div><dt>Shared Vouch conversion</dt><dd><%= campaign.metrics.sharedVouchClaims ? Math.round(100 * campaign.metrics.sharedVouchPayments / campaign.metrics.sharedVouchClaims) : 0 %>%</dd></div><div><dt>Direct Scan payments</dt><dd><%= campaign.metrics.directScanPayments %></dd></div><div><dt>Direct Scan sales</dt><dd>$<%= campaign.metrics.directScanSales.toFixed(2) %></dd></div><div><dt>QR scans</dt><dd><%= campaign.metrics.scans %></dd></div><div><dt>Completed payments</dt><dd><%= campaign.metrics.payments %></dd></div><div><dt>Reward cost</dt><dd>$<%= campaign.metrics.rewardCost.toFixed(2) %></dd></div><div><dt>Platform fee accrued</dt><dd>$<%= campaign.platformFeeAccrued.toFixed(2) %></dd></div><div><dt>Match-to-payment conversion</dt><dd><%= campaign.metrics.smartMatchShown ? Math.round(100 * campaign.metrics.smartMatchPayments / campaign.metrics.smartMatchShown) : 0 %>%</dd></div></dl>
 <% } %><a class="text-button" href="/home">Return to Jia</a>
 <%- include('partials/end', { active: 'profile' }) %>

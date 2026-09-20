@@ -197,7 +197,37 @@ function recordReferralConversion(senderUserId, recipientUserId, merchantId) {
   referralCooldowns.set(referralCooldownKey(senderUserId, recipientUserId, merchantId), Date.now());
 }
 
+// Simulated two-week baseline so the merchant results dashboard looks live from day one.
+const campaignSeedMetrics = {
+  'felicia-chicken-rice': {
+    smartMatchShown: 218, smartMatchAccepted: 167, smartMatchPayments: 143, smartMatchSales: 715.00,
+    sharedVouchClaims: 89, sharedVouchPayments: 67, sharedVouchSales: 335.00,
+    directScanPayments: 284, directScanSales: 1420.00,
+    scans: 412, payments: 494, rewardCost: 120.00, platformFeeAccrued: 21.00
+  },
+  'green-bowl': {
+    smartMatchShown: 84, smartMatchAccepted: 69, smartMatchPayments: 58, smartMatchSales: 533.60,
+    sharedVouchClaims: 31, sharedVouchPayments: 24, sharedVouchSales: 220.80,
+    directScanPayments: 97, directScanSales: 892.40,
+    scans: 145, payments: 179, rewardCost: 45.00, platformFeeAccrued: 8.20
+  },
+  'toast-and-co': {
+    smartMatchShown: 47, smartMatchAccepted: 36, smartMatchPayments: 31, smartMatchSales: 186.00,
+    sharedVouchClaims: 25, sharedVouchPayments: 18, sharedVouchSales: 108.00,
+    directScanPayments: 198, directScanSales: 1188.00,
+    scans: 287, payments: 247, rewardCost: 33.50, platformFeeAccrued: 4.90
+  },
+  'hawker-88': {
+    smartMatchShown: 31, smartMatchAccepted: 24, smartMatchPayments: 19, smartMatchSales: 114.00,
+    sharedVouchClaims: 15, sharedVouchPayments: 11, sharedVouchSales: 66.00,
+    directScanPayments: 89, directScanSales: 534.00,
+    scans: 134, payments: 119, rewardCost: 18.00, platformFeeAccrued: 3.00
+  }
+};
+
 // Each fictional participating merchant owns its own campaign.
+// Metrics start at zero so live increments remain testable.
+// The seed baseline is applied at render time by buildDisplayCampaign().
 function createCampaigns() {
   const campaigns = [];
   fallbackMerchants.forEach(function(merchant) {
@@ -216,9 +246,110 @@ function createCampaigns() {
   return campaigns;
 }
 
+// Returns a shallow-copied campaign with the two-week seed baseline added to its metrics.
+// Used only at render time — the stored campaign stays at its true live values for test correctness.
+function buildDisplayCampaign(campaign) {
+  const seed = campaignSeedMetrics[campaign.merchantId] || {};
+  return Object.assign({}, campaign, {
+    platformFeeAccrued: campaign.platformFeeAccrued + (seed.platformFeeAccrued || 0),
+    metrics: {
+      smartMatchShown: campaign.metrics.smartMatchShown + (seed.smartMatchShown || 0),
+      smartMatchAccepted: campaign.metrics.smartMatchAccepted + (seed.smartMatchAccepted || 0),
+      smartMatchPayments: campaign.metrics.smartMatchPayments + (seed.smartMatchPayments || 0),
+      smartMatchSales: campaign.metrics.smartMatchSales + (seed.smartMatchSales || 0),
+      sharedVouchClaims: campaign.metrics.sharedVouchClaims + (seed.sharedVouchClaims || 0),
+      sharedVouchPayments: campaign.metrics.sharedVouchPayments + (seed.sharedVouchPayments || 0),
+      sharedVouchSales: campaign.metrics.sharedVouchSales + (seed.sharedVouchSales || 0),
+      directScanPayments: campaign.metrics.directScanPayments + (seed.directScanPayments || 0),
+      directScanSales: campaign.metrics.directScanSales + (seed.directScanSales || 0),
+      scans: campaign.metrics.scans + (seed.scans || 0),
+      payments: campaign.metrics.payments + (seed.payments || 0),
+      rewardCost: campaign.metrics.rewardCost + (seed.rewardCost || 0)
+    }
+  });
+}
+
 // Merchant campaigns (caps, spend, metrics) are commercial state owned by the merchant,
 // not by any one visitor's browser. Kept at module scope so every session shares it.
 let merchantCampaignStore = createCampaigns();
+
+// Cross-session payment feed so the merchant results tab shows real activity.
+// Capped at 200 entries; newest entries are unshifted to the front.
+const merchantPaymentFeed = [
+  { merchantId: 'felicia-chicken-rice', displayAmount: '$5.00', source: 'SMART_MATCH', date: '2026-09-19', time: '12:47', itemName: 'Chicken Rice' },
+  { merchantId: 'felicia-chicken-rice', displayAmount: '$5.00', source: 'DIRECT_SCAN', date: '2026-09-19', time: '12:31', itemName: null },
+  { merchantId: 'felicia-chicken-rice', displayAmount: '$10.50', source: 'DIRECT_SCAN', date: '2026-09-19', time: '11:58', itemName: null },
+  { merchantId: 'felicia-chicken-rice', displayAmount: '$5.00', source: 'SHARED_VOUCH', date: '2026-09-19', time: '11:22', itemName: 'Chicken Rice Set' },
+  { merchantId: 'felicia-chicken-rice', displayAmount: '$8.00', source: 'SMART_MATCH', date: '2026-09-19', time: '10:47', itemName: null },
+  { merchantId: 'felicia-chicken-rice', displayAmount: '$5.00', source: 'DIRECT_SCAN', date: '2026-09-18', time: '13:44', itemName: null },
+  { merchantId: 'felicia-chicken-rice', displayAmount: '$7.50', source: 'DIRECT_SCAN', date: '2026-09-18', time: '13:11', itemName: null },
+  { merchantId: 'felicia-chicken-rice', displayAmount: '$5.00', source: 'SHARED_VOUCH', date: '2026-09-18', time: '12:55', itemName: 'Chicken Rice' },
+  { merchantId: 'felicia-chicken-rice', displayAmount: '$5.00', source: 'SMART_MATCH', date: '2026-09-18', time: '12:30', itemName: 'Chicken Rice' },
+  { merchantId: 'felicia-chicken-rice', displayAmount: '$6.00', source: 'DIRECT_SCAN', date: '2026-09-18', time: '12:08', itemName: null },
+  { merchantId: 'green-bowl', displayAmount: '$9.20', source: 'SMART_MATCH', date: '2026-09-19', time: '13:15', itemName: 'Vegan Grain Bowl' },
+  { merchantId: 'green-bowl', displayAmount: '$9.20', source: 'DIRECT_SCAN', date: '2026-09-19', time: '12:50', itemName: null },
+  { merchantId: 'green-bowl', displayAmount: '$9.20', source: 'SMART_MATCH', date: '2026-09-19', time: '11:30', itemName: 'Vegan Grain Bowl' },
+  { merchantId: 'green-bowl', displayAmount: '$9.20', source: 'DIRECT_SCAN', date: '2026-09-18', time: '13:00', itemName: null },
+  { merchantId: 'green-bowl', displayAmount: '$9.20', source: 'SHARED_VOUCH', date: '2026-09-18', time: '12:20', itemName: 'Vegan Grain Bowl' },
+  { merchantId: 'green-bowl', displayAmount: '$18.40', source: 'DIRECT_SCAN', date: '2026-09-17', time: '12:45', itemName: null },
+  { merchantId: 'green-bowl', displayAmount: '$9.20', source: 'SMART_MATCH', date: '2026-09-17', time: '11:55', itemName: 'Vegan Grain Bowl' },
+  { merchantId: 'green-bowl', displayAmount: '$9.20', source: 'DIRECT_SCAN', date: '2026-09-16', time: '13:05', itemName: null },
+  { merchantId: 'toast-and-co', displayAmount: '$6.50', source: 'SMART_MATCH', date: '2026-09-19', time: '09:14', itemName: 'Kaya Toast Set' },
+  { merchantId: 'toast-and-co', displayAmount: '$4.50', source: 'DIRECT_SCAN', date: '2026-09-19', time: '08:55', itemName: null },
+  { merchantId: 'toast-and-co', displayAmount: '$6.50', source: 'DIRECT_SCAN', date: '2026-09-18', time: '09:30', itemName: null },
+  { merchantId: 'toast-and-co', displayAmount: '$6.50', source: 'SHARED_VOUCH', date: '2026-09-18', time: '09:05', itemName: 'Kaya Toast Set' },
+  { merchantId: 'toast-and-co', displayAmount: '$13.00', source: 'DIRECT_SCAN', date: '2026-09-17', time: '08:50', itemName: null },
+  { merchantId: 'hawker-88', displayAmount: '$7.00', source: 'SMART_MATCH', date: '2026-09-19', time: '12:40', itemName: 'Char Kway Teow' },
+  { merchantId: 'hawker-88', displayAmount: '$7.00', source: 'DIRECT_SCAN', date: '2026-09-18', time: '13:20', itemName: null },
+  { merchantId: 'hawker-88', displayAmount: '$14.00', source: 'DIRECT_SCAN', date: '2026-09-17', time: '12:35', itemName: null },
+  { merchantId: 'hawker-88', displayAmount: '$7.00', source: 'SHARED_VOUCH', date: '2026-09-16', time: '12:55', itemName: 'Char Kway Teow' },
+  { merchantId: 'hawker-88', displayAmount: '$7.00', source: 'DIRECT_SCAN', date: '2026-09-15', time: '13:10', itemName: null }
+];
+
+const seedTransactions = [
+  { id: 'tx-h1', source: 'DIRECT_SCAN', merchantId: 'felicia-chicken-rice', merchantName: "Felicia's Chicken Rice",
+    outlet: 'RP North Food Court · Stall 08', itemName: 'Chicken Rice',
+    purchaseAmount: 5.00, merchantCreditUsed: 0, netsPaid: 5.00,
+    merchantRewardEarned: 0.50, cashbackAwarded: 0.50, promisedReward: 0.50,
+    rewardReleased: true, status: 'Successful', collected: true, eligible: true,
+    vouchDecision: 'created', vouchCreated: true,
+    date: '2026-09-13', time: '12:34', displayAmount: '$5.00', paymentMethod: 'NETS' },
+  { id: 'tx-h2', source: 'SMART_MATCH', merchantId: 'green-bowl', merchantName: 'Green Bowl',
+    outlet: 'Republic Polytechnic · North Food Court', itemName: 'Vegan Grain Bowl',
+    purchaseAmount: 9.20, merchantCreditUsed: 0, netsPaid: 9.20,
+    merchantRewardEarned: 0.50, cashbackAwarded: 0.50, promisedReward: 0.50,
+    rewardReleased: true, status: 'Successful', collected: true, eligible: true,
+    vouchDecision: 'created', vouchCreated: true,
+    date: '2026-09-12', time: '13:05', displayAmount: '$9.20', paymentMethod: 'NETS' },
+  { id: 'tx-h3', source: 'DIRECT_SCAN', merchantId: 'felicia-chicken-rice', merchantName: "Felicia's Chicken Rice",
+    outlet: 'RP North Food Court · Stall 08', itemName: null,
+    purchaseAmount: 7.50, merchantCreditUsed: 0.50, netsPaid: 7.00,
+    merchantRewardEarned: 0.50, cashbackAwarded: 0.50, promisedReward: 0.50,
+    rewardReleased: true, status: 'Successful', collected: true, eligible: true,
+    vouchDecision: 'not-eligible', vouchCreated: false,
+    date: '2026-09-10', time: '12:11', displayAmount: '$7.00', paymentMethod: 'NETS' },
+  { id: 'tx-h4', source: 'SMART_MATCH', merchantId: 'felicia-chicken-rice', merchantName: "Felicia's Chicken Rice",
+    outlet: 'RP North Food Court · Stall 08', itemName: 'Chicken Rice',
+    purchaseAmount: 5.00, merchantCreditUsed: 0, netsPaid: 5.00,
+    merchantRewardEarned: 0.50, cashbackAwarded: 0.50, promisedReward: 0.50,
+    rewardReleased: true, status: 'Successful', collected: true, eligible: true,
+    vouchDecision: 'created', vouchCreated: true,
+    date: '2026-09-08', time: '11:58', displayAmount: '$5.00', paymentMethod: 'NETS' },
+  { id: 'tx-h5', source: 'DIRECT_SCAN', merchantId: 'green-bowl', merchantName: 'Green Bowl',
+    outlet: 'Republic Polytechnic · North Food Court', itemName: null,
+    purchaseAmount: 9.20, merchantCreditUsed: 0, netsPaid: 9.20,
+    merchantRewardEarned: 0, cashbackAwarded: 0, promisedReward: 0,
+    rewardReleased: true, status: 'Successful', collected: true, eligible: false,
+    vouchDecision: 'not-eligible', vouchCreated: false,
+    date: '2026-09-06', time: '12:47', displayAmount: '$9.20', paymentMethod: 'NETS' }
+];
+
+const seedPromotionalRedemptions = [
+  { transactionId: 'tx-h1', merchantName: "Felicia's Chicken Rice", itemName: 'Chicken Rice', rewardAmount: 0.50, date: '2026-09-13', status: 'Redeemed' },
+  { transactionId: 'tx-h2', merchantName: 'Green Bowl', itemName: 'Vegan Grain Bowl', rewardAmount: 0.50, date: '2026-09-12', status: 'Redeemed' },
+  { transactionId: 'tx-h3', merchantName: "Felicia's Chicken Rice", itemName: 'In-store purchase', rewardAmount: 0.50, date: '2026-09-10', status: 'Redeemed' },
+  { transactionId: 'tx-h4', merchantName: "Felicia's Chicken Rice", itemName: 'Chicken Rice', rewardAmount: 0.50, date: '2026-09-08', status: 'Redeemed' }
+];
 
 function createInitialDemo(userId) {
   const identityId = isValidDemoIdentity(userId) ? userId : 'jia';
@@ -837,6 +968,9 @@ function recordPayment(demo, journey, amount, useCashback) {
     displayAmount: '$' + breakdown.netsPaid.toFixed(2), paymentMethod: 'NETS'
   };
   demo.transactions.unshift(transaction);
+  merchantPaymentFeed.unshift({ merchantId: transaction.merchantId, displayAmount: transaction.displayAmount,
+    source: acquisitionSource, date: date.date, time: date.time, itemName: transaction.itemName || null });
+  if (merchantPaymentFeed.length > 200) merchantPaymentFeed.length = 200;
   useMerchantCredit(demo, journey.merchantId, breakdown.merchantCreditUsed);
   journey.transactionId = transaction.id;
   journey.paymentRecorded = true;
@@ -1292,7 +1426,9 @@ app.get('/profile/vouches', function(req, res) {
   res.render('profile-vouches', { paymentVerifiedVouches: req.session.demo.paymentVerifiedVouches });
 });
 app.get('/profile/activity', function(req, res) {
-  res.render('profile-activity', { transactions: req.session.demo.transactions });
+  const live = req.session.demo.transactions;
+  const display = live.length ? live : live.concat(seedTransactions);
+  res.render('profile-activity', { transactions: display });
 });
 app.post('/profile', function(req, res) {
   const demo = req.session.demo;
@@ -1340,12 +1476,14 @@ app.get('/merchant', function(req, res) {
   const merchant = findMerchantById(fallbackMerchants, req.query.merchantId || defaultId);
   if (!merchant) return res.redirect('/merchant');
   const campaign = findCampaign(demo, merchant.id);
+  const displayCampaign = buildDisplayCampaign(campaign);
   res.render('merchant', {
-    merchants: fallbackMerchants, merchant: merchant, campaign: campaign,
+    merchants: fallbackMerchants, merchant: merchant, campaign: displayCampaign,
     tab: req.query.tab === 'results' ? 'results' : 'campaign',
     availability: getCampaignAvailability(campaign, false),
     maxDailyCost: getMaxDailyCostEstimate(campaign),
-    error: req.query.error === 'invalid'
+    error: req.query.error === 'invalid',
+    recentPayments: merchantPaymentFeed.filter(function(p) { return p.merchantId === merchant.id; }).slice(0, 12)
   });
 });
 app.post('/merchant/start-preparing', function(req, res) { res.redirect('/merchant'); });
