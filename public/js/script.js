@@ -25,6 +25,7 @@ function wait(milliseconds) {
   navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } })
     .then(function(stream) {
       video.srcObject = stream;
+      video.play().catch(function() {});
       if (placeholder) placeholder.hidden = true;
       setStatus('Point at a merchant NETS QR code');
 

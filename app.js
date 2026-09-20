@@ -1202,7 +1202,8 @@ app.get('/smart-match/static', async function(req, res) {
       demo.selectedMerchantReason = result.reason;
       if (!demo.shownMerchantIds.includes(merchant.id)) {
         demo.shownMerchantIds.push(merchant.id);
-        findCampaign(demo, merchant.id).metrics.smartMatchShown += 1;
+        const c = findCampaign(demo, merchant.id);
+        if (c) c.metrics.smartMatchShown += 1;
       }
     }
   }
