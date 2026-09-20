@@ -161,6 +161,17 @@ button:disabled { opacity:.55; cursor:wait; }
 .is-processing { opacity:.8; }
 .is-processing .button::before { content:''; width:14px; height:14px; border:2px solid #fff7; border-top-color:white; border-radius:50%; margin-right:9px; animation:spin .7s linear infinite; }
 .page-heading { margin-bottom:18px; }
+.scan-merchants { display:grid; gap:10px; }
+.scan-merchant-row { width:100%; display:flex; align-items:center; gap:14px; padding:14px 16px; border:1px solid var(--line); border-radius:18px; background:white; color:var(--navy); cursor:pointer; text-align:left; transition:box-shadow .15s,border-color .15s; box-shadow:0 2px 8px #092c490a; }
+.scan-merchant-row:active { box-shadow:0 1px 4px #092c4910; }
+.scan-merchant-row--active { border-color:#a8c8e0; background:#f0f7fd; }
+.scan-merchant-mono { width:46px; height:46px; flex-shrink:0; display:grid; place-items:center; border-radius:14px; background:var(--navy); color:white; font-size:20px; font-weight:800; }
+.scan-merchant-row--active .scan-merchant-mono { background:var(--red); }
+.scan-merchant-info { flex:1; min-width:0; display:grid; gap:3px; }
+.scan-merchant-info strong { font-size:15px; font-weight:750; }
+.scan-merchant-info span { font-size:12px; color:var(--muted); }
+.scan-qr-btn { flex-shrink:0; color:var(--muted); }
+.scan-merchant-row--active .scan-qr-btn { color:var(--red); }
 .scan-launch { min-height:380px; display:grid; place-items:center; align-content:center; }
 .camera-card { width:100%; min-height:310px; padding:32px 24px; border:1px solid #d6e0e6; border-radius:26px; display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--navy); background:#f9fbfc; cursor:pointer; box-shadow:0 12px 30px #092c490c; transition:transform .2s,box-shadow .2s; }
 .camera-card:active { transform:scale(.985); box-shadow:0 10px 25px #092c4926; }

@@ -1248,10 +1248,14 @@ app.get('/scan', function(req, res) {
   if (scan && scan.status === 'MERCHANT_FOUND') return res.redirect('/scan/payment');
   if (scan && scan.status === 'PAID') return res.redirect(receiptUrl(findTransactionById(demo.transactions, scan.transactionId)));
   const activeClaim = getEffectiveVouchClaim(demo);
-  res.render('scan', { error: req.query.error === 'invalid',
-    merchantId: activeClaim && activeClaim.status === 'CLAIMED' ?
-      activeClaim.merchantId :
-      demo.recommendationAccepted && demo.selectedMerchantId ? demo.selectedMerchantId : 'green-bowl' });
+  const activeMerchantId = activeClaim && activeClaim.status === 'CLAIMED'
+    ? activeClaim.merchantId
+    : demo.recommendationAccepted && demo.selectedMerchantId ? demo.selectedMerchantId : null;
+  res.render('scan', {
+    error: req.query.error === 'invalid',
+    merchants: fallbackMerchants,
+    activeMerchantId: activeMerchantId
+  });
 });
 app.post('/scan', function(req, res) {
   const demo = req.session.demo;
