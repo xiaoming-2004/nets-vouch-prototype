@@ -5,6 +5,10 @@
     <p class="eyebrow">Hi <%= user.name %> 👋</p>
     <h2 id="onboard-title">What are you in the mood for?</h2>
     <form method="POST" action="/setup-preferences" class="onboard-form">
+      <label class="field onboard-field">What are you craving?
+        <input type="text" name="craving" placeholder="e.g. chicken rice, biryani, something light…" maxlength="100" autocomplete="off" autofocus>
+      </label>
+      <p class="onboard-or">Or pick a type</p>
       <div class="mood-grid">
         <% moodCuisineOptions.forEach(function(opt) { %>
         <label class="mood-chip">

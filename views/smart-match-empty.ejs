@@ -8,6 +8,7 @@
 <summary class="refine-summary refine-summary--link">Adjust filters</summary>
 <div class="refine-sheet">
 <form method="POST" action="/profile" class="form-stack">
+<label class="field">Craving<input name="craving" type="text" placeholder="e.g. chicken rice, something light…" maxlength="100" autocomplete="off" value="<%= profile.craving || '' %>"></label>
 <label class="field">Mood today<select name="moodCuisine"><% moodCuisineOptions.forEach(function(opt) { %><option value="<%= opt.value %>" <%= opt.value === (profile.moodCuisine || 'any') ? 'selected' : '' %>><%= opt.label %></option><% }); %></select></label>
 <label class="field">Dietary<select name="dietaryPreference"><% dietaryPreferenceOptions.forEach(function(opt) { %><option value="<%= opt.value %>" <%= opt.value === profile.dietaryPreference ? 'selected' : '' %>><%= opt.label %></option><% }); %></select></label>
 <label class="field">Budget (max $)<input name="budget" type="number" min="1" max="100" step="1" value="<%= profile.budget %>"></label>
