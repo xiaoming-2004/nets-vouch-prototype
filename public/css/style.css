@@ -405,5 +405,19 @@ button:disabled { opacity:.55; cursor:wait; }
 .trend-bar { width:100%; background:linear-gradient(180deg,#1a5a7d,#092c49); border-radius:4px 4px 0 0; animation:bar-up .5s cubic-bezier(.4,0,.2,1) both; min-height:3px; }
 .trend-date { font-size:8px; color:var(--muted); white-space:nowrap; text-align:center; }
 @keyframes bar-up { from { height:0!important; } }
+/* Onboarding overlay */
+.onboard-overlay { position:fixed; inset:0; z-index:100; background:rgba(9,44,73,0.58); display:flex; align-items:flex-end; padding:0 16px 20px; }
+.onboard-sheet { background:#fff; border-radius:24px; padding:28px 22px 24px; width:100%; animation:sheet-up .35s cubic-bezier(.34,1.56,.64,1) both; }
+@keyframes sheet-up { from { transform:translateY(110%); opacity:0; } to { transform:translateY(0); opacity:1; } }
+.onboard-sheet .eyebrow { margin:0 0 2px; }
+.onboard-sheet h2 { margin:0 0 18px; font-size:1.25rem; }
+.onboard-form { display:flex; flex-direction:column; gap:0; }
+.mood-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:18px; }
+.mood-chip { display:flex; cursor:pointer; }
+.mood-chip input { position:absolute; opacity:0; pointer-events:none; }
+.mood-chip span { display:flex; align-items:center; justify-content:center; text-align:center; width:100%; padding:10px 6px; border-radius:12px; border:1.5px solid var(--line); font-size:13px; font-weight:600; background:var(--canvas); transition:background .12s,border-color .12s,color .12s; }
+.mood-chip input:checked + span { background:var(--red); border-color:var(--red); color:#fff; }
+.onboard-field { margin-bottom:16px; }
+@media (min-width:561px) { .onboard-overlay { align-items:center; } .onboard-sheet { max-width:400px; margin:0 auto; } }
 @media (max-width:560px) { .stage { padding:0; background:var(--canvas); } .phone { width:100%; height:100dvh; border:0; border-radius:0; box-shadow:none; } .screen { padding:20px 20px calc(24px + env(safe-area-inset-bottom)); } .phone-foot { display:none; } }
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }

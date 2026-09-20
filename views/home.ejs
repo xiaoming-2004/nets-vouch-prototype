@@ -1,8 +1,34 @@
 <%- include('partials/start', { title: 'Home' }) %>
+<% if (showOnboarding) { %>
+<div class="onboard-overlay" role="dialog" aria-modal="true" aria-labelledby="onboard-title">
+  <div class="onboard-sheet">
+    <p class="eyebrow">Hi <%= user.name %> 👋</p>
+    <h2 id="onboard-title">What are you in the mood for?</h2>
+    <form method="POST" action="/setup-preferences" class="onboard-form">
+      <div class="mood-grid">
+        <% moodCuisineOptions.forEach(function(opt) { %>
+        <label class="mood-chip">
+          <input type="radio" name="moodCuisine" value="<%= opt.value %>" <%= opt.value === 'any' ? 'checked' : '' %>>
+          <span><%= opt.label %></span>
+        </label>
+        <% }); %>
+      </div>
+      <label class="field onboard-field">Dietary requirements
+        <select name="dietaryPreference">
+          <% dietaryPreferenceOptions.forEach(function(opt) { %>
+          <option value="<%= opt.value %>"><%= opt.label %></option>
+          <% }); %>
+        </select>
+      </label>
+      <button class="button" type="submit">Find my match →</button>
+    </form>
+  </div>
+</div>
+<% } %>
 <header class="greeting"><p><%= homeGreeting.greeting %>, <%= user.name %> 👋</p><h1><%= homeGreeting.prompt %></h1></header>
 <section id="smart-match"><p class="eyebrow">Your Smart Match</p>
 <div data-match-region aria-live="polite" aria-busy="<%= recommendation ? 'false' : 'true' %>">
-<% if (recommendation) { %><%- include('smart-match-card') %><% } else { %>
+<% if (recommendation) { %><%- include('smart-match-card') %><% } else if (!showOnboarding) { %>
 <div class="matching" data-load-match><div class="matching-dots" aria-hidden="true"><i></i><i></i><i></i></div><h2><%= matchingAgain ? 'Finding something better...' : 'Finding your next spot...' %></h2><p><%= matchingAgain ? 'Using your feedback' : 'Checking what fits right now' %></p></div>
 <noscript><a class="button" href="/smart-match/static">Find my match</a></noscript>
 <% } %>

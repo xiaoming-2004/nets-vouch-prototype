@@ -14,7 +14,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const MINIMUM_ELIGIBLE_PAYMENT = 1.00;
 const PLACES_REQUEST_TIMEOUT_MS = 3500;
-const AI_RANKING_TIMEOUT_MS = 3000;
+const AI_RANKING_TIMEOUT_MS = 8000;
 const CLAIM_EXPIRY_MS = 20 * 60 * 1000;
 const REFERRAL_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -388,9 +388,10 @@ const seedPromotionalRedemptions = [
 function createInitialDemo(userId) {
   const identityId = isValidDemoIdentity(userId) ? userId : 'jia';
   return {
-    version: 14,
+    version: 15,
     user: { ...demoIdentities[identityId] },
     profile: { dietaryPreference: 'none', moodCuisine: 'any', budget: 10, maxDistanceMinutes: 10, notifications: true },
+    hasSetPreferences: false,
     vouchCredits: {}, dailyMerchantRewards: {},
     nearbyMerchants: [], selectedMerchantId: null, selectedMerchantReason: null, recommendationAccepted: false, rejectedMerchantIds: [],
     recommendationFeedback: [], shownMerchantIds: [],
@@ -401,7 +402,7 @@ function createInitialDemo(userId) {
 }
 
 function initialiseDemoSession(req) {
-  if (!req.session.demo || req.session.demo.version !== 14) {
+  if (!req.session.demo || req.session.demo.version !== 15) {
     req.session.demo = createInitialDemo('jia');
     req.session.demoUserStates = {};
   }
@@ -770,7 +771,9 @@ async function getAIRanking(profile, eligible, feedbackItems) {
     });
     if (!response.ok) throw new Error('OpenAI API returned ' + response.status);
     const data = await response.json();
-    const parsed = JSON.parse(data.choices[0].message.content.trim());
+    let aiContent = data.choices[0].message.content.trim();
+    aiContent = aiContent.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+    const parsed = JSON.parse(aiContent);
     if (typeof parsed.merchantId !== 'string' || typeof parsed.reason !== 'string') {
       throw new Error('AI response missing merchantId or reason');
     }
@@ -1200,8 +1203,22 @@ app.get('/home', function(req, res) {
   const recommendation = findMerchantForDemo(demo, demo.selectedMerchantId);
   res.render('home', {
     ...matchView(demo, recommendation), user: demo.user,
-    matchingAgain: req.query.matching === 'again', homeGreeting: getHomeGreeting()
+    matchingAgain: req.query.matching === 'again', homeGreeting: getHomeGreeting(),
+    showOnboarding: !demo.hasSetPreferences
   });
+});
+
+app.post('/setup-preferences', function(req, res) {
+  const demo = req.session.demo;
+  const mood = req.body.moodCuisine || 'any';
+  const dietary = req.body.dietaryPreference || 'none';
+  if (isValidMoodCuisine(mood)) demo.profile.moodCuisine = mood;
+  if (isValidDietaryPreference(dietary)) demo.profile.dietaryPreference = dietary;
+  demo.hasSetPreferences = true;
+  demo.selectedMerchantId = null;
+  demo.recommendationAccepted = false;
+  demo.nearbyMerchants = [];
+  res.redirect('/home');
 });
 
 app.get('/smart-match/result', async function(req, res) {
