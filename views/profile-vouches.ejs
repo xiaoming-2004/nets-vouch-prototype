@@ -1,5 +1,5 @@
 <%- include('partials/start', { title: 'My Vouches' }) %>
 <a class="back" href="/profile">← Profile</a><h1>My Vouches</h1><p>Places you visited and Vouched for.</p>
-<% if (!paymentVerifiedVouches.length) { %><p class="empty-line">Your first Vouch starts with a NETS payment.</p><% } %>
+<% if (!paymentVerifiedVouches.length) { %><div class="empty-card"><div class="empty-icon" aria-hidden="true"><svg viewBox="0 0 52 52" fill="none"><circle cx="26" cy="26" r="20" stroke-width="2.5" stroke-linecap="round"/><path d="M26 18v8l5 3" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div><p>Your first Vouch starts with a NETS payment at a participating merchant.</p><a class="button" href="/home">Find a spot</a></div><% } %>
 <div class="vouch-list"><% paymentVerifiedVouches.forEach(function(vouch) { %><article class="vouch-row"><span class="merchant-badge"><%= vouch.merchantName.charAt(0) %></span><div><h2><%= vouch.merchantName %></h2><p>✓ Payment-Verified</p><small><% if (vouch.tagLabel !== 'Payment-Verified') { %><%= vouch.tagLabel %> · <% } %><%= vouch.date %></small><a href="/vouch/<%= vouch.transactionId %>/success">Share again</a></div></article><% }); %></div>
 <%- include('partials/end', { active: 'profile' }) %>

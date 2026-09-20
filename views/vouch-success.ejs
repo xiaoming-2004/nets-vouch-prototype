@@ -1,6 +1,14 @@
 <%- include('partials/start', { title: 'Vouched' }) %>
-<section class="share-vouch"><div class="success-mark" aria-hidden="true">✓</div><h1>Payment-Verified Vouch created</h1><p><%= transaction.merchantName %> · Verified NETS Visit</p>
-<article class="share-preview"><small>NETS Vouch</small><h2><%= vouch.user %> Vouched for <%= transaction.merchantName %></h2><span><%= vouch.tagLabel %></span><span>✓ Payment-Verified</span></article>
-<h2>Share with a friend</h2><div class="share-grid" data-share-path="<%= sharePath %>" data-share-merchant="<%= transaction.merchantName %>"><button type="button" data-share-platform="whatsapp"><b><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.7a8 8 0 0 1-11.8 7L4 20l1.3-4A8 8 0 1 1 20 11.7Z"/><path d="M9 8.5c.6 2.3 2.2 3.9 4.5 4.6"/></svg></b>WhatsApp</button><button type="button" data-share-platform="telegram"><b><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 11 17-7-4 16-5-6-4 3 1-5Z"/><path d="m8 12 8-5"/></svg></b>Telegram</button><button type="button" data-share-platform="copy"><b><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></b>Copy Link</button></div><p class="share-status" role="status"></p><small>Your payment amount stays private.</small>
-<form method="POST" action="/transactions/<%= transaction.id %>/done"><button class="button" type="submit">Done</button></form></section>
+<section class="share-vouch">
+<div class="status-icon status-icon--success" aria-hidden="true"><svg viewBox="0 0 52 52" fill="none"><circle cx="26" cy="26" r="25" stroke-width="2"/><polyline points="14 27 22 35 38 18" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+<p class="status-label status-label--success">Payment-Verified Vouch</p>
+<h1>You Vouched for <%= transaction.merchantName %></h1>
+<article class="share-card"><div class="share-card-header"><span class="share-card-badge">NETS Vouch</span><span class="share-card-verified">✓ Payment-Verified</span></div><p class="share-card-name"><%= vouch.user %> Vouches for <strong><%= transaction.merchantName %></strong></p><div class="share-card-tags"><% if (vouch.tagLabel && vouch.tagLabel !== 'Payment-Verified') { %><span class="share-tag"><%= vouch.tagLabel %></span><% } %><span class="share-tag share-tag--verified">Verified NETS Visit</span></div></article>
+<h2>Share with a friend</h2>
+<p class="share-desc">Friends who pay with NETS at <%= transaction.merchantName %> using your link earn $<%= campaign ? campaign.rewardAmount.toFixed(2) : '0.50' %> Vouch Credit.</p>
+<div class="share-grid" data-share-path="<%= sharePath %>" data-share-merchant="<%= transaction.merchantName %>"><button type="button" data-share-platform="whatsapp"><b><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.7a8 8 0 0 1-11.8 7L4 20l1.3-4A8 8 0 1 1 20 11.7Z"/><path d="M9 8.5c.6 2.3 2.2 3.9 4.5 4.6"/></svg></b>WhatsApp</button><button type="button" data-share-platform="telegram"><b><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 11 17-7-4 16-5-6-4 3 1-5Z"/><path d="m8 12 8-5"/></svg></b>Telegram</button><button type="button" data-share-platform="copy"><b><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></b>Copy Link</button></div>
+<p class="share-status" role="status"></p>
+<small>Your payment amount stays private.</small>
+<form method="POST" action="/transactions/<%= transaction.id %>/done"><button class="button" type="submit">Done</button></form>
+</section>
 <%- include('partials/end', { active: transaction.journeySource === 'scan' ? 'scan' : 'home' }) %>

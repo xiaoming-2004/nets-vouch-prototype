@@ -1362,7 +1362,8 @@ app.get('/vouch/:id/success', function(req, res) {
   }
   if (!vouch) return res.redirect('/home');
   res.render('vouch-success', { transaction: transaction, vouch: vouch,
-    sharePath: '/offers/' + vouch.shareToken });
+    sharePath: '/offers/' + vouch.shareToken,
+    campaign: findCampaign(demo, transaction.merchantId) });
 });
 
 // A copied Vouch link can be opened by another demo session and claimed once.

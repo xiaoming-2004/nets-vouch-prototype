@@ -108,7 +108,7 @@ test('Profile preferences still filter Smart Match', async function() {
     if (dietary !== 'none') assert.match(result.html, new RegExp(dietary, 'i'));
   }
   await v.request('/profile', { dietaryPreference: 'none', budget: '1', maxDistanceMinutes: '1' });
-  assert.match((await v.request('/smart-match/result')).html, /all we've got/);
+  assert.match((await v.request('/smart-match/result')).html, /No spots nearby/);
 });
 
 test('Smart Match Scan accepts actual amount, merchant credit and optional Vouch', async function() {

@@ -1,14 +1,38 @@
 <%- include('partials/start', { title: offer ? 'A Vouch from a friend' : 'Offer unavailable' }) %>
 <% if (!offer) { %>
-<section class="claim-state"><div class="status-orbit" aria-hidden="true">×</div><h1>This offer is no longer available.</h1><a class="button" href="/home">Explore NETS Vouch</a></section>
+<section class="claim-state">
+<div class="empty-icon" aria-hidden="true"><svg viewBox="0 0 52 52" fill="none"><circle cx="26" cy="26" r="25" stroke-width="2.5"/><line x1="18" y1="18" x2="34" y2="34" stroke-width="2.5" stroke-linecap="round"/><line x1="34" y1="18" x2="18" y2="34" stroke-width="2.5" stroke-linecap="round"/></svg></div>
+<h1>This offer is no longer available.</h1>
+<a class="button" href="/home">Explore NETS Vouch</a>
+</section>
 <% } else { %>
 <section class="shared-vouch-card"><p class="eyebrow">A Vouch from a friend</p><h1><%= offer.user %> Vouched for this place</h1><h2><%= offer.merchantName %></h2><div><span><%= offer.tagLabel %></span><span>✓ Verified NETS Visit</span></div></section>
-<section class="offer-card"><p class="eyebrow">Friend offer</p><h2>Get <%= offer.merchantName %> Vouch Credit</h2><p>Earn $<%= offer.rewardAmount.toFixed(2) %> after an eligible NETS payment at this merchant.</p>
-<% if (claimed && claim.status === 'REDEEMED') { %><div class="success-mark" aria-hidden="true">✓</div><h3>Reward unlocked</h3><p>Payment verified at <%= offer.merchantName %>.</p><a class="button" href="/home">Done</a>
-<% } else if (claimed && claim.status === 'EXPIRED') { %><div class="status-orbit" aria-hidden="true">×</div><h3>This claim has expired</h3><p>Claim the offer again to get a fresh 20-minute window to pay at <%= offer.merchantName %>.</p><form method="POST" action="/offers/<%= offer.token %>/claim" data-single-submit><button class="button" type="submit">Claim offer again</button></form>
-<% } else if (claimed) { %><div class="success-mark" aria-hidden="true">✓</div><h3>Offer saved</h3><p>Pay with NETS at <%= offer.merchantName %> to unlock $<%= offer.rewardAmount.toFixed(2) %> Vouch Credit.</p><a class="button" href="/scan">Scan to pay</a>
-<% } else if (own) { %><p class="privacy-note">This link is ready to send to a friend.</p><a class="button" href="/home">Done</a>
-<% } else { %><form method="POST" action="/offers/<%= offer.token %>/claim" data-single-submit><button class="button" type="submit">Claim offer</button></form><small>Claiming does not release credit. Pay with NETS at this merchant first.</small><% } %>
+<section class="offer-card card">
+<p class="eyebrow">Referral offer</p>
+<h2>Earn $<%= offer.rewardAmount.toFixed(2) %> <%= offer.merchantName %> Vouch Credit</h2>
+<p>Pay with NETS at <%= offer.merchantName %> after claiming this offer.</p>
+<% if (claimed && claim.status === 'REDEEMED') { %>
+<div class="status-icon status-icon--success" aria-hidden="true"><svg viewBox="0 0 52 52" fill="none"><circle cx="26" cy="26" r="25" stroke-width="2"/><polyline points="14 27 22 35 38 18" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+<p class="status-label status-label--success">Reward unlocked</p>
+<p>Payment verified at <%= offer.merchantName %>. Vouch Credit added to your balance.</p>
+<a class="button" href="/home">Done</a>
+<% } else if (claimed && claim.status === 'EXPIRED') { %>
+<div class="status-icon status-icon--warn" aria-hidden="true"><svg viewBox="0 0 52 52" fill="none"><circle cx="26" cy="26" r="25" stroke-width="2"/><line x1="26" y1="16" x2="26" y2="30" stroke-width="3" stroke-linecap="round"/><circle cx="26" cy="37" r="2" fill="currentColor"/></svg></div>
+<p class="status-label status-label--warn">Claim expired</p>
+<p>Your 20-minute window closed. Claim again to start a fresh timer.</p>
+<form method="POST" action="/offers/<%= offer.token %>/claim" data-single-submit><button class="button" type="submit">Claim offer again</button></form>
+<% } else if (claimed) { %>
+<div class="status-icon status-icon--success" aria-hidden="true"><svg viewBox="0 0 52 52" fill="none"><circle cx="26" cy="26" r="25" stroke-width="2"/><polyline points="14 27 22 35 38 18" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+<p class="status-label status-label--success">Offer saved</p>
+<p>Pay with NETS at <%= offer.merchantName %> within 20 minutes to unlock $<%= offer.rewardAmount.toFixed(2) %> Vouch Credit.</p>
+<a class="button" href="/scan">Scan to pay</a>
+<% } else if (own) { %>
+<p class="privacy-note">This is your own Vouch link. Share it with a friend to earn a referral bonus when they pay.</p>
+<a class="button" href="/home">Done</a>
+<% } else { %>
+<form method="POST" action="/offers/<%= offer.token %>/claim" data-single-submit><button class="button" type="submit">Claim offer</button></form>
+<small>Claiming does not release credit. Pay with NETS at this merchant first.</small>
+<% } %>
 </section>
 <% } %>
 <%- include('partials/end', { active: '' }) %>
