@@ -75,7 +75,8 @@ function credit(demo, merchantId) { return demo.vouchCredits[merchantId] || 0; }
 
 test('Smart Match recommends a merchant, keeps feedback and hands off to Scan', async function() {
   const v = visitor();
-  assert.equal((await v.request('/')).location, '/home');
+  assert.equal((await v.request('/')).location, '/welcome');
+  await v.request('/home');
   const first = await match(v);
   assert.match(first.html, /felicia-chicken-rice/);
   assert.match(first.html, /Try: Chicken Rice · \$5\.00/);

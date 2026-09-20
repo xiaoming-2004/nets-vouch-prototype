@@ -198,30 +198,35 @@ function recordReferralConversion(senderUserId, recipientUserId, merchantId) {
 }
 
 // Simulated two-week baseline so the merchant results dashboard looks live from day one.
+// dailyPayments: last 7 days oldest→newest [Sep 14 … Sep 20], shows natural growth trend.
 const campaignSeedMetrics = {
   'felicia-chicken-rice': {
     smartMatchShown: 218, smartMatchAccepted: 167, smartMatchPayments: 143, smartMatchSales: 715.00,
     sharedVouchClaims: 89, sharedVouchPayments: 67, sharedVouchSales: 335.00,
     directScanPayments: 284, directScanSales: 1420.00,
-    scans: 412, payments: 494, rewardCost: 120.00, platformFeeAccrued: 21.00
+    scans: 412, payments: 494, rewardCost: 120.00, platformFeeAccrued: 21.00,
+    dailyPayments: [29, 33, 37, 40, 42, 44, 48]
   },
   'green-bowl': {
     smartMatchShown: 84, smartMatchAccepted: 69, smartMatchPayments: 58, smartMatchSales: 533.60,
     sharedVouchClaims: 31, sharedVouchPayments: 24, sharedVouchSales: 220.80,
     directScanPayments: 97, directScanSales: 892.40,
-    scans: 145, payments: 179, rewardCost: 45.00, platformFeeAccrued: 8.20
+    scans: 145, payments: 179, rewardCost: 45.00, platformFeeAccrued: 8.20,
+    dailyPayments: [10, 12, 11, 14, 15, 13, 16]
   },
   'toast-and-co': {
     smartMatchShown: 47, smartMatchAccepted: 36, smartMatchPayments: 31, smartMatchSales: 186.00,
     sharedVouchClaims: 25, sharedVouchPayments: 18, sharedVouchSales: 108.00,
     directScanPayments: 198, directScanSales: 1188.00,
-    scans: 287, payments: 247, rewardCost: 33.50, platformFeeAccrued: 4.90
+    scans: 287, payments: 247, rewardCost: 33.50, platformFeeAccrued: 4.90,
+    dailyPayments: [15, 17, 19, 21, 20, 23, 25]
   },
   'hawker-88': {
     smartMatchShown: 31, smartMatchAccepted: 24, smartMatchPayments: 19, smartMatchSales: 114.00,
     sharedVouchClaims: 15, sharedVouchPayments: 11, sharedVouchSales: 66.00,
     directScanPayments: 89, directScanSales: 534.00,
-    scans: 134, payments: 119, rewardCost: 18.00, platformFeeAccrued: 3.00
+    scans: 134, payments: 119, rewardCost: 18.00, platformFeeAccrued: 3.00,
+    dailyPayments: [7, 8, 9, 9, 10, 11, 12]
   }
 };
 
@@ -252,6 +257,7 @@ function buildDisplayCampaign(campaign) {
   const seed = campaignSeedMetrics[campaign.merchantId] || {};
   return Object.assign({}, campaign, {
     platformFeeAccrued: campaign.platformFeeAccrued + (seed.platformFeeAccrued || 0),
+    trendDays: seed.dailyPayments || [],
     metrics: {
       smartMatchShown: campaign.metrics.smartMatchShown + (seed.smartMatchShown || 0),
       smartMatchAccepted: campaign.metrics.smartMatchAccepted + (seed.smartMatchAccepted || 0),
@@ -1127,7 +1133,8 @@ app.use(function(req, res, next) {
 });
 
 // Home and persistent Smart Match
-app.get('/', function(req, res) { res.redirect('/home'); });
+app.get('/', function(req, res) { res.redirect('/welcome'); });
+app.get('/welcome', function(req, res) { res.render('welcome'); });
 app.get('/home', function(req, res) {
   const demo = req.session.demo;
   const recommendation = findMerchantForDemo(demo, demo.selectedMerchantId);

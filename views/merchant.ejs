@@ -27,6 +27,15 @@
 </section>
 <% } else { %>
 <p class="eyebrow">Illustrative Prototype Data · last 14 days</p>
+<% if (campaign.trendDays && campaign.trendDays.length) { %>
+<% var _trendMax = Math.max.apply(null, campaign.trendDays) || 1; var _trendDates = ['14 Sep','15 Sep','16 Sep','17 Sep','18 Sep','19 Sep','20 Sep']; %>
+<section class="card trend-chart-card">
+<p class="eyebrow">Daily payments · last 7 days</p>
+<div class="trend-chart">
+<% campaign.trendDays.forEach(function(v, i) { %><div class="trend-col"><div class="trend-bar" style="height:<%= Math.round(100 * v / _trendMax) %>%"></div><span class="trend-date"><%= _trendDates[i] || '' %></span></div><% }); %>
+</div>
+</section>
+<% } %>
 <% var _totalSales = campaign.metrics.smartMatchSales + campaign.metrics.sharedVouchSales + campaign.metrics.directScanSales; var _totalPayments = campaign.metrics.payments; var _cpa = campaign.metrics.smartMatchPayments + campaign.metrics.sharedVouchPayments > 0 ? (campaign.metrics.rewardCost + campaign.platformFeeAccrued) / (campaign.metrics.smartMatchPayments + campaign.metrics.sharedVouchPayments) : 0; %>
 <section class="card roi-summary">
 <div class="roi-stat"><small>Total revenue</small><b>$<%= _totalSales.toFixed(2) %></b></div>
