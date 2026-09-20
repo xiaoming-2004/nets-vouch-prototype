@@ -10,10 +10,11 @@
 <% if (campaign && recommendationAccepted) { %><a class="button" href="/scan">Scan when you arrive</a><% } %>
 <% if (profile) { %>
 <details class="refine-prefs" id="refine">
-<summary class="refine-summary"><span class="refine-chips"><span class="refine-chip"><%= dietaryLabel %></span><span class="refine-chip">≤ $<%= profile.budget %></span><span class="refine-chip"><%= profile.maxDistanceMinutes %> min</span></span><span class="refine-edit">Edit filters</span></summary>
+<summary class="refine-summary"><span class="refine-chips"><span class="refine-chip"><%= dietaryLabel %></span><% if (profile.moodCuisine && profile.moodCuisine !== 'any') { %><span class="refine-chip">Mood: <%= moodCuisineLabel %></span><% } %><span class="refine-chip">≤ $<%= profile.budget %></span><span class="refine-chip"><%= profile.maxDistanceMinutes %> min</span></span><span class="refine-edit">Edit filters</span></summary>
 <div class="refine-sheet">
 <form method="POST" action="/profile" class="form-stack">
 <label class="field">Dietary<select name="dietaryPreference"><% dietaryPreferenceOptions.forEach(function(opt) { %><option value="<%= opt.value %>" <%= opt.value === profile.dietaryPreference ? 'selected' : '' %>><%= opt.label %></option><% }); %></select></label>
+<label class="field">Mood today<select name="moodCuisine"><% moodCuisineOptions.forEach(function(opt) { %><option value="<%= opt.value %>" <%= opt.value === (profile.moodCuisine || 'any') ? 'selected' : '' %>><%= opt.label %></option><% }); %></select></label>
 <label class="field">Budget (max $)<input name="budget" type="number" min="1" max="100" step="1" value="<%= profile.budget %>"></label>
 <label class="field">Walking distance (max min)<input name="maxDistanceMinutes" type="number" min="1" max="60" step="1" value="<%= profile.maxDistanceMinutes %>"></label>
 <input type="hidden" name="notifications" value="<%= profile.notifications ? 'on' : '' %>">

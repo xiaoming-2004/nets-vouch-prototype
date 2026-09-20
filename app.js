@@ -166,6 +166,23 @@ const dietaryPreferenceOptions = [
   { value: 'vegan', label: 'Vegan' }
 ];
 
+const moodCuisineOptions = [
+  { value: 'any', label: 'Anything' },
+  { value: 'rice', label: 'Rice dishes' },
+  { value: 'noodles', label: 'Noodles' },
+  { value: 'healthy', label: 'Healthy bowls' },
+  { value: 'indian', label: 'Indian food' },
+  { value: 'wraps', label: 'Wraps' }
+];
+
+const moodCategoryMap = {
+  rice: ['chicken-rice'],
+  noodles: ['noodles'],
+  healthy: ['healthy-food'],
+  indian: ['indian-food'],
+  wraps: ['wraps']
+};
+
 const vouchTags = [
   { id: 'worth-it', label: 'Worth It' },
   { id: 'tasty', label: 'Tasty' },
@@ -371,9 +388,9 @@ const seedPromotionalRedemptions = [
 function createInitialDemo(userId) {
   const identityId = isValidDemoIdentity(userId) ? userId : 'jia';
   return {
-    version: 13,
+    version: 14,
     user: { ...demoIdentities[identityId] },
-    profile: { dietaryPreference: 'none', budget: 10, maxDistanceMinutes: 10, notifications: true },
+    profile: { dietaryPreference: 'none', moodCuisine: 'any', budget: 10, maxDistanceMinutes: 10, notifications: true },
     vouchCredits: {}, dailyMerchantRewards: {},
     nearbyMerchants: [], selectedMerchantId: null, selectedMerchantReason: null, recommendationAccepted: false, rejectedMerchantIds: [],
     recommendationFeedback: [], shownMerchantIds: [],
@@ -384,7 +401,7 @@ function createInitialDemo(userId) {
 }
 
 function initialiseDemoSession(req) {
-  if (!req.session.demo || req.session.demo.version !== 13) {
+  if (!req.session.demo || req.session.demo.version !== 14) {
     req.session.demo = createInitialDemo('jia');
     req.session.demoUserStates = {};
   }
@@ -478,6 +495,20 @@ function getDietaryPreferenceLabel(preference) {
     }
   }
   return 'No dietary restriction';
+}
+
+function isValidMoodCuisine(value) {
+  for (let i = 0; i < moodCuisineOptions.length; i++) {
+    if (moodCuisineOptions[i].value === value) return true;
+  }
+  return false;
+}
+
+function getMoodCuisineLabel(value) {
+  for (let i = 0; i < moodCuisineOptions.length; i++) {
+    if (moodCuisineOptions[i].value === value) return moodCuisineOptions[i].label;
+  }
+  return 'Anything';
 }
 
 function merchantMatchesProfile(merchant, profile) {
@@ -705,6 +736,7 @@ async function getAIRanking(profile, eligible, feedbackItems) {
     '- Dietary: ' + profile.dietaryPreference,
     '- Budget: $' + profile.budget,
     '- Max walk: ' + profile.maxDistanceMinutes + ' min',
+    '- Food mood today: ' + (profile.moodCuisine && profile.moodCuisine !== 'any' ? getMoodCuisineLabel(profile.moodCuisine) : 'no preference'),
     ''
   ];
   if (feedbackNote) userParts.push(feedbackNote, '');
@@ -766,6 +798,10 @@ function getFallbackRecommendation(eligible, feedbackItems, profile) {
     let score = 100 - merchant.distanceMinutes + 50;
     if (!lastFeedback && merchant.id === 'felicia-chicken-rice') score += 15;
     if (merchant.price !== null) score += Math.max(0, profile.budget - merchant.price);
+    if (profile.moodCuisine && profile.moodCuisine !== 'any') {
+      const moodCats = moodCategoryMap[profile.moodCuisine] || [];
+      if (moodCats.indexOf(merchant.category) !== -1) score += 40;
+    }
     if (lastFeedback && lastFeedback.reason === 'too-far') {
       score += Math.max(0, 20 - merchant.distanceMinutes * 2);
     }
@@ -807,6 +843,12 @@ function getMatchReasons(profile, merchant, feedbackItems) {
   }
   if (profile.dietaryPreference !== 'none') {
     reasons.push('Matches your dietary preference');
+  }
+  if (profile.moodCuisine && profile.moodCuisine !== 'any') {
+    const moodCats = moodCategoryMap[profile.moodCuisine] || [];
+    if (moodCats.indexOf(merchant.category) !== -1) {
+      reasons.push('Matches your mood today');
+    }
   }
   if (merchant.distanceMinutes <= profile.maxDistanceMinutes) {
     reasons.push('Nearby right now');
@@ -1105,7 +1147,9 @@ function matchView(demo, recommendation) {
     aiReason: demo.selectedMerchantReason || null,
     profile: demo.profile,
     dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference),
-    dietaryPreferenceOptions: dietaryPreferenceOptions
+    dietaryPreferenceOptions: dietaryPreferenceOptions,
+    moodCuisineLabel: getMoodCuisineLabel(demo.profile.moodCuisine || 'any'),
+    moodCuisineOptions: moodCuisineOptions
   };
 }
 
@@ -1464,7 +1508,8 @@ app.get('/profile', function(req, res) {
   if (req.query.tab === 'transactions') return res.redirect('/profile/activity');
   const demo = req.session.demo;
   res.render('profile', { user: demo.user, profile: demo.profile,
-    rewardCredits: getRewardCredits(demo), dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference) });
+    rewardCredits: getRewardCredits(demo), dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference),
+    moodCuisineLabel: getMoodCuisineLabel(demo.profile.moodCuisine || 'any') });
 });
 app.get('/profile/rewards', function(req, res) {
   res.render('profile-rewards', { rewardCredits: getRewardCredits(req.session.demo) });
@@ -1472,7 +1517,8 @@ app.get('/profile/rewards', function(req, res) {
 app.get('/profile/preferences', function(req, res) {
   const demo = req.session.demo;
   res.render('profile-preferences', { profile: demo.profile,
-    dietaryPreferenceOptions: dietaryPreferenceOptions, settingsError: req.query.error === 'invalid' });
+    dietaryPreferenceOptions: dietaryPreferenceOptions, moodCuisineOptions: moodCuisineOptions,
+    settingsError: req.query.error === 'invalid' });
 });
 app.get('/profile/vouches', function(req, res) {
   res.render('profile-vouches', { paymentVerifiedVouches: req.session.demo.paymentVerifiedVouches });
@@ -1486,12 +1532,13 @@ app.post('/profile', function(req, res) {
   const demo = req.session.demo;
   const budget = parsePaymentAmount(req.body.budget);
   const distance = Number(req.body.maxDistanceMinutes);
-  if (!isValidDietaryPreference(req.body.dietaryPreference) || budget === null || budget > 100 ||
-      !Number.isInteger(distance) || distance < 1 || distance > 60) {
+  const mood = req.body.moodCuisine || 'any';
+  if (!isValidDietaryPreference(req.body.dietaryPreference) || !isValidMoodCuisine(mood) ||
+      budget === null || budget > 100 || !Number.isInteger(distance) || distance < 1 || distance > 60) {
     return res.redirect('/profile/preferences?error=invalid');
   }
-  demo.profile = { dietaryPreference: req.body.dietaryPreference, budget: budget,
-    maxDistanceMinutes: distance, notifications: req.body.notifications === 'on' };
+  demo.profile = { dietaryPreference: req.body.dietaryPreference, moodCuisine: mood,
+    budget: budget, maxDistanceMinutes: distance, notifications: req.body.notifications === 'on' };
   demo.selectedMerchantId = null;
   demo.recommendationAccepted = false;
   demo.rejectedMerchantIds = [];
