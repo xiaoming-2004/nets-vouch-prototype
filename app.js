@@ -1241,7 +1241,7 @@ app.get('/smart-match/result', async function(req, res) {
       }
     }
     if (!recommendation) return res.render('smart-match-empty', { profile: demo.profile,
-      dietaryPreferenceOptions: dietaryPreferenceOptions,
+      dietaryPreferenceOptions: dietaryPreferenceOptions, moodCuisineOptions: moodCuisineOptions,
       dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference) });
     res.render('smart-match-card', matchView(demo, recommendation));
   } catch (err) {
@@ -1556,6 +1556,7 @@ app.post('/profile', function(req, res) {
   }
   demo.profile = { dietaryPreference: req.body.dietaryPreference, moodCuisine: mood,
     budget: budget, maxDistanceMinutes: distance, notifications: req.body.notifications === 'on' };
+  demo.hasSetPreferences = true;
   demo.selectedMerchantId = null;
   demo.recommendationAccepted = false;
   demo.rejectedMerchantIds = [];

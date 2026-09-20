@@ -8,10 +8,10 @@
 <summary class="refine-summary refine-summary--link">Adjust filters</summary>
 <div class="refine-sheet">
 <form method="POST" action="/profile" class="form-stack">
+<label class="field">Mood today<select name="moodCuisine"><% moodCuisineOptions.forEach(function(opt) { %><option value="<%= opt.value %>" <%= opt.value === (profile.moodCuisine || 'any') ? 'selected' : '' %>><%= opt.label %></option><% }); %></select></label>
 <label class="field">Dietary<select name="dietaryPreference"><% dietaryPreferenceOptions.forEach(function(opt) { %><option value="<%= opt.value %>" <%= opt.value === profile.dietaryPreference ? 'selected' : '' %>><%= opt.label %></option><% }); %></select></label>
 <label class="field">Budget (max $)<input name="budget" type="number" min="1" max="100" step="1" value="<%= profile.budget %>"></label>
 <label class="field">Walking distance (max min)<input name="maxDistanceMinutes" type="number" min="1" max="60" step="1" value="<%= profile.maxDistanceMinutes %>"></label>
-<input type="hidden" name="moodCuisine" value="<%= profile.moodCuisine || 'any' %>">
 <input type="hidden" name="notifications" value="<%= profile.notifications ? 'on' : '' %>">
 <button class="button" type="submit">Apply &amp; search again</button>
 </form>
