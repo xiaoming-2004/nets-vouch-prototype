@@ -279,6 +279,17 @@ function buildDisplayCampaign(campaign) {
 // not by any one visitor's browser. Kept at module scope so every session shares it.
 let merchantCampaignStore = createCampaigns();
 
+// Module-level transaction cache — survives between requests on the same Vercel instance.
+// Used as a fallback when the session MemoryStore is empty (cold-start scenario).
+const txCache = new Map();
+function cacheTx(tx) {
+  txCache.set(tx.id, tx);
+  if (txCache.size > 100) txCache.delete(txCache.keys().next().value);
+}
+function findTxAnySource(demo, id) {
+  return findTransactionById(demo.transactions, id) || txCache.get(id) || null;
+}
+
 // Cross-session payment feed so the merchant results tab shows real activity.
 // Capped at 200 entries; newest entries are unshifted to the front.
 const merchantPaymentFeed = [
@@ -975,6 +986,7 @@ function recordPayment(demo, journey, amount, useCashback) {
     displayAmount: '$' + breakdown.netsPaid.toFixed(2), paymentMethod: 'NETS'
   };
   demo.transactions.unshift(transaction);
+  cacheTx(transaction);
   merchantPaymentFeed.unshift({ merchantId: transaction.merchantId, displayAmount: transaction.displayAmount,
     source: acquisitionSource, date: date.date, time: date.time, itemName: transaction.itemName || null });
   if (merchantPaymentFeed.length > 200) merchantPaymentFeed.length = 200;
@@ -1275,15 +1287,30 @@ app.post('/scan', function(req, res) {
     cashbackUsed: 0, netsPaid: 0, cashbackAwarded: 0, vouchDecision: 'pending'
   };
   findCampaign(demo, merchant.id).metrics.scans += 1;
-  res.redirect('/scan/payment');
+  res.redirect('/scan/payment?m=' + encodeURIComponent(merchant.id));
 });
 app.get('/scan/payment', function(req, res) {
   const demo = req.session.demo;
-  const scan = demo.currentScanPayment;
+  let scan = demo.currentScanPayment;
+
+  // If session is cold (Vercel cold start) but ?m= is present, rebuild scan state on the fly.
+  if ((!scan || scan.status === 'COMPLETE') && req.query.m) {
+    const merchant = findMerchantById(fallbackMerchants, req.query.m);
+    if (!merchant) return res.redirect('/scan?error=invalid');
+    scan = {
+      id: 'scan-' + demo.nextScanNumber++, source: 'scan',
+      attributionSource: demo.recommendationAccepted && demo.selectedMerchantId === merchant.id ? 'smart-match' : 'scan',
+      merchantId: merchant.id, merchantName: merchant.merchantName, outlet: merchant.address,
+      enteredAmount: null, status: 'MERCHANT_FOUND', transactionId: null,
+      cashbackUsed: 0, netsPaid: 0, cashbackAwarded: 0, vouchDecision: 'pending'
+    };
+    demo.currentScanPayment = scan;
+  }
+
   if (!scan || scan.status === 'COMPLETE') return res.redirect('/scan');
   if (scan.transactionId) {
-    const existingTransaction = findTransactionById(demo.transactions, scan.transactionId);
-    return res.redirect(receiptUrl(existingTransaction));
+    const existingTransaction = findTxAnySource(demo, scan.transactionId);
+    if (existingTransaction) return res.redirect(receiptUrl(existingTransaction));
   }
   const claim = getEffectiveVouchClaim(demo);
   const matchingSharedClaim = claim && claim.status === 'CLAIMED' && claim.merchantId === scan.merchantId;
@@ -1318,7 +1345,7 @@ app.post('/scan/cancel', function(req, res) {
 app.get('/payment-success', function(req, res) { res.redirect('/home'); });
 app.get('/payment-success/:id', function(req, res) {
   const demo = req.session.demo;
-  const transaction = findTransactionById(demo.transactions, req.params.id);
+  const transaction = findTxAnySource(demo, req.params.id);
   if (!transaction) return res.redirect('/home');
   res.render('payment-success', { transaction: transaction, canVouch: canVouch(transaction), vouchTags: vouchTags });
 });
@@ -1331,7 +1358,7 @@ app.post('/collection', function(req, res) { res.redirect('/home'); });
 // Payment-Verified Vouches: one decision per transaction.
 app.get('/vouch', function(req, res) { res.redirect('/home'); });
 app.get('/vouch/:id', function(req, res) {
-  const transaction = findTransactionById(req.session.demo.transactions, req.params.id);
+  const transaction = findTxAnySource(req.session.demo, req.params.id);
   if (!canVouch(transaction) || transaction.vouchDecision === 'skipped') return res.redirect('/home');
   if (transaction.vouchDecision === 'created') return res.redirect('/vouch/' + transaction.id + '/success');
   res.render('vouch', { transaction: transaction, vouchTags: vouchTags,
@@ -1339,7 +1366,7 @@ app.get('/vouch/:id', function(req, res) {
 });
 app.post('/vouch/:id', function(req, res) {
   const demo = req.session.demo;
-  const transaction = findTransactionById(demo.transactions, req.params.id);
+  const transaction = findTxAnySource(demo, req.params.id);
   if (!canVouch(transaction)) return res.redirect('/home');
   if (transaction.vouchDecision === 'pending' && req.body.action === 'create') {
     const number = demo.nextVouchNumber++;
@@ -1371,7 +1398,7 @@ app.post('/vouch/:id', function(req, res) {
 });
 app.get('/vouch/:id/success', function(req, res) {
   const demo = req.session.demo;
-  const transaction = findTransactionById(demo.transactions, req.params.id);
+  const transaction = findTxAnySource(demo, req.params.id);
   if (!transaction || transaction.vouchDecision !== 'created') return res.redirect('/home');
   let vouch = null;
   for (let i = 0; i < demo.paymentVerifiedVouches.length; i++) {

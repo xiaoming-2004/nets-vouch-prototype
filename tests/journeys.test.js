@@ -67,7 +67,7 @@ async function scan(v, merchantId) {
       : demo.recommendationAccepted && demo.selectedMerchantId ? demo.selectedMerchantId : 'green-bowl';
   }
   const result = await v.request('/scan', { merchantId: merchantId });
-  assert.equal(result.location, '/scan/payment');
+  assert.ok(result.location && result.location.startsWith('/scan/payment'), 'expected redirect to /scan/payment, got ' + result.location);
   return (await v.state()).demo.currentScanPayment;
 }
 
