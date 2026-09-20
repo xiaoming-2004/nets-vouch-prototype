@@ -1161,26 +1161,32 @@ app.get('/home', function(req, res) {
 });
 
 app.get('/smart-match/result', async function(req, res) {
-  const demo = req.session.demo;
-  let recommendation = findMerchantForDemo(demo, demo.selectedMerchantId);
-  if (!recommendation) {
-    if (!demo.nearbyMerchants.length) demo.nearbyMerchants = (await getNearbyMerchants()).merchants;
-    const result = await getSmartRecommendation(demo.profile, demo.nearbyMerchants,
-      demo.rejectedMerchantIds, demo.recommendationFeedback, demo);
-    recommendation = result.merchant;
-    if (recommendation) {
-      demo.selectedMerchantId = recommendation.id;
-      demo.selectedMerchantReason = result.reason;
-      if (!demo.shownMerchantIds.includes(recommendation.id)) {
-        demo.shownMerchantIds.push(recommendation.id);
-        findCampaign(demo, recommendation.id).metrics.smartMatchShown += 1;
+  try {
+    const demo = req.session.demo;
+    let recommendation = findMerchantForDemo(demo, demo.selectedMerchantId);
+    if (!recommendation) {
+      if (!demo.nearbyMerchants.length) demo.nearbyMerchants = (await getNearbyMerchants()).merchants;
+      const result = await getSmartRecommendation(demo.profile, demo.nearbyMerchants,
+        demo.rejectedMerchantIds, demo.recommendationFeedback, demo);
+      recommendation = result.merchant;
+      if (recommendation) {
+        demo.selectedMerchantId = recommendation.id;
+        demo.selectedMerchantReason = result.reason;
+        if (!demo.shownMerchantIds.includes(recommendation.id)) {
+          demo.shownMerchantIds.push(recommendation.id);
+          const c = findCampaign(demo, recommendation.id);
+          if (c) c.metrics.smartMatchShown += 1;
+        }
       }
     }
+    if (!recommendation) return res.render('smart-match-empty', { profile: demo.profile,
+      dietaryPreferenceOptions: dietaryPreferenceOptions,
+      dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference) });
+    res.render('smart-match-card', matchView(demo, recommendation));
+  } catch (err) {
+    console.error('smart-match/result error:', err);
+    res.status(500).send('<p>Smart Match unavailable — <a href="/home">return home</a></p>');
   }
-  if (!recommendation) return res.render('smart-match-empty', { profile: demo.profile,
-    dietaryPreferenceOptions: dietaryPreferenceOptions,
-    dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference) });
-  res.render('smart-match-card', matchView(demo, recommendation));
 });
 
 // Plain HTML fallback for visitors with JavaScript disabled.
