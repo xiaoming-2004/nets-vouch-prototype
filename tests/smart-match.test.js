@@ -295,3 +295,156 @@ test('location denied and missing Geoapify key use the RP demo fallback', async 
   assert.match(match.html, /data-merchant-id="felicia-chicken-rice"/);
   assert.match(match.html, /Using demo location/);
 });
+
+function merchantIdOf(html) {
+  const match = html.match(/data-merchant-id="([^"]+)"/);
+  return match ? match[1] : null;
+}
+
+async function rejectCurrent(v, merchantId, reason) {
+  return v.request('/recommendation/reject', { merchantId: merchantId, reason: reason || 'not-in-mood' });
+}
+
+test('Not for me reuses the current nearby batch without calling Geoapify again', async function() {
+  process.env.GEOAPIFY_API_KEY = 'test-key';
+  let fetchCalls = 0;
+  global.fetch = async function() {
+    fetchCalls += 1;
+    return { ok: true, json: async function() { return { type: 'FeatureCollection', features: [
+      { properties: { place_id: 'a', name: 'Merchant A', categories: ['catering.cafe'] }, geometry: { coordinates: [103.82, 1.45] } },
+      { properties: { place_id: 'b', name: 'Merchant B', categories: ['catering.cafe'] }, geometry: { coordinates: [103.82, 1.45] } },
+      { properties: { place_id: 'c', name: 'Merchant C', categories: ['catering.cafe'] }, geometry: { coordinates: [103.82, 1.45] } }
+    ] }; } };
+  };
+  const v = visitor();
+  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  const first = await v.request('/smart-match/result');
+  const firstId = merchantIdOf(first.html);
+  assert.ok(firstId);
+  assert.equal(fetchCalls, 1);
+
+  assert.equal((await rejectCurrent(v, firstId, 'not-in-mood')).status, 302);
+  assert.equal(fetchCalls, 1, 'rejecting must not trigger another Geoapify call');
+
+  const second = await v.request('/smart-match/result');
+  const secondId = merchantIdOf(second.html);
+  assert.ok(secondId);
+  assert.notEqual(secondId, firstId, 'a rejected merchant must not immediately repeat');
+  assert.equal(fetchCalls, 1, 'the second recommendation still came from the same batch');
+});
+
+test('multiple rejections consume the same batch with no extra provider calls', async function() {
+  process.env.GEOAPIFY_API_KEY = 'test-key';
+  let fetchCalls = 0;
+  global.fetch = async function() {
+    fetchCalls += 1;
+    return { ok: true, json: async function() { return { type: 'FeatureCollection', features: [
+      { properties: { place_id: 'a', name: 'Merchant A', categories: ['catering.cafe'] }, geometry: { coordinates: [103.82, 1.45] } },
+      { properties: { place_id: 'b', name: 'Merchant B', categories: ['catering.cafe'] }, geometry: { coordinates: [103.82, 1.45] } },
+      { properties: { place_id: 'c', name: 'Merchant C', categories: ['catering.cafe'] }, geometry: { coordinates: [103.82, 1.45] } }
+    ] }; } };
+  };
+  const v = visitor();
+  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  const seen = new Set();
+  for (let i = 0; i < 3; i++) {
+    const page = await v.request('/smart-match/result');
+    const id = merchantIdOf(page.html);
+    assert.ok(id, 'a recommendation should still be available at rejection ' + i);
+    assert.ok(!seen.has(id), 'no merchant should repeat within the same cycle');
+    seen.add(id);
+    await rejectCurrent(v, id, 'not-in-mood');
+  }
+  assert.equal(fetchCalls, 1, 'three rejections against a three-merchant batch should need only the original call');
+});
+
+test('rejection reason is recorded and per-session, separate from other sessions', async function() {
+  process.env.GEOAPIFY_API_KEY = 'test-key';
+  global.fetch = async function() {
+    return { ok: true, json: async function() { return { type: 'FeatureCollection', features: [
+      { properties: { place_id: 'a', name: 'Merchant A', categories: ['catering.cafe'] }, geometry: { coordinates: [103.82, 1.45] } },
+      { properties: { place_id: 'b', name: 'Merchant B', categories: ['catering.cafe'] }, geometry: { coordinates: [103.82, 1.45] } }
+    ] }; } };
+  };
+  const jia = visitor();
+  const darren = visitor();
+  await jia.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await darren.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+
+  const jiaFirst = merchantIdOf((await jia.request('/smart-match/result')).html);
+  await rejectCurrent(jia, jiaFirst, 'too-far');
+
+  const darrenFirst = merchantIdOf((await darren.request('/smart-match/result')).html);
+  assert.equal(darrenFirst, jiaFirst, "Darren's session must be unaffected by Jia's rejection");
+});
+
+test('batch exhaustion triggers exactly one fresh discovery, then a clean empty state', async function() {
+  process.env.GEOAPIFY_API_KEY = 'test-key';
+  let call = 0;
+  global.fetch = async function() {
+    call += 1;
+    if (call === 1) {
+      return { ok: true, json: async function() { return { type: 'FeatureCollection', features: [
+        { properties: { place_id: 'a', name: 'Merchant A', categories: ['catering.cafe'] }, geometry: { coordinates: [103.82, 1.45] } }
+      ] }; } };
+    }
+    // Refresh returns a genuinely new merchant.
+    return { ok: true, json: async function() { return { type: 'FeatureCollection', features: [
+      { properties: { place_id: 'a', name: 'Merchant A', categories: ['catering.cafe'] }, geometry: { coordinates: [103.82, 1.45] } },
+      { properties: { place_id: 'z', name: 'Merchant Z', categories: ['catering.cafe'] }, geometry: { coordinates: [103.82, 1.45] } }
+    ] }; } };
+  };
+  const v = visitor();
+  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  const firstId = merchantIdOf((await v.request('/smart-match/result')).html);
+  assert.equal(firstId, 'geoapify-a');
+  assert.equal(call, 1);
+
+  await rejectCurrent(v, firstId, 'not-in-mood');
+  const refreshed = await v.request('/smart-match/result');
+  assert.equal(call, 2, 'exhausting the batch should trigger exactly one refresh call');
+  assert.equal(merchantIdOf(refreshed.html), 'geoapify-z');
+
+  await rejectCurrent(v, 'geoapify-z', 'not-in-mood');
+  const exhausted = await v.request('/smart-match/result');
+  assert.equal(call, 2, 'no further discovery call once a refresh has already been attempted this cycle');
+  assert.match(exhausted.html, /No spots nearby right now/);
+});
+
+test('a refresh returning only already-seen merchants shows a clean exhaustion state, not a loop', async function() {
+  process.env.GEOAPIFY_API_KEY = 'test-key';
+  let call = 0;
+  global.fetch = async function() {
+    call += 1;
+    return { ok: true, json: async function() { return { type: 'FeatureCollection', features: [
+      { properties: { place_id: 'a', name: 'Merchant A', categories: ['catering.cafe'] }, geometry: { coordinates: [103.82, 1.45] } }
+    ] }; } };
+  };
+  const v = visitor();
+  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  const firstId = merchantIdOf((await v.request('/smart-match/result')).html);
+  await rejectCurrent(v, firstId, 'not-in-mood');
+  const result = await v.request('/smart-match/result');
+  assert.equal(call, 2, 'one refresh attempt should occur even though it returns nothing new');
+  assert.match(result.html, /No spots nearby right now/);
+
+  const again = await v.request('/smart-match/result');
+  assert.equal(call, 2, 'no repeated refresh calls once the cycle is marked exhausted');
+  assert.match(again.html, /No spots nearby right now/);
+});
+
+test('accepting a recommendation keeps it selected through the scan flow', async function() {
+  process.env.GEOAPIFY_API_KEY = 'test-key';
+  global.fetch = async function() {
+    return { ok: true, json: async function() { return { type: 'FeatureCollection', features: [
+      { properties: { place_id: 'a', name: 'Merchant A', categories: ['catering.cafe'] }, geometry: { coordinates: [103.82, 1.45] } }
+    ] }; } };
+  };
+  const v = visitor();
+  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  const id = merchantIdOf((await v.request('/smart-match/result')).html);
+  assert.equal((await v.request('/recommendation/accept', { merchantId: id })).status, 302);
+  const again = await v.request('/smart-match/result');
+  assert.equal(merchantIdOf(again.html), id, 'the accepted merchant must remain selected');
+  assert.match((await v.request('/scan')).html, new RegExp('value="' + id + '"'));
+});

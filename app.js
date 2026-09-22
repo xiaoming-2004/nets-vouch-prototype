@@ -403,7 +403,7 @@ function createInitialDemo(userId) {
     hasSetPreferences: false,
     vouchCredits: {}, dailyMerchantRewards: {},
     nearbyMerchants: [], selectedMerchantId: null, selectedMerchantReason: null, recommendationAccepted: false, rejectedMerchantIds: [],
-    discoveryLocation: null, locationAttempted: false, nearbySource: null,
+    discoveryLocation: null, locationAttempted: false, nearbySource: null, nearbyRefreshAttempted: false,
     recommendationFeedback: [], shownMerchantIds: [],
     currentScanPayment: null, activeVouchClaim: null,
     transactions: [], paymentVerifiedVouches: [], promotionalRedemptions: [],
@@ -712,6 +712,19 @@ async function getNearbyMerchants(location) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+// Called at most once per recommendation cycle when the current nearby batch is exhausted.
+// Returns true only if the fresh discovery produced merchants not already in the current batch.
+async function refreshNearbyBatch(demo) {
+  const nearby = await getNearbyMerchants(demo.discoveryLocation);
+  const newMerchants = nearby.merchants.filter(function(merchant) {
+    return !findMerchantById(demo.nearbyMerchants, merchant.id);
+  });
+  logDiscovery('Smart Match batch refresh: ' + newMerchants.length + ' new merchant(s)');
+  if (newMerchants.length === 0) return false;
+  demo.nearbyMerchants = demo.nearbyMerchants.concat(newMerchants);
+  return true;
 }
 
 function logDiscovery(message) {
@@ -1305,6 +1318,7 @@ app.post('/setup-preferences', function(req, res) {
   demo.selectedMerchantId = null;
   demo.recommendationAccepted = false;
   demo.nearbyMerchants = [];
+  demo.nearbyRefreshAttempted = false;
   res.redirect('/home');
 });
 
@@ -1323,6 +1337,7 @@ app.post('/smart-match/location', function(req, res) {
   demo.locationAttempted = true;
   demo.nearbyMerchants = [];
   demo.nearbySource = null;
+  demo.nearbyRefreshAttempted = false;
   if (!demo.recommendationAccepted) {
     demo.selectedMerchantId = null;
     demo.selectedMerchantReason = null;
@@ -1344,9 +1359,19 @@ app.get('/smart-match/result', async function(req, res) {
       }
       logDiscovery('Smart Match eligible candidates: ' +
         getEligibleMerchants(demo.profile, demo.nearbyMerchants, demo.rejectedMerchantIds, demo).length);
-      const result = await getSmartRecommendation(demo.profile, demo.nearbyMerchants,
+      let result = await getSmartRecommendation(demo.profile, demo.nearbyMerchants,
         demo.rejectedMerchantIds, demo.recommendationFeedback, demo);
       recommendation = result.merchant;
+      // Current batch exhausted: try exactly one fresh discovery before showing the empty state.
+      if (!recommendation && !demo.nearbyRefreshAttempted) {
+        demo.nearbyRefreshAttempted = true;
+        const gotNewMerchants = await refreshNearbyBatch(demo);
+        if (gotNewMerchants) {
+          result = await getSmartRecommendation(demo.profile, demo.nearbyMerchants,
+            demo.rejectedMerchantIds, demo.recommendationFeedback, demo);
+          recommendation = result.merchant;
+        }
+      }
       if (recommendation) {
         demo.selectedMerchantId = recommendation.id;
         demo.selectedMerchantReason = result.reason;
@@ -1415,7 +1440,10 @@ function restartMatch(req, res) {
   demo.selectedMerchantId = null;
   demo.recommendationAccepted = false;
   demo.shownMerchantIds = [];
-  if (req.path === '/recommendation/try-again') demo.rejectedMerchantIds = [];
+  if (req.path === '/recommendation/try-again') {
+    demo.rejectedMerchantIds = [];
+    demo.nearbyRefreshAttempted = false;
+  }
   if (req.path === '/recommendation/widen-distance') {
     demo.profile.maxDistanceMinutes = Math.min(60, demo.profile.maxDistanceMinutes + 5);
   }
@@ -1703,6 +1731,7 @@ app.post('/profile', function(req, res) {
   demo.recommendationFeedback = [];
   demo.shownMerchantIds = [];
   demo.nearbyMerchants = [];
+  demo.nearbyRefreshAttempted = false;
   res.redirect('/home?matching=again');
 });
 app.get('/transactions/:id', function(req, res) {
