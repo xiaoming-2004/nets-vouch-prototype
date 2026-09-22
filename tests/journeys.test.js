@@ -135,7 +135,8 @@ test('replaying one payment attempt cannot duplicate payment, reward or merchant
     platformFee: campaign.platformFeeAccrued
   }, metrics);
   const merchantResults = await v.request('/merchant?merchantId=felicia-chicken-rice&tab=results');
-  assert.equal((merchantResults.html.match(/\$5\.13/g) || []).length, 1);
+  const paymentRows = merchantResults.html.match(/<div class="feed-row">.*?<\/div>/g) || [];
+  assert.equal(paymentRows.filter(function(row) { return row.includes('$5.13'); }).length, 1);
 });
 
 test('Smart Match recommends a merchant, keeps feedback and hands off to Scan', async function() {

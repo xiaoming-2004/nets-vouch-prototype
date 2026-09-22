@@ -325,7 +325,7 @@ function recordReferralConversion(senderUserId, recipientUserId, merchantId) {
   referralCooldowns.set(referralCooldownKey(senderUserId, recipientUserId, merchantId), Date.now());
 }
 
-// Simulated two-week baseline so the merchant results dashboard looks live from day one.
+// Illustrative sample baseline, displayed separately from live Open House activity.
 // dailyPayments: last 7 days oldest→newest [Sep 14 … Sep 20], shows natural growth trend.
 const campaignSeedMetrics = {
   'felicia-chicken-rice': {
@@ -360,7 +360,7 @@ const campaignSeedMetrics = {
 
 // Each fictional participating merchant owns its own campaign.
 // Metrics start at zero so live increments remain testable.
-// The seed baseline is applied at render time by buildDisplayCampaign().
+// The illustrative baseline is displayed separately; live metrics start at zero.
 function createDemoCampaign(merchantId, participationMode) {
   return {
       id: merchantId + '-campaign', merchantId: merchantId,
@@ -384,30 +384,6 @@ function createCampaigns() {
   return campaigns;
 }
 
-// Returns a shallow-copied campaign with the two-week seed baseline added to its metrics.
-// Used only at render time — the stored campaign stays at its true live values for test correctness.
-function buildDisplayCampaign(campaign) {
-  const seed = campaignSeedMetrics[campaign.merchantId] || {};
-  return Object.assign({}, campaign, {
-    platformFeeAccrued: campaign.platformFeeAccrued + (seed.platformFeeAccrued || 0),
-    trendDays: seed.dailyPayments || [],
-    metrics: {
-      smartMatchShown: campaign.metrics.smartMatchShown + (seed.smartMatchShown || 0),
-      smartMatchAccepted: campaign.metrics.smartMatchAccepted + (seed.smartMatchAccepted || 0),
-      smartMatchPayments: campaign.metrics.smartMatchPayments + (seed.smartMatchPayments || 0),
-      smartMatchSales: campaign.metrics.smartMatchSales + (seed.smartMatchSales || 0),
-      sharedVouchClaims: campaign.metrics.sharedVouchClaims + (seed.sharedVouchClaims || 0),
-      sharedVouchPayments: campaign.metrics.sharedVouchPayments + (seed.sharedVouchPayments || 0),
-      sharedVouchSales: campaign.metrics.sharedVouchSales + (seed.sharedVouchSales || 0),
-      directScanPayments: campaign.metrics.directScanPayments + (seed.directScanPayments || 0),
-      directScanSales: campaign.metrics.directScanSales + (seed.directScanSales || 0),
-      scans: campaign.metrics.scans + (seed.scans || 0),
-      payments: campaign.metrics.payments + (seed.payments || 0),
-      rewardCost: campaign.metrics.rewardCost + (seed.rewardCost || 0)
-    }
-  });
-}
-
 // Merchant campaigns (caps, spend, metrics) are commercial state owned by the merchant,
 // not by any one visitor's browser. Kept at module scope so every session shares it.
 let merchantCampaignStore = createCampaigns();
@@ -420,8 +396,8 @@ function registerDemoMerchant(merchant) {
   }
 }
 
-// Cross-session payment feed so the merchant results tab shows real activity.
-// Capped at 200 entries; newest entries are unshifted to the front.
+// Cross-session payment feed with labelled illustrative examples and live payments.
+// Capped at 200 entries; newest live entries are unshifted to the front.
 const merchantPaymentFeed = [
   { merchantId: 'felicia-chicken-rice', displayAmount: '$5.00', source: 'SMART_MATCH', date: '2026-09-19', time: '12:47', itemName: 'Chicken Rice' },
   { merchantId: 'felicia-chicken-rice', displayAmount: '$5.00', source: 'DIRECT_SCAN', date: '2026-09-19', time: '12:31', itemName: null },
@@ -452,6 +428,7 @@ const merchantPaymentFeed = [
   { merchantId: 'hawker-88', displayAmount: '$7.00', source: 'SHARED_VOUCH', date: '2026-09-16', time: '12:55', itemName: 'Char Kway Teow' },
   { merchantId: 'hawker-88', displayAmount: '$7.00', source: 'DIRECT_SCAN', date: '2026-09-15', time: '13:10', itemName: null }
 ];
+merchantPaymentFeed.forEach(function(payment) { payment.illustrative = true; });
 const initialMerchantPaymentFeed = merchantPaymentFeed.map(function(payment) { return { ...payment }; });
 
 const seedPromotionalRedemptions = [
@@ -1574,7 +1551,8 @@ function recordPayment(demo, journey, amount, useCashback) {
   demo.transactions.unshift(transaction);
   demo.processedPaymentAttempts[journey.id] = transaction.id;
   merchantPaymentFeed.unshift({ merchantId: transaction.merchantId, displayAmount: transaction.displayAmount,
-    source: acquisitionSource, date: date.date, time: date.time, itemName: transaction.itemName || null });
+    source: acquisitionSource, date: date.date, time: date.time, itemName: transaction.itemName || null,
+    illustrative: false });
   if (merchantPaymentFeed.length > 200) merchantPaymentFeed.length = 200;
   useMerchantCredit(demo, journey.merchantId, breakdown.merchantCreditUsed);
   journey.transactionId = transaction.id;
@@ -1952,7 +1930,7 @@ app.get('/scan', function(req, res) {
 });
 app.post('/scan', function(req, res) {
   const demo = req.session.demo;
-  const merchantId = req.body.merchantId || 'green-bowl';
+  const merchantId = req.body.merchantId;
   const merchant = findMerchantForDemo(demo, merchantId);
   if (!merchant || req.body.campaignId && req.body.campaignId !== merchant.id + '-campaign') {
     return res.redirect('/scan?error=invalid');
@@ -2121,6 +2099,9 @@ app.post('/offers/:token/claim', function(req, res) {
     return res.redirect('/offers/' + req.params.token);
   }
   const activeClaim = getEffectiveVouchClaim(demo);
+  if (activeClaim && activeClaim.vouchId === offer.vouchId && activeClaim.status === 'REDEEMED') {
+    return res.redirect('/offers/' + offer.token);
+  }
   if (!activeClaim || activeClaim.vouchId !== offer.vouchId || activeClaim.status !== 'CLAIMED') {
     demo.activeVouchClaim = {
       vouchId: offer.vouchId, token: offer.token, merchantId: offer.merchantId,
@@ -2221,14 +2202,16 @@ app.get('/merchant', function(req, res) {
   const merchant = findMerchantById(merchantList, req.query.merchantId || defaultId);
   if (!merchant) return res.redirect('/merchant');
   const campaign = findCampaign(demo, merchant.id);
-  const displayCampaign = buildDisplayCampaign(campaign);
   res.render('merchant', {
-    merchants: merchantList, merchant: merchant, campaign: displayCampaign,
+    merchants: merchantList, merchant: merchant, campaign: campaign,
+    illustrativeMetrics: campaignSeedMetrics[merchant.id] || null,
     tab: req.query.tab === 'results' ? 'results' : 'campaign',
     availability: getCampaignAvailability(campaign, false),
     maxDailyCost: getMaxDailyCostEstimate(campaign),
     error: req.query.error === 'invalid',
-    recentPayments: merchantPaymentFeed.filter(function(p) { return p.merchantId === merchant.id; }).slice(0, 12)
+    recentPayments: merchantPaymentFeed.filter(function(p) {
+      return p.merchantId === merchant.id && !p.illustrative;
+    }).slice(0, 12)
   });
 });
 app.post('/merchant/start-preparing', function(req, res) { res.redirect('/merchant'); });
