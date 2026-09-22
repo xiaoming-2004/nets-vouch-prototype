@@ -40,7 +40,7 @@ A Payment-Verified Vouch means the user completed an eligible simulated NETS pay
 
 ## Smart Match
 
-Rules determine what is possible: merchant participation, dietary preference, budget, distance, campaign availability, and eligibility. The current prototype then uses simple simulated/fallback ranking to select a merchant. A future AI service may improve relevance using accept, reject, and payment outcomes; production AI integration is not complete.
+Rules determine what is possible: dietary preference, known budget and distance information, and campaign availability. With permission, browser geolocation sends current coordinates to the server for optional Geoapify Places nearby discovery (`GEOAPIFY_API_KEY`). Discovered places receive clearly simulated demo campaigns; this does not indicate real NETS participation. When location or Places is unavailable, the Republic Polytechnic demo location and local merchants keep Smart Match working. Distance is shown in metres, not walking time; there is no routing API. After filtering, optional server-side OpenAI `gpt-4o-mini` ranking uses `OPENAI_API_KEY` and brief feedback/payment outcomes. Invalid or unavailable AI results fall back to local rule-based ranking. This is not production AI integration.
 
 ## Technology
 
@@ -61,6 +61,8 @@ npm start
 
 Open [http://localhost:3000](http://localhost:3000).
 
+Optional API setup: copy `.env.example` to `.env` and set `OPENAI_API_KEY` for ranking and/or `GEOAPIFY_API_KEY` for nearby discovery. Keep `.env` private; the demo works without either key.
+
 ## Prototype boundaries
 
-QR detection, NETS payment processing and verification, merchant participation, campaigns, Smart Match ranking, rewards, referral conversion, and platform-fee accounting are simulated for the Open House prototype. There is no production NETS API, settlement, POS, camera scanning, merchant billing, or live AI integration.
+QR detection, NETS payment processing and verification, merchant participation, campaigns, Smart Match fallback ranking, rewards, referral conversion, and platform-fee accounting are simulated for the Open House prototype. Optional OpenAI and Geoapify Places calls are real external APIs, but are not production NETS integrations. There is no production NETS API, settlement, POS, merchant billing, or production AI integration.

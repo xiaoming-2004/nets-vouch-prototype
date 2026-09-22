@@ -2,10 +2,11 @@
 const express = require('express');
 const session = require('express-session');
 const path = require('path');
+const { randomUUID } = require('node:crypto');
 
 // Load local environment variables when a .env file exists (Node.js 22+).
 try {
-  process.loadEnvFile();
+  process.loadEnvFile(path.join(__dirname, '.env'));
 } catch (error) {
   if (error.code !== 'ENOENT') throw error;
 }
@@ -13,7 +14,7 @@ try {
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MINIMUM_ELIGIBLE_PAYMENT = 1.00;
-const PLACES_REQUEST_TIMEOUT_MS = 3500;
+const PLACES_REQUEST_TIMEOUT_MS = 5000;
 const AI_RANKING_TIMEOUT_MS = 8000;
 const CLAIM_EXPIRY_MS = 20 * 60 * 1000;
 const REFERRAL_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
@@ -22,6 +23,7 @@ const REFERRAL_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Configure session
@@ -72,6 +74,11 @@ const demoLocation = {
   longitude: 103.7854,
   searchRadiusMetres: 2000
 };
+
+function validCoordinates(latitude, longitude) {
+  return Number.isFinite(latitude) && latitude >= -90 && latitude <= 90 &&
+    Number.isFinite(longitude) && longitude >= -180 && longitude <= 180;
+}
 
 // Local merchants keep the Open House demo working without an API key or internet.
 const fallbackMerchants = [
@@ -250,11 +257,10 @@ const campaignSeedMetrics = {
 // Each fictional participating merchant owns its own campaign.
 // Metrics start at zero so live increments remain testable.
 // The seed baseline is applied at render time by buildDisplayCampaign().
-function createCampaigns() {
-  const campaigns = [];
-  fallbackMerchants.forEach(function(merchant) {
-    campaigns.push({
-      id: merchant.id + '-campaign', merchantId: merchant.id,
+function createDemoCampaign(merchantId, participationMode) {
+  return {
+      id: merchantId + '-campaign', merchantId: merchantId,
+      participationMode: participationMode,
       rewardAmount: 0.50, minimumEligibleSpend: 5.00,
       maxRewardedPaymentsPerDay: 20, maxRewardBudgetPerDay: 10.00,
       startTime: '00:00', endTime: '23:59',
@@ -263,7 +269,13 @@ function createCampaigns() {
       metrics: { smartMatchShown: 0, smartMatchAccepted: 0, smartMatchPayments: 0, smartMatchSales: 0,
         sharedVouchClaims: 0, sharedVouchPayments: 0, sharedVouchSales: 0,
         directScanPayments: 0, directScanSales: 0, scans: 0, payments: 0, rewardCost: 0 }
-    });
+    };
+}
+
+function createCampaigns() {
+  const campaigns = [];
+  fallbackMerchants.forEach(function(merchant) {
+    campaigns.push(createDemoCampaign(merchant.id, 'LOCAL_DEMO'));
   });
   return campaigns;
 }
@@ -295,16 +307,13 @@ function buildDisplayCampaign(campaign) {
 // Merchant campaigns (caps, spend, metrics) are commercial state owned by the merchant,
 // not by any one visitor's browser. Kept at module scope so every session shares it.
 let merchantCampaignStore = createCampaigns();
-
-// Module-level transaction cache — survives between requests on the same Vercel instance.
-// Used as a fallback when the session MemoryStore is empty (cold-start scenario).
-const txCache = new Map();
-function cacheTx(tx) {
-  txCache.set(tx.id, tx);
-  if (txCache.size > 100) txCache.delete(txCache.keys().next().value);
-}
-function findTxAnySource(demo, id) {
-  return findTransactionById(demo.transactions, id) || txCache.get(id) || null;
+// Public Places are only demo participants; this registry is merchant data, not user locations.
+const discoveredMerchants = new Map();
+function registerDemoMerchant(merchant) {
+  discoveredMerchants.set(merchant.id, merchant);
+  if (!merchantCampaignStore.some(function(campaign) { return campaign.merchantId === merchant.id; })) {
+    merchantCampaignStore.push(createDemoCampaign(merchant.id, 'DEMO_SIMULATED'));
+  }
 }
 
 // Cross-session payment feed so the merchant results tab shows real activity.
@@ -394,10 +403,12 @@ function createInitialDemo(userId) {
     hasSetPreferences: false,
     vouchCredits: {}, dailyMerchantRewards: {},
     nearbyMerchants: [], selectedMerchantId: null, selectedMerchantReason: null, recommendationAccepted: false, rejectedMerchantIds: [],
+    discoveryLocation: null, locationAttempted: false, nearbySource: null,
     recommendationFeedback: [], shownMerchantIds: [],
     currentScanPayment: null, activeVouchClaim: null,
     transactions: [], paymentVerifiedVouches: [], promotionalRedemptions: [],
-    nextScanNumber: 1, nextTransactionNumber: 1, nextVouchNumber: 1
+    nextScanNumber: 1, nextTransactionNumber: 1, nextVouchNumber: 1,
+    processedPaymentAttempts: {}
   };
 }
 
@@ -407,6 +418,7 @@ function initialiseDemoSession(req) {
     req.session.demoUserStates = {};
   }
   if (!req.session.demoUserStates) req.session.demoUserStates = {};
+  if (!req.session.demo.processedPaymentAttempts) req.session.demo.processedPaymentAttempts = {};
 }
 
 function copyObjects(items) {
@@ -431,6 +443,10 @@ function getRewardCredits(demo) {
     const amount = getMerchantCredit(demo, merchant.id);
     if (amount > 0) credits.push({ merchantId: merchant.id, merchantName: merchant.merchantName, amount: amount });
   });
+  discoveredMerchants.forEach(function(merchant) {
+    const amount = getMerchantCredit(demo, merchant.id);
+    if (amount > 0) credits.push({ merchantId: merchant.id, merchantName: merchant.merchantName, amount: amount });
+  });
   return credits;
 }
 
@@ -444,7 +460,7 @@ function findMerchantById(merchantList, merchantId) {
 function findMerchantForDemo(demo, merchantId) {
   const nearbyMerchant = findMerchantById(demo.nearbyMerchants, merchantId);
   if (nearbyMerchant) return nearbyMerchant;
-  return findMerchantById(fallbackMerchants, merchantId);
+  return findMerchantById(fallbackMerchants, merchantId) || discoveredMerchants.get(merchantId) || null;
 }
 
 function findTransactionById(transactions, transactionId) {
@@ -452,6 +468,15 @@ function findTransactionById(transactions, transactionId) {
     if (transactions[i].id === transactionId) return transactions[i];
   }
   return null;
+}
+
+function getOwnedTransaction(demo, transactionId) {
+  const transaction = findTransactionById(demo.transactions, transactionId);
+  return transaction && transaction.ownerUserId === demo.user.id ? transaction : null;
+}
+
+function transactionNotFound(res) {
+  return res.status(404).send('Payment not found');
 }
 
 function isValidRejectionReason(reason) {
@@ -521,6 +546,8 @@ function merchantMatchesProfile(merchant, profile) {
   if (merchant.price !== null && merchant.price > profile.budget) return false;
   if (merchant.distanceMinutes > profile.maxDistanceMinutes) return false;
   if (profile.dietaryPreference === 'none') return true;
+  // Geoapify does not verify dietary suitability. Unknown is not a confirmed mismatch.
+  if (merchant.source === 'GEOAPIFY' && merchant.dietary.length === 0) return true;
 
   for (let i = 0; i < merchant.dietary.length; i++) {
     if (merchant.dietary[i] === profile.dietaryPreference) return true;
@@ -528,54 +555,85 @@ function merchantMatchesProfile(merchant, profile) {
   return false;
 }
 
-function calculateDistanceMinutes(latitude, longitude) {
+function calculateDistanceMetres(latitude, longitude, origin) {
   const earthRadiusKm = 6371;
-  const latitudeDifference = (latitude - demoLocation.latitude) * Math.PI / 180;
-  const longitudeDifference = (longitude - demoLocation.longitude) * Math.PI / 180;
-  const firstLatitude = demoLocation.latitude * Math.PI / 180;
+  const latitudeDifference = (latitude - origin.latitude) * Math.PI / 180;
+  const longitudeDifference = (longitude - origin.longitude) * Math.PI / 180;
+  const firstLatitude = origin.latitude * Math.PI / 180;
   const secondLatitude = latitude * Math.PI / 180;
   const a = Math.sin(latitudeDifference / 2) * Math.sin(latitudeDifference / 2) +
     Math.cos(firstLatitude) * Math.cos(secondLatitude) *
     Math.sin(longitudeDifference / 2) * Math.sin(longitudeDifference / 2);
   const distanceKm = earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return Math.max(1, Math.round(distanceKm / 0.08));
+  return Math.round(distanceKm * 1000);
 }
 
-function parseGooglePlaces(places) {
-  const nearbyMerchants = [];
-  if (!Array.isArray(places)) return nearbyMerchants;
+function parseGeoapifyPlaces(features, origin) {
+  const preferred = [];
+  const fastFood = [];
+  if (!Array.isArray(features)) return preferred;
 
-  for (let i = 0; i < places.length; i++) {
-    const place = places[i];
-    if (!place.id || !place.displayName || !place.location) continue;
-    const name = place.displayName.text;
-    const category = place.primaryType || 'restaurant';
-    const categoryLabel = place.primaryTypeDisplayName && place.primaryTypeDisplayName.text
-      ? place.primaryTypeDisplayName.text
-      : 'Nearby restaurant';
-    nearbyMerchants.push({
-      id: 'google-' + place.id,
-      merchantId: 'google-' + place.id,
+  for (let i = 0; i < features.length; i++) {
+    const feature = features[i];
+    const place = feature && feature.properties ? feature.properties : {};
+    const categories = Array.isArray(place.categories) ? place.categories : [];
+    const hasCategory = function(prefix) {
+      return categories.some(function(value) {
+        return typeof value === 'string' && (value === prefix || value.startsWith(prefix + '.'));
+      });
+    };
+    if (hasCategory('catering.bar') || hasCategory('catering.pub') ||
+        hasCategory('catering.biergarten')) continue;
+    const isFastFood = hasCategory('catering.fast_food');
+    const category = hasCategory('catering.restaurant') ? 'catering.restaurant' :
+      hasCategory('catering.cafe') ? 'catering.cafe' :
+      hasCategory('catering.food_court') ? 'catering.food_court' :
+      isFastFood ? 'catering.fast_food' : null;
+    if (!category) continue;
+    const coordinates = feature && feature.geometry && Array.isArray(feature.geometry.coordinates)
+      ? feature.geometry.coordinates : [];
+    const latitude = Number.isFinite(place.lat) ? place.lat : coordinates[1];
+    const longitude = Number.isFinite(place.lon) ? place.lon : coordinates[0];
+    if (typeof place.place_id !== 'string' || !place.place_id.trim() ||
+        typeof place.name !== 'string' || !place.name.trim() ||
+        !validCoordinates(latitude, longitude)) continue;
+    const name = place.name.trim();
+    const categoryLabel = category.replace('catering.', '').replace(/_/g, ' ');
+    const distanceMetres = Number.isFinite(place.distance) && place.distance >= 0
+      ? Math.round(place.distance) : calculateDistanceMetres(latitude, longitude, origin);
+    const merchantId = 'geoapify-' + place.place_id;
+    const merchant = {
+      id: merchantId,
+      merchantId: merchantId,
+      externalPlaceId: place.place_id,
       merchantName: name,
       name: name,
-      itemName: categoryLabel,
+      itemName: null,
       price: null,
       category: category,
-      address: place.formattedAddress || 'Near Republic Polytechnic',
+      categoryLabel: categoryLabel,
+      address: place.formatted || [place.address_line1, place.address_line2].filter(Boolean).join(', ') ||
+        'Address unavailable',
       dietary: [],
-      distanceMinutes: calculateDistanceMinutes(
-        place.location.latitude,
-        place.location.longitude
-      ),
+      // Used only for the existing distance filter; the UI displays metres, never walking time.
+      distanceMinutes: Math.max(1, Math.round(distanceMetres / 80)),
+      distanceMetres: distanceMetres,
+      distanceLabel: distanceMetres < 1000 ? distanceMetres + ' m away' :
+        (distanceMetres / 1000).toFixed(1) + ' km away',
       coordinates: {
-        latitude: place.location.latitude,
-        longitude: place.location.longitude
+        latitude: latitude,
+        longitude: longitude
       },
-      source: 'google-places',
-      available: !place.currentOpeningHours || place.currentOpeningHours.openNow !== false
-    });
+      source: 'GEOAPIFY', participationMode: 'DEMO_SIMULATED',
+      rating: null,
+      priceLevel: null,
+      available: true
+    };
+    if (isFastFood) fastFood.push(merchant);
+    else preferred.push(merchant);
   }
-  return nearbyMerchants;
+  // Fast food is only a backup when fewer than three meal options were found.
+  return (preferred.length >= 3 ? preferred : preferred.concat(fastFood)).slice(0, 10);
 }
 
 function normaliseMerchantName(name) {
@@ -597,8 +655,13 @@ function combineMerchantLists(localMerchants, apiMerchants) {
   return combined;
 }
 
-async function getNearbyMerchants() {
-  if (!process.env.PLACES_API_KEY) {
+async function getNearbyMerchants(location) {
+  const searchLocation = location && validCoordinates(location.latitude, location.longitude)
+    ? location : demoLocation;
+  const usingDemoLocation = searchLocation === demoLocation;
+  logDiscovery('Smart Match discovery location: ' + (usingDemoLocation ? 'demo fallback' : 'browser'));
+  if (!process.env.GEOAPIFY_API_KEY) {
+    logDiscovery('Geoapify fallback: key missing');
     return { merchants: copyObjects(fallbackMerchants), source: 'local-fallback' };
   }
 
@@ -607,52 +670,52 @@ async function getNearbyMerchants() {
     controller.abort();
   }, PLACES_REQUEST_TIMEOUT_MS);
 
+  let failureReason = 'request failed';
   try {
-    const response = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Goog-Api-Key': process.env.PLACES_API_KEY,
-        'X-Goog-FieldMask': [
-          'places.id',
-          'places.displayName',
-          'places.formattedAddress',
-          'places.location',
-          'places.primaryType',
-          'places.primaryTypeDisplayName',
-          'places.currentOpeningHours.openNow'
-        ].join(',')
-      },
-      body: JSON.stringify({
-        includedTypes: ['restaurant'],
-        maxResultCount: 10,
-        rankPreference: 'DISTANCE',
-        locationRestriction: {
-          circle: {
-            center: {
-              latitude: demoLocation.latitude,
-              longitude: demoLocation.longitude
-            },
-            radius: demoLocation.searchRadiusMetres
-          }
-        }
-      }),
+    const url = new URL('https://api.geoapify.com/v2/places');
+    const point = searchLocation.longitude + ',' + searchLocation.latitude;
+    url.searchParams.set('categories', 'catering');
+    url.searchParams.set('filter', 'circle:' + point + ',' + demoLocation.searchRadiusMetres);
+    url.searchParams.set('bias', 'proximity:' + point);
+    url.searchParams.set('limit', '20');
+    url.searchParams.set('lang', 'en');
+    url.searchParams.set('apiKey', process.env.GEOAPIFY_API_KEY);
+    const response = await fetch(url, {
       signal: controller.signal
     });
-    if (!response.ok) throw new Error('Google Places request failed');
+    if (!response.ok) {
+      failureReason = 'HTTP ' + response.status;
+      throw new Error('Geoapify request failed');
+    }
+    failureReason = 'malformed response';
     const data = await response.json();
-    const apiMerchants = parseGooglePlaces(data.places);
-    if (apiMerchants.length === 0) throw new Error('Google Places returned no merchants');
+    if (!data || !Array.isArray(data.features)) {
+      failureReason = 'malformed response';
+      throw new Error('Geoapify response invalid');
+    }
+    if (data.features.length === 0) failureReason = 'empty response';
+    const apiMerchants = parseGeoapifyPlaces(data.features, searchLocation);
+    logDiscovery('Geoapify candidates received: ' + data.features.length +
+      '; usable food merchants: ' + apiMerchants.length);
+    if (apiMerchants.length === 0) {
+      if (data.features.length) failureReason = 'zero usable food merchants';
+      throw new Error('Geoapify returned no usable merchants');
+    }
+    apiMerchants.forEach(registerDemoMerchant);
     return {
-      merchants: combineMerchantLists(fallbackMerchants, apiMerchants),
-      source: 'google-places'
+      merchants: usingDemoLocation ? combineMerchantLists(fallbackMerchants, apiMerchants) : apiMerchants,
+      source: 'geoapify'
     };
   } catch (error) {
-    console.log('Nearby Places unavailable. Using local demo merchants.');
+    logDiscovery('Geoapify fallback: ' + (controller.signal.aborted ? 'timeout' : failureReason));
     return { merchants: copyObjects(fallbackMerchants), source: 'local-fallback' };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function logDiscovery(message) {
+  if (process.env.NODE_ENV !== 'production') console.info(message);
 }
 
 function findCampaign(demo, merchantId) {
@@ -696,15 +759,15 @@ function getLastFeedback(feedbackItems) {
   return feedbackItems[feedbackItems.length - 1];
 }
 
-async function getAIRanking(profile, eligible, feedbackItems) {
+async function getAIRanking(profile, eligible, feedbackItems, demo) {
   const merchantSummaries = eligible.map(function(m) {
     return {
       id: m.id,
       name: m.merchantName,
-      dish: m.itemName || 'menu item',
-      price: m.price !== null ? '$' + m.price.toFixed(2) : 'varies',
-      walk: m.distanceMinutes + ' min',
-      dietary: m.dietary.length ? m.dietary.join(', ') : 'any',
+      dish: m.itemName || 'unknown',
+      price: m.price !== null ? '$' + m.price.toFixed(2) : 'unknown',
+      distance: m.distanceLabel || m.distanceMinutes + ' min walk (demo estimate)',
+      dietary: m.dietary.length ? m.dietary.join(', ') : 'unknown',
       location: m.address || ''
     };
   });
@@ -713,7 +776,9 @@ async function getAIRanking(profile, eligible, feedbackItems) {
   let feedbackNote = '';
   if (lastFeedback) {
     if (lastFeedback.reason === 'too-far') {
-      feedbackNote = 'The user rejected a merchant at ' + lastFeedback.distanceMinutes + ' min away as too far. Prioritise the nearest option and mention its walk time in the reason.';
+      feedbackNote = 'The user rejected a merchant at ' +
+        (lastFeedback.distanceLabel || lastFeedback.distanceMinutes + ' min away') +
+        ' as too far. Prioritise a nearer option; do not invent a walking time.';
     } else if (lastFeedback.reason === 'too-expensive') {
       const rejPrice = lastFeedback.price !== null ? '$' + lastFeedback.price.toFixed(2) : 'an unknown price';
       feedbackNote = 'The user rejected a merchant priced at ' + rejPrice + ' as too expensive. Prioritise the cheapest option and mention the price in the reason.';
@@ -725,11 +790,10 @@ async function getAIRanking(profile, eligible, feedbackItems) {
   const system = [
     'You are Smart Match, the recommendation engine in NETS Vouch AI — a Singapore payments app rewarding people for eating at local merchants.',
     'Pick the single best merchant for this user. Write a short, specific reason a real person would find useful.',
+    'Only use supplied facts. Unknown dietary suitability, exact prices, menu items and walking times must not be inferred.',
     '',
-    'GOOD reasons name a concrete detail — dish, price, or walk time:',
-    '  {"merchantId":"felicia-chicken-rice","reason":"Chicken Rice for $5 — closest halal option here."}',
-    '  {"merchantId":"green-bowl","reason":"Vegan grain bowl, 6 min walk, well under your budget."}',
-    '  {"merchantId":"felicia-chicken-rice","reason":"Much closer than your last suggestion at just 3 min."}',
+    'GOOD reasons name a concrete supplied detail, such as merchant category or straight-line distance.',
+    'For discovered places, do not turn straight-line distance into a walking time.',
     '',
     'BAD reasons are vague and must never be written:',
     '  "Best match for your preferences."  "Matches your dietary preference and budget."  "Good option for you."',
@@ -747,6 +811,15 @@ async function getAIRanking(profile, eligible, feedbackItems) {
   ];
   if (profile.craving) userParts.splice(userParts.length - 1, 0, '- Specific craving: ' + profile.craving);
   if (feedbackNote) userParts.push(feedbackNote, '');
+  const recentPayments = [];
+  for (let i = 0; i < demo.transactions.length && recentPayments.length < 3; i++) {
+    const transaction = demo.transactions[i];
+    if (transaction.ownerUserId === demo.user.id && transaction.status === 'Successful') {
+      recentPayments.push({ merchant: transaction.merchantName,
+        outcome: transaction.source === 'SMART_MATCH' ? 'recommended, accepted, payment completed' : 'payment completed' });
+    }
+  }
+  if (recentPayments.length) userParts.push('Recent completed-payment outcomes:', JSON.stringify(recentPayments), '');
   userParts.push(
     'Eligible merchants:',
     JSON.stringify(merchantSummaries),
@@ -780,10 +853,11 @@ async function getAIRanking(profile, eligible, feedbackItems) {
     let aiContent = data.choices[0].message.content.trim();
     aiContent = aiContent.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
     const parsed = JSON.parse(aiContent);
-    if (typeof parsed.merchantId !== 'string' || typeof parsed.reason !== 'string') {
+    if (typeof parsed.merchantId !== 'string' || typeof parsed.reason !== 'string' ||
+        !parsed.reason.trim() || parsed.reason.trim().length > 160 || /[\r\n<>]/.test(parsed.reason)) {
       throw new Error('AI response missing merchantId or reason');
     }
-    return parsed;
+    return { merchantId: parsed.merchantId, reason: parsed.reason.trim() };
   } finally {
     clearTimeout(timeout);
   }
@@ -838,7 +912,7 @@ async function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchant
 
   if (process.env.OPENAI_API_KEY) {
     try {
-      const ranking = await getAIRanking(profile, eligible, feedbackItems);
+      const ranking = await getAIRanking(profile, eligible, feedbackItems, demo);
       const aiMerchant = findMerchantById(eligible, ranking.merchantId);
       if (aiMerchant) return { merchant: aiMerchant, reason: ranking.reason };
     } catch (error) {
@@ -855,7 +929,7 @@ function getMatchReasons(profile, merchant, feedbackItems) {
   if (merchant.price !== null && merchant.price <= profile.budget) {
     reasons.push('Within your budget');
   }
-  if (profile.dietaryPreference !== 'none') {
+  if (profile.dietaryPreference !== 'none' && merchant.dietary.includes(profile.dietaryPreference)) {
     reasons.push('Matches your dietary preference');
   }
   if (profile.moodCuisine && profile.moodCuisine !== 'any') {
@@ -994,7 +1068,7 @@ function hasEarnedNormalRewardToday(demo, merchantId) {
 
 // Both journeys use this function; the routes choose the journey explicitly.
 function recordPayment(demo, journey, amount, useCashback) {
-  if (journey.transactionId) return findTransactionById(demo.transactions, journey.transactionId);
+  if (journey.transactionId) return getOwnedTransaction(demo, journey.transactionId);
   const merchantCredit = getMerchantCredit(demo, journey.merchantId);
   const breakdown = paymentBreakdown(merchantCredit, amount, useCashback);
   const date = getCurrentDateAndTime();
@@ -1026,7 +1100,7 @@ function recordPayment(demo, journey, amount, useCashback) {
     senderReferralReward = campaign.senderReferralReward;
   }
   const transaction = {
-    id: 'tx-' + demo.nextTransactionNumber++,
+    id: 'tx-' + randomUUID(), ownerUserId: demo.user.id,
     journeyId: journey.id, source: acquisitionSource, journeySource: journey.source,
     merchantId: journey.merchantId, merchantName: journey.merchantName, outlet: journey.outlet,
     itemName: journey.source === 'smart-match' ? journey.itemName : null,
@@ -1042,7 +1116,7 @@ function recordPayment(demo, journey, amount, useCashback) {
     displayAmount: '$' + breakdown.netsPaid.toFixed(2), paymentMethod: 'NETS'
   };
   demo.transactions.unshift(transaction);
-  cacheTx(transaction);
+  demo.processedPaymentAttempts[journey.id] = transaction.id;
   merchantPaymentFeed.unshift({ merchantId: transaction.merchantId, displayAmount: transaction.displayAmount,
     source: acquisitionSource, date: date.date, time: date.time, itemName: transaction.itemName || null });
   if (merchantPaymentFeed.length > 200) merchantPaymentFeed.length = 200;
@@ -1151,6 +1225,7 @@ function setVouchDecision(demo, transaction, decision) {
 function matchView(demo, recommendation) {
   return {
     recommendation: recommendation,
+    locationNotice: demo.nearbySource === 'local-fallback',
     campaign: recommendation ? findCampaignForMerchant(recommendation, demo) : null,
     matchReasons: recommendation ? getMatchReasons(demo.profile, recommendation, demo.recommendationFeedback) : [],
     rejectionReasons: rejectionReasons, recommendationAccepted: demo.recommendationAccepted,
@@ -1215,7 +1290,7 @@ app.get('/home', function(req, res) {
   res.render('home', {
     ...matchView(demo, recommendation), user: demo.user,
     matchingAgain: req.query.matching === 'again', homeGreeting: getHomeGreeting(),
-    showOnboarding: !demo.hasSetPreferences
+    showOnboarding: !demo.hasSetPreferences, locationAttempted: demo.locationAttempted
   });
 });
 
@@ -1233,12 +1308,42 @@ app.post('/setup-preferences', function(req, res) {
   res.redirect('/home');
 });
 
+// Browser location is kept only in this demo session for the current discovery journey.
+app.post('/smart-match/location', function(req, res) {
+  const demo = req.session.demo;
+  if (req.body.status === 'fallback') {
+    demo.discoveryLocation = null;
+    logDiscovery('Smart Match location source: demo fallback');
+  } else if (validCoordinates(req.body.latitude, req.body.longitude)) {
+    demo.discoveryLocation = { latitude: req.body.latitude, longitude: req.body.longitude };
+    logDiscovery('Smart Match location source: browser');
+  } else {
+    return res.sendStatus(400);
+  }
+  demo.locationAttempted = true;
+  demo.nearbyMerchants = [];
+  demo.nearbySource = null;
+  if (!demo.recommendationAccepted) {
+    demo.selectedMerchantId = null;
+    demo.selectedMerchantReason = null;
+  }
+  res.sendStatus(204);
+});
+
 app.get('/smart-match/result', async function(req, res) {
   try {
     const demo = req.session.demo;
     let recommendation = findMerchantForDemo(demo, demo.selectedMerchantId);
     if (!recommendation) {
-      if (!demo.nearbyMerchants.length) demo.nearbyMerchants = (await getNearbyMerchants()).merchants;
+      if (!demo.nearbyMerchants.length) {
+        const nearby = await getNearbyMerchants(demo.discoveryLocation);
+        demo.nearbyMerchants = nearby.merchants;
+        demo.nearbySource = nearby.source;
+        logDiscovery('Smart Match merchant source: ' +
+          (nearby.source === 'geoapify' ? 'GEOAPIFY' : 'LOCAL_FALLBACK'));
+      }
+      logDiscovery('Smart Match eligible candidates: ' +
+        getEligibleMerchants(demo.profile, demo.nearbyMerchants, demo.rejectedMerchantIds, demo).length);
       const result = await getSmartRecommendation(demo.profile, demo.nearbyMerchants,
         demo.rejectedMerchantIds, demo.recommendationFeedback, demo);
       recommendation = result.merchant;
@@ -1254,7 +1359,8 @@ app.get('/smart-match/result', async function(req, res) {
     }
     if (!recommendation) return res.render('smart-match-empty', { profile: demo.profile,
       dietaryPreferenceOptions: dietaryPreferenceOptions, moodCuisineOptions: moodCuisineOptions,
-      dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference) });
+      dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference),
+      locationNotice: demo.nearbySource === 'local-fallback' });
     res.render('smart-match-card', matchView(demo, recommendation));
   } catch (err) {
     console.error('smart-match/result error:', err);
@@ -1267,6 +1373,7 @@ app.get('/smart-match/static', async function(req, res) {
   const demo = req.session.demo;
   if (!demo.selectedMerchantId) {
     demo.nearbyMerchants = copyObjects(fallbackMerchants);
+    demo.nearbySource = 'local-fallback';
     const result = await getSmartRecommendation(demo.profile, demo.nearbyMerchants,
       demo.rejectedMerchantIds, demo.recommendationFeedback, demo);
     const merchant = result.merchant;
@@ -1295,7 +1402,8 @@ app.post('/recommendation/reject', function(req, res) {
   }
   demo.rejectedMerchantIds.push(merchant.id);
   demo.recommendationFeedback.push({ merchantId: merchant.id, reason: req.body.reason,
-    category: merchant.category, price: merchant.price, distanceMinutes: merchant.distanceMinutes });
+    category: merchant.category, price: merchant.price, distanceMinutes: merchant.distanceMinutes,
+    distanceLabel: merchant.distanceLabel || null });
   demo.selectedMerchantId = null;
   demo.recommendationAccepted = false;
   if (req.get('X-Requested-With') === 'smart-match') return res.sendStatus(204);
@@ -1338,21 +1446,29 @@ app.get('/scan', function(req, res) {
   const demo = req.session.demo;
   const scan = demo.currentScanPayment;
   if (scan && scan.status === 'MERCHANT_FOUND') return res.redirect('/scan/payment');
-  if (scan && scan.status === 'PAID') return res.redirect(receiptUrl(findTransactionById(demo.transactions, scan.transactionId)));
+  if (scan && scan.status === 'PAID') {
+    const transaction = getOwnedTransaction(demo, scan.transactionId);
+    if (!transaction) return transactionNotFound(res);
+    return res.redirect(receiptUrl(transaction));
+  }
   const activeClaim = getEffectiveVouchClaim(demo);
   const activeMerchantId = activeClaim && activeClaim.status === 'CLAIMED'
     ? activeClaim.merchantId
     : demo.recommendationAccepted && demo.selectedMerchantId ? demo.selectedMerchantId : null;
+  const scanMerchants = demo.discoveryLocation && demo.nearbySource === 'geoapify'
+    ? demo.nearbyMerchants.slice() : fallbackMerchants.slice();
+  const activeMerchant = findMerchantForDemo(demo, activeMerchantId);
+  if (activeMerchant && !findMerchantById(scanMerchants, activeMerchant.id)) scanMerchants.unshift(activeMerchant);
   res.render('scan', {
     error: req.query.error === 'invalid',
-    merchants: fallbackMerchants,
+    merchants: scanMerchants,
     activeMerchantId: activeMerchantId
   });
 });
 app.post('/scan', function(req, res) {
   const demo = req.session.demo;
   const merchantId = req.body.merchantId || 'green-bowl';
-  const merchant = findMerchantById(fallbackMerchants, merchantId);
+  const merchant = findMerchantForDemo(demo, merchantId);
   if (!merchant || req.body.campaignId && req.body.campaignId !== merchant.id + '-campaign') {
     return res.redirect('/scan?error=invalid');
   }
@@ -1360,7 +1476,7 @@ app.post('/scan', function(req, res) {
   if (existing && existing.status === 'PAID') return res.redirect('/vouch/' + existing.transactionId);
   if (existing && existing.status === 'MERCHANT_FOUND') return res.redirect('/scan/payment');
   demo.currentScanPayment = {
-    id: 'scan-' + demo.nextScanNumber++, source: 'scan',
+    id: 'scan-' + randomUUID(), source: 'scan',
     attributionSource: demo.recommendationAccepted && demo.selectedMerchantId === merchant.id ? 'smart-match' : 'scan',
     merchantId: merchant.id, merchantName: merchant.merchantName, outlet: merchant.address,
     enteredAmount: null, status: 'MERCHANT_FOUND', transactionId: null,
@@ -1375,10 +1491,10 @@ app.get('/scan/payment', function(req, res) {
 
   // If session is cold (Vercel cold start) but ?m= is present, rebuild scan state on the fly.
   if ((!scan || scan.status === 'COMPLETE') && req.query.m) {
-    const merchant = findMerchantById(fallbackMerchants, req.query.m);
+    const merchant = findMerchantForDemo(demo, req.query.m);
     if (!merchant) return res.redirect('/scan?error=invalid');
     scan = {
-      id: 'scan-' + demo.nextScanNumber++, source: 'scan',
+      id: 'scan-' + randomUUID(), source: 'scan',
       attributionSource: demo.recommendationAccepted && demo.selectedMerchantId === merchant.id ? 'smart-match' : 'scan',
       merchantId: merchant.id, merchantName: merchant.merchantName, outlet: merchant.address,
       enteredAmount: null, status: 'MERCHANT_FOUND', transactionId: null,
@@ -1389,7 +1505,7 @@ app.get('/scan/payment', function(req, res) {
 
   if (!scan || scan.status === 'COMPLETE') return res.redirect('/scan');
   if (scan.transactionId) {
-    const existingTransaction = findTxAnySource(demo, scan.transactionId);
+    const existingTransaction = getOwnedTransaction(demo, scan.transactionId);
     if (existingTransaction) return res.redirect(receiptUrl(existingTransaction));
   }
   const claim = getEffectiveVouchClaim(demo);
@@ -1402,10 +1518,17 @@ app.get('/scan/payment', function(req, res) {
 });
 app.post('/scan/payment', function(req, res) {
   const demo = req.session.demo;
+  // The unique scan journey ID is the payment-attempt token submitted by the form.
+  const processedId = demo.processedPaymentAttempts[req.body.journeyId];
+  if (processedId) {
+    const processed = getOwnedTransaction(demo, processedId);
+    if (processed) return res.redirect(receiptUrl(processed));
+  }
   const scan = demo.currentScanPayment;
   if (!scan || req.body.journeyId !== scan.id) return res.redirect('/scan');
   if (scan.transactionId) {
-    const existingTransaction = findTransactionById(demo.transactions, scan.transactionId);
+    const existingTransaction = getOwnedTransaction(demo, scan.transactionId);
+    if (!existingTransaction) return transactionNotFound(res);
     return res.redirect(receiptUrl(existingTransaction));
   }
   const amount = parsePaymentAmount(req.body.amount);
@@ -1425,8 +1548,8 @@ app.post('/scan/cancel', function(req, res) {
 app.get('/payment-success', function(req, res) { res.redirect('/home'); });
 app.get('/payment-success/:id', function(req, res) {
   const demo = req.session.demo;
-  const transaction = findTxAnySource(demo, req.params.id);
-  if (!transaction) return res.redirect('/home');
+  const transaction = getOwnedTransaction(demo, req.params.id);
+  if (!transaction) return transactionNotFound(res);
   res.render('payment-success', { transaction: transaction, canVouch: canVouch(transaction), vouchTags: vouchTags });
 });
 
@@ -1438,7 +1561,8 @@ app.post('/collection', function(req, res) { res.redirect('/home'); });
 // Payment-Verified Vouches: one decision per transaction.
 app.get('/vouch', function(req, res) { res.redirect('/home'); });
 app.get('/vouch/:id', function(req, res) {
-  const transaction = findTxAnySource(req.session.demo, req.params.id);
+  const transaction = getOwnedTransaction(req.session.demo, req.params.id);
+  if (!transaction) return transactionNotFound(res);
   if (!canVouch(transaction) || transaction.vouchDecision === 'skipped') return res.redirect('/home');
   if (transaction.vouchDecision === 'created') return res.redirect('/vouch/' + transaction.id + '/success');
   res.render('vouch', { transaction: transaction, vouchTags: vouchTags,
@@ -1446,7 +1570,8 @@ app.get('/vouch/:id', function(req, res) {
 });
 app.post('/vouch/:id', function(req, res) {
   const demo = req.session.demo;
-  const transaction = findTxAnySource(demo, req.params.id);
+  const transaction = getOwnedTransaction(demo, req.params.id);
+  if (!transaction) return transactionNotFound(res);
   if (!canVouch(transaction)) return res.redirect('/home');
   if (transaction.vouchDecision === 'pending' && req.body.action === 'create') {
     const number = demo.nextVouchNumber++;
@@ -1478,8 +1603,9 @@ app.post('/vouch/:id', function(req, res) {
 });
 app.get('/vouch/:id/success', function(req, res) {
   const demo = req.session.demo;
-  const transaction = findTxAnySource(demo, req.params.id);
-  if (!transaction || transaction.vouchDecision !== 'created') return res.redirect('/home');
+  const transaction = getOwnedTransaction(demo, req.params.id);
+  if (!transaction) return transactionNotFound(res);
+  if (transaction.vouchDecision !== 'created') return res.redirect('/home');
   let vouch = null;
   for (let i = 0; i < demo.paymentVerifiedVouches.length; i++) {
     if (demo.paymentVerifiedVouches[i].transactionId === transaction.id) vouch = demo.paymentVerifiedVouches[i];
@@ -1523,7 +1649,8 @@ app.post('/offers/:token/claim', function(req, res) {
 });
 app.post('/transactions/:id/done', function(req, res) {
   const demo = req.session.demo;
-  const transaction = findTransactionById(demo.transactions, req.params.id);
+  const transaction = getOwnedTransaction(demo, req.params.id);
+  if (!transaction) return transactionNotFound(res);
   if (transaction && transaction.journeySource === 'scan' && transaction.vouchDecision !== 'pending' &&
       demo.currentScanPayment && demo.currentScanPayment.transactionId === transaction.id) {
     demo.currentScanPayment.status = 'COMPLETE';
@@ -1579,8 +1706,8 @@ app.post('/profile', function(req, res) {
   res.redirect('/home?matching=again');
 });
 app.get('/transactions/:id', function(req, res) {
-  const transaction = findTransactionById(req.session.demo.transactions, req.params.id);
-  if (!transaction) return res.redirect('/profile/activity');
+  const transaction = getOwnedTransaction(req.session.demo, req.params.id);
+  if (!transaction) return transactionNotFound(res);
   res.render('transaction-detail', { transaction: transaction });
 });
 
@@ -1603,12 +1730,13 @@ app.post('/demo/identity', function(req, res) {
 app.get('/merchant', function(req, res) {
   const demo = req.session.demo;
   const defaultId = demo.selectedMerchantId || fallbackMerchants[0].id;
-  const merchant = findMerchantById(fallbackMerchants, req.query.merchantId || defaultId);
+  const merchantList = fallbackMerchants.concat(Array.from(discoveredMerchants.values()));
+  const merchant = findMerchantById(merchantList, req.query.merchantId || defaultId);
   if (!merchant) return res.redirect('/merchant');
   const campaign = findCampaign(demo, merchant.id);
   const displayCampaign = buildDisplayCampaign(campaign);
   res.render('merchant', {
-    merchants: fallbackMerchants, merchant: merchant, campaign: displayCampaign,
+    merchants: merchantList, merchant: merchant, campaign: displayCampaign,
     tab: req.query.tab === 'results' ? 'results' : 'campaign',
     availability: getCampaignAvailability(campaign, false),
     maxDailyCost: getMaxDailyCostEstimate(campaign),
@@ -1653,9 +1781,14 @@ app.post('/reset-demo', function(req, res) {
 
 // Start server. Export the app and demo factory for local automated tests.
 if (require.main === module) {
-  app.listen(PORT, function() { console.log('NETS Vouch AI running on http://localhost:' + PORT); });
+  app.listen(PORT, function() {
+    console.log('NETS Vouch AI running on http://localhost:' + PORT);
+    console.log('GEOAPIFY_API_KEY configured: ' + (process.env.GEOAPIFY_API_KEY ? 'yes' : 'no'));
+  });
 }
 module.exports = { app: app, createInitialDemo: createInitialDemo, demoStore: demoStore,
+  getNearbyMerchants: getNearbyMerchants, getEligibleMerchants: getEligibleMerchants,
+  getSmartRecommendation: getSmartRecommendation,
   getMerchantCampaigns: function() { return merchantCampaignStore; },
   resetMerchantCampaigns: function() { merchantCampaignStore = createCampaigns(); },
   resetReferralCooldowns: function() { referralCooldowns.clear(); } };

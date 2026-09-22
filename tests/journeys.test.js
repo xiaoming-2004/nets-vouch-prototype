@@ -73,6 +73,64 @@ async function scan(v, merchantId) {
 
 function credit(demo, merchantId) { return demo.vouchCredits[merchantId] || 0; }
 
+test('payment IDs and consumer receipts/Vouches are private to their owner', async function() {
+  const jia = visitor();
+  const jiaScan = await scan(jia, 'felicia-chicken-rice');
+  await jia.request('/scan/payment', { journeyId: jiaScan.id, amount: '5.00' });
+  const jiaTransaction = (await jia.state()).demo.transactions[0];
+  assert.equal(jiaTransaction.ownerUserId, 'jia');
+  assert.equal((await jia.request('/transactions/' + jiaTransaction.id)).status, 200);
+  assert.equal((await jia.request('/payment-success/' + jiaTransaction.id)).status, 200);
+
+  const darren = visitor();
+  await darren.request('/demo/identity', { userId: 'darren' });
+  for (const path of ['/transactions/', '/payment-success/', '/vouch/']) {
+    const denied = await darren.request(path + jiaTransaction.id);
+    assert.equal(denied.status, 404);
+    assert.equal(denied.html, 'Payment not found');
+  }
+  assert.equal((await darren.request('/vouch/' + jiaTransaction.id + '/success')).status, 404);
+  assert.equal((await darren.request('/vouch/' + jiaTransaction.id, { action: 'create' })).status, 404);
+  assert.equal((await darren.request('/transactions/' + jiaTransaction.id + '/done', {})).status, 404);
+  assert.equal((await darren.state()).demo.paymentVerifiedVouches.length, 0);
+
+  const darrenScan = await scan(darren, 'green-bowl');
+  await darren.request('/scan/payment', { journeyId: darrenScan.id, amount: '5.00' });
+  const darrenTransaction = (await darren.state()).demo.transactions[0];
+  assert.equal(darrenTransaction.ownerUserId, 'darren');
+  assert.notEqual(darrenTransaction.id, jiaTransaction.id);
+});
+
+test('replaying one payment attempt cannot duplicate payment, reward or merchant metrics', async function() {
+  const v = visitor();
+  const pending = await scan(v, 'felicia-chicken-rice');
+  const body = { journeyId: pending.id, amount: '5.13' };
+  const first = await v.request('/scan/payment', body);
+  const campaign = getMerchantCampaigns().find(function(item) { return item.merchantId === pending.merchantId; });
+  const firstState = (await v.state()).demo;
+  const metrics = {
+    payments: campaign.metrics.payments,
+    redemptions: campaign.redemptionsToday,
+    rewardSpend: campaign.rewardBudgetSpentToday,
+    rewardCost: campaign.metrics.rewardCost,
+    platformFee: campaign.platformFeeAccrued
+  };
+  const repeated = await v.request('/scan/payment', body);
+  assert.equal(repeated.location, first.location);
+  const repeatedState = (await v.state()).demo;
+  assert.equal(repeatedState.transactions.length, 1);
+  assert.deepEqual(repeatedState.vouchCredits, firstState.vouchCredits);
+  assert.deepEqual({
+    payments: campaign.metrics.payments,
+    redemptions: campaign.redemptionsToday,
+    rewardSpend: campaign.rewardBudgetSpentToday,
+    rewardCost: campaign.metrics.rewardCost,
+    platformFee: campaign.platformFeeAccrued
+  }, metrics);
+  const merchantResults = await v.request('/merchant?merchantId=felicia-chicken-rice&tab=results');
+  assert.equal((merchantResults.html.match(/\$5\.13/g) || []).length, 1);
+});
+
 test('Smart Match recommends a merchant, keeps feedback and hands off to Scan', async function() {
   const v = visitor();
   assert.equal((await v.request('/')).location, '/welcome');
@@ -467,9 +525,11 @@ test('Referral cooldown blocks repeated rewarded conversions for the same sender
 
 test('Retired preorder routes are safe and active pages render', async function() {
   const v = visitor();
-  for (const path of ['/payment', '/order', '/collection', '/vouch', '/vouch/missing',
-    '/payment-success/missing', '/scan/payment']) {
+  for (const path of ['/payment', '/order', '/collection', '/vouch', '/scan/payment']) {
     assert.equal((await v.request(path)).status, 302, path);
+  }
+  for (const path of ['/vouch/missing', '/payment-success/missing']) {
+    assert.equal((await v.request(path)).status, 404, path);
   }
   await v.request('/home');
   const pending = await scan(v, 'felicia-chicken-rice');

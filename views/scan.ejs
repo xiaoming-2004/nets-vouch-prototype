@@ -47,7 +47,7 @@
       <span class="scan-merchant-mono"><%= m.merchantName.charAt(0) %></span>
       <span class="scan-merchant-info">
         <strong><%= m.merchantName %></strong>
-        <span><%= m.address %> · <%= m.distanceMinutes %> min</span>
+        <span><%= m.address %> · <%= m.distanceLabel || m.distanceMinutes + ' min' %></span>
       </span>
       <svg class="scan-qr-btn" viewBox="0 0 100 100" width="32" height="32" aria-hidden="true">
         <rect x="4" y="4" width="34" height="34" rx="4" fill="none" stroke="currentColor" stroke-width="6"/>

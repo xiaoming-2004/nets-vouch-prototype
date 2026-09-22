@@ -1,6 +1,7 @@
 <section class="card empty reveal">
 <div class="empty-icon" aria-hidden="true"><svg viewBox="0 0 52 52" fill="none"><circle cx="22" cy="22" r="14" stroke-width="2.5" stroke-linecap="round"/><path d="m32 32 10 10" stroke-width="2.5" stroke-linecap="round"/><path d="M18 22h8M22 18v8" stroke-width="2" stroke-linecap="round"/></svg></div>
 <h2>No spots nearby right now</h2>
+<% if (locationNotice) { %><p>Using demo location</p><% } %>
 <p>No participating merchants match your current filters. Try adjusting below.</p>
 <% if (profile) { %>
 <div class="refine-chips refine-chips--center"><span class="refine-chip"><%= profile.dietaryPreference === 'none' ? 'Any diet' : profile.dietaryPreference %></span><span class="refine-chip">≤ $<%= profile.budget %></span><span class="refine-chip"><%= profile.maxDistanceMinutes %> min</span></div>

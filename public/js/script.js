@@ -68,34 +68,59 @@ function wait(milliseconds) {
 }());
 
 function initMerchantMap() {
-  const el = document.querySelector(‘.match-map:not([data-map-ready])’);
-  if (!el || typeof L === ‘undefined’) return;
+  const el = document.querySelector('.match-map:not([data-map-ready])');
+  if (!el || typeof L === 'undefined') return;
   const lat = Number(el.dataset.lat);
   const lng = Number(el.dataset.lng);
   if (!lat || !lng) return;
-  el.setAttribute(‘data-map-ready’, ‘1’);
+  el.setAttribute('data-map-ready', '1');
   const map = L.map(el, {
     center: [lat, lng], zoom: 17,
     zoomControl: false, scrollWheelZoom: false, attributionControl: false,
     dragging: !L.Browser.mobile, tap: false
   });
-  L.tileLayer(‘https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png’, { maxZoom: 19 }).addTo(map);
-  const pin = L.divIcon({ html: ‘<div class="map-pin"></div>’, iconSize: [28, 36], iconAnchor: [14, 36], className: ‘’ });
-  const label = el.dataset.address ? el.dataset.name + ‘<br><small>’ + el.dataset.address + ‘</small>’ : el.dataset.name;
-  L.marker([lat, lng], { icon: pin }).addTo(map).bindPopup(label, { closeButton: false, className: ‘map-popup’ }).openPopup();
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+  const pin = L.divIcon({ html: '<div class="map-pin"></div>', iconSize: [28, 36], iconAnchor: [14, 36], className: '' });
+  const label = document.createElement('span');
+  label.textContent = el.dataset.name;
+  if (el.dataset.address) {
+    label.appendChild(document.createElement('br'));
+    const address = document.createElement('small');
+    address.textContent = el.dataset.address;
+    label.appendChild(address);
+  }
+  L.marker([lat, lng], { icon: pin }).addTo(map).bindPopup(label, { closeButton: false, className: 'map-popup' }).openPopup();
 }
 
-const matchRegion = document.querySelector(‘[data-match-region]’);
+const matchRegion = document.querySelector('[data-match-region]');
+async function prepareDiscoveryLocation() {
+  if (!matchRegion || matchRegion.dataset.locationReady === 'true') return;
+  const location = await new Promise(function(resolve) {
+    if (!navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(function(position) {
+      resolve({ latitude: position.coords.latitude, longitude: position.coords.longitude });
+    }, function() { resolve(null); }, {
+      enableHighAccuracy: false, timeout: 5000, maximumAge: 60000
+    });
+  });
+  try {
+    await fetch('/smart-match/location', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(location || { status: 'fallback' })
+    });
+  } catch (error) { /* The server's demo-location fallback keeps Smart Match available. */ }
+  matchRegion.dataset.locationReady = 'true';
+}
 async function loadMatch(again) {
   if (!matchRegion) return;
-  matchRegion.setAttribute(‘aria-busy’, ‘true’);
-  matchRegion.innerHTML = ‘<div class="matching"><div class="matching-dots" aria-hidden="true"><i></i><i></i><i></i></div><h2>’ +
-    (again ? ‘Finding something better...’ : ‘Finding your next spot...’) +
-    ‘</h2><p>’ + (again ? ‘Using your feedback’ : ‘Checking what fits right now’) + ‘</p></div>’;
+  matchRegion.setAttribute('aria-busy', 'true');
+  matchRegion.innerHTML = '<div class="matching"><div class="matching-dots" aria-hidden="true"><i></i><i></i><i></i></div><h2>' +
+    (again ? 'Finding something better...' : 'Finding your next spot...') +
+    '</h2><p>' + (again ? 'Using your feedback' : 'Checking what fits right now') + '</p></div>';
   try {
     const results = await Promise.all([
-      fetch(‘/smart-match/result’).then(function(response) {
-        if (!response.ok) throw new Error(‘Unable to load match’);
+      prepareDiscoveryLocation().then(function() { return fetch('/smart-match/result'); }).then(function(response) {
+        if (!response.ok) throw new Error('Unable to load match');
         return response.text();
       }),
       wait(1800)
@@ -103,11 +128,11 @@ async function loadMatch(again) {
     matchRegion.innerHTML = results[0];
     initMerchantMap();
   } catch (error) {
-    matchRegion.innerHTML = ‘<section class="card"><h2>Let\’s try that again.</h2><a class="button" href="/home">Return Home</a></section>’;
+    matchRegion.innerHTML = '<section class="card"><h2>Let’s try that again.</h2><a class="button" href="/home">Return Home</a></section>';
   }
-  matchRegion.setAttribute(‘aria-busy’, ‘false’);
+  matchRegion.setAttribute('aria-busy', 'false');
 }
-if (document.querySelector(‘[data-load-match]’)) loadMatch(location.search.includes(‘matching=again’));
+if (document.querySelector('[data-load-match]')) loadMatch(location.search.includes('matching=again'));
 initMerchantMap();
 
 // A reason button both selects and submits feedback. No extra confirmation.
