@@ -92,45 +92,99 @@ function initMerchantMap() {
   L.marker([lat, lng], { icon: pin }).addTo(map).bindPopup(label, { closeButton: false, className: 'map-popup' }).openPopup();
 }
 
+// Concise, non-blocking client-side trace for diagnosing Smart Match end-to-end (Sprint 1.8
+// Step 24). There is no separate popup/modal in this app - the recommendation renders into
+// the #smart-match `[data-match-region]` container on the Home page, swapped in below.
+function smartMatchDebug(message) { console.info('Smart Match: ' + message); }
+
 const matchRegion = document.querySelector('[data-match-region]');
-async function prepareDiscoveryLocation() {
-  if (!matchRegion || matchRegion.dataset.locationReady === 'true') return;
-  const location = await new Promise(function(resolve) {
-    if (!navigator.geolocation) return resolve(null);
+
+// Asks the device for its CURRENT position - never a cached one (maximumAge: 0) - every time a
+// new Smart Match discovery starts. Returns the coordinates, or null on any failure. Does NOT
+// silently fall back to a demo location; the caller decides what to show on failure.
+function requestCurrentPosition() {
+  return new Promise(function(resolve) {
+    if (!navigator.geolocation) { smartMatchDebug('geolocation unsupported'); return resolve(null); }
     navigator.geolocation.getCurrentPosition(function(position) {
+      smartMatchDebug('geolocation success');
       resolve({ latitude: position.coords.latitude, longitude: position.coords.longitude });
-    }, function() { resolve(null); }, {
-      enableHighAccuracy: false, timeout: 5000, maximumAge: 60000
+    }, function() { smartMatchDebug('geolocation denied/failed'); resolve(null); }, {
+      enableHighAccuracy: true, maximumAge: 0, timeout: 10000
     });
   });
+}
+
+// Resolves true once THIS user's current device coordinates are stored server-side, or false if
+// geolocation failed and the caller must show an explicit retry/demo-location choice - it must
+// never guess a location on the user's behalf.
+async function prepareDiscoveryLocation() {
+  if (!matchRegion || matchRegion.dataset.locationReady === 'true') return true;
+  const location = await requestCurrentPosition();
+  if (!location) return false;
+  try {
+    const response = await fetch('/smart-match/location', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(location)
+    });
+    smartMatchDebug('location request status: ' + response.status);
+  } catch (error) { return false; }
+  matchRegion.dataset.locationReady = 'true';
+  return true;
+}
+
+function renderLocationNeeded() {
+  matchRegion.innerHTML = '<section class="card"><h2>Location needed</h2>' +
+    '<p>Allow location access to find nearby spots, or use the demo location instead.</p>' +
+    '<button class="button" type="button" data-retry-location>Try again</button>' +
+    '<button class="text-button" type="button" data-use-demo-location>Use demo location</button></section>';
+  matchRegion.setAttribute('aria-busy', 'false');
+}
+
+// Only an explicit tap on "Use demo location" may put Smart Match into the demo fallback -
+// it is never chosen automatically on the user's behalf.
+async function useDemoLocation() {
   try {
     await fetch('/smart-match/location', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(location || { status: 'fallback' })
+      body: JSON.stringify({ status: 'fallback' })
     });
-  } catch (error) { /* The server's demo-location fallback keeps Smart Match available. */ }
+  } catch (error) { /* loadMatch's own error state covers a failed request here. */ }
   matchRegion.dataset.locationReady = 'true';
+  loadMatch(false);
 }
+
 async function loadMatch(again) {
   if (!matchRegion) return;
   matchRegion.setAttribute('aria-busy', 'true');
   matchRegion.innerHTML = '<div class="matching"><div class="matching-dots" aria-hidden="true"><i></i><i></i><i></i></div><h2>' +
     (again ? 'Finding something better...' : 'Finding your next spot...') +
     '</h2><p>' + (again ? 'Using your feedback' : 'Checking what fits right now') + '</p></div>';
+  const locationReady = await prepareDiscoveryLocation();
+  if (!locationReady) { renderLocationNeeded(); return; }
   try {
     const results = await Promise.all([
-      prepareDiscoveryLocation().then(function() { return fetch('/smart-match/result'); }).then(function(response) {
+      fetch('/smart-match/result').then(function(response) {
+        smartMatchDebug('result request status: ' + response.status);
         if (!response.ok) throw new Error('Unable to load match');
         return response.text();
       }),
       wait(1800)
     ]);
     matchRegion.innerHTML = results[0];
+    const card = matchRegion.querySelector('[data-merchant-id]');
+    smartMatchDebug('recommendation rendered: ' + (card ? 'yes (' + card.dataset.merchantId + ')' : 'no (empty state)'));
     initMerchantMap();
   } catch (error) {
+    smartMatchDebug('load failed: ' + error.message);
     matchRegion.innerHTML = '<section class="card"><h2>Let’s try that again.</h2><a class="button" href="/home">Return Home</a></section>';
   }
   matchRegion.setAttribute('aria-busy', 'false');
+}
+if (matchRegion) {
+  matchRegion.addEventListener('click', function(event) {
+    if (event.target.closest('[data-retry-location]')) loadMatch(false);
+    else if (event.target.closest('[data-use-demo-location]')) useDemoLocation();
+  });
 }
 if (document.querySelector('[data-load-match]')) loadMatch(location.search.includes('matching=again'));
 initMerchantMap();

@@ -11,7 +11,7 @@
 <% if (transaction.merchantCreditUsed > 0) { %>
 <dl class="receipt-lines receipt-breakdown">
 <div><dt>Purchase total</dt><dd>$<%= transaction.purchaseAmount.toFixed(2) %></dd></div>
-<div><dt>Vouch Credit applied</dt><dd class="credit-applied">−$<%= transaction.merchantCreditUsed.toFixed(2) %></dd></div>
+<div><dt><%= transaction.merchantName %> Vouch Credit used</dt><dd class="credit-applied">−$<%= transaction.merchantCreditUsed.toFixed(2) %></dd></div>
 <div class="receipt-net"><dt>Paid with NETS</dt><dd>$<%= transaction.netsPaid.toFixed(2) %></dd></div>
 </dl>
 <% } %>

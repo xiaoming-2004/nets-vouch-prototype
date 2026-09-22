@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { app, demoStore, getMerchantCampaigns, resetMerchantCampaigns, resetReferralCooldowns } = require('../app');
 let server;
 let base;
+const originalFoursquareKey = process.env.FOURSQUARE_API_KEY;
 
 test.before(async function() {
   server = await new Promise(function(resolve) {
@@ -12,7 +13,13 @@ test.before(async function() {
 });
 test.after(function() { server.close(); });
 // Merchant campaigns are global (shared across every visitor), so each test starts from a clean cap/status.
-test.beforeEach(function() { resetMerchantCampaigns(); resetReferralCooldowns(); });
+// This suite relies on Smart Match's deterministic local-demo-merchant fallback (no mocked
+// fetch here), so FOURSQUARE_API_KEY must stay unset even if the real .env configures one.
+test.beforeEach(function() { resetMerchantCampaigns(); resetReferralCooldowns(); delete process.env.FOURSQUARE_API_KEY; });
+test.afterEach(function() {
+  if (originalFoursquareKey === undefined) delete process.env.FOURSQUARE_API_KEY;
+  else process.env.FOURSQUARE_API_KEY = originalFoursquareKey;
+});
 
 function visitor() {
   let cookie = '';

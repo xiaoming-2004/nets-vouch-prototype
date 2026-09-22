@@ -29,6 +29,7 @@
   </div>
 </div>
 <% } %>
+<% if (resetComplete) { %><p role="status">Demo reset successfully.</p><% } %>
 <header class="greeting"><p><%= homeGreeting.greeting %>, <%= user.name %> 👋</p><h1><%= homeGreeting.prompt %></h1></header>
 <section id="smart-match"><p class="eyebrow">Your Smart Match</p>
 <div data-match-region data-location-ready="<%= locationAttempted ? 'true' : 'false' %>" aria-live="polite" aria-busy="<%= recommendation ? 'false' : 'true' %>">

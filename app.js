@@ -16,6 +16,10 @@ const PORT = process.env.PORT || 3000;
 const MINIMUM_ELIGIBLE_PAYMENT = 1.00;
 const PLACES_REQUEST_TIMEOUT_MS = 5000;
 const AI_RANKING_TIMEOUT_MS = 8000;
+// Foursquare's practical maximum results-per-request for Place Search.
+const FOURSQUARE_RESULT_LIMIT = 50;
+// Foursquare's dated Places API version header, matched to the manually-verified request.
+const FOURSQUARE_API_VERSION = '2025-06-17';
 const CLAIM_EXPIRY_MS = 20 * 60 * 1000;
 const REFERRAL_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -28,6 +32,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Configure session
 const demoStore = new session.MemoryStore();
+let demoResetGeneration = 0;
 app.use(session({
   store: demoStore,
   secret: 'nets-vouch-ai-demo-secret',
@@ -190,6 +195,105 @@ const moodCategoryMap = {
   wraps: ['wraps']
 };
 
+// Keyword hints used only to interpret factual cuisine tags Foursquare actually returns
+// (see parseFoursquareCuisineTags) - never used to invent a merchant's cuisine.
+const moodCuisineKeywords = {
+  rice: ['rice', 'chinese', 'cantonese', 'nasi'],
+  noodles: ['noodle', 'noodles', 'mee', 'ramen', 'pho', 'laksa'],
+  healthy: ['healthy', 'salad', 'vegetarian', 'vegan', 'bowl'],
+  indian: ['indian', 'curry', 'briyani', 'biryani'],
+  wraps: ['wrap', 'wraps', 'sandwich', 'western', 'burger']
+};
+
+// Cravings that mean "no real preference" - these drive Foursquare's broad query=food search
+// and never produce a craving match/non-match (Issue 1).
+const genericCravingPhrases = ['', 'anything', 'any', 'no preference', 'nothing particular', 'whatever', 'surprise me'];
+
+function normaliseCravingQuery(craving) {
+  return typeof craving === 'string' ? craving.trim().toLowerCase().replace(/\s+/g, ' ') : '';
+}
+
+function isSpecificCraving(craving) {
+  const normalized = normaliseCravingQuery(craving);
+  return normalized.length > 0 && genericCravingPhrases.indexOf(normalized) === -1;
+}
+
+// Conservative hints that help recognise when Foursquare's own factual category/cuisine data
+// satisfies a specific craving (e.g. a "Bakery" satisfies "bread") - the user's own words remain
+// the primary signal; this only fills obvious gaps and never invents a merchant's identity.
+const cravingKeywordHints = {
+  bread: ['bakery', 'bread'],
+  bakery: ['bakery'],
+  sushi: ['sushi', 'japanese'],
+  ramen: ['ramen', 'noodles', 'japanese'],
+  noodles: ['noodles', 'noodle'],
+  pizza: ['pizza', 'italian'],
+  dessert: ['dessert', 'bakery', 'ice cream'],
+  'bubble tea': ['bubble tea', 'tea', 'coffee'],
+  western: ['western'],
+  'chicken rice': ['chicken rice', 'rice', 'chinese'],
+  coffee: ['coffee', 'cafe']
+};
+
+// Step 1 of Issue 1: tri-state, same discipline as mood/dietary matching. A generic craving (or
+// none) is always UNKNOWN/neutral. A specific craving is MATCH only when the user's own words or
+// a conservative hint actually appear in the merchant's factual name/category/cuisine data -
+// never inferred by AI, never assumed from an unrelated merchant simply being nearby.
+function getCravingMatchState(merchant, craving) {
+  if (!isSpecificCraving(craving)) return MATCH_STATE.UNKNOWN;
+  const normalized = normaliseCravingQuery(craving);
+  const words = normalized.split(' ').filter(function(w) { return w.length > 2; });
+  const tags = merchantCuisineTags(merchant);
+  const haystack = (merchant.merchantName + ' ' + (merchant.itemName || '') + ' ' +
+    (merchant.categoryLabel || '') + ' ' + tags.join(' ')).toLowerCase();
+  const hints = cravingKeywordHints[normalized] || [];
+  const directMatch = haystack.indexOf(normalized) !== -1 ||
+    words.some(function(w) { return haystack.indexOf(w) !== -1; });
+  const hintMatch = hints.some(function(hint) { return haystack.indexOf(hint) !== -1; });
+  if (directMatch || hintMatch) return MATCH_STATE.MATCH;
+  const hasFactualData = tags.length > 0 || (merchant.categoryLabel && merchant.categoryLabel !== 'Food & drink');
+  return hasFactualData ? MATCH_STATE.NON_MATCH : MATCH_STATE.UNKNOWN;
+}
+
+// Conservative, explicit Foursquare category-name -> factual cuisine tag mapping. Only obvious
+// factual categories are mapped; a generic "Restaurant" is deliberately left unmapped so it
+// stays UNKNOWN rather than being guessed. Never infer dietary facts (halal/vegetarian/vegan)
+// from a category name - those come only from parseCateringFacts-style explicit data.
+const foursquareCategoryCuisineMap = {
+  'chinese restaurant': 'chinese',
+  'cantonese restaurant': 'chinese',
+  'hong kong restaurant': 'chinese',
+  'dim sum restaurant': 'chinese',
+  'malay restaurant': 'malay',
+  'indonesian restaurant': 'malay',
+  'indian restaurant': 'indian',
+  'north indian restaurant': 'indian',
+  'south indian restaurant': 'indian',
+  'korean restaurant': 'korean',
+  'japanese restaurant': 'japanese',
+  'sushi restaurant': 'japanese',
+  'ramen restaurant': 'noodles',
+  'noodle restaurant': 'noodles',
+  'vietnamese restaurant': 'vietnamese',
+  'thai restaurant': 'thai',
+  'bakery': 'bakery',
+  'snack place': 'snacks',
+  'coffee shop': 'coffee',
+  'café': 'cafe',
+  'cafe': 'cafe'
+};
+
+function parseFoursquareCuisineTags(categories) {
+  const tags = [];
+  if (!Array.isArray(categories)) return tags;
+  categories.forEach(function(category) {
+    const name = category && typeof category.name === 'string' ? category.name.trim().toLowerCase() : '';
+    const mapped = foursquareCategoryCuisineMap[name];
+    if (mapped && tags.indexOf(mapped) === -1) tags.push(mapped);
+  });
+  return tags;
+}
+
 const vouchTags = [
   { id: 'worth-it', label: 'Worth It' },
   { id: 'tasty', label: 'Tasty' },
@@ -348,44 +452,7 @@ const merchantPaymentFeed = [
   { merchantId: 'hawker-88', displayAmount: '$7.00', source: 'SHARED_VOUCH', date: '2026-09-16', time: '12:55', itemName: 'Char Kway Teow' },
   { merchantId: 'hawker-88', displayAmount: '$7.00', source: 'DIRECT_SCAN', date: '2026-09-15', time: '13:10', itemName: null }
 ];
-
-const seedTransactions = [
-  { id: 'tx-h1', source: 'DIRECT_SCAN', merchantId: 'felicia-chicken-rice', merchantName: "Felicia's Chicken Rice",
-    outlet: 'RP North Food Court · Stall 08', itemName: 'Chicken Rice',
-    purchaseAmount: 5.00, merchantCreditUsed: 0, netsPaid: 5.00,
-    merchantRewardEarned: 0.50, cashbackAwarded: 0.50, promisedReward: 0.50,
-    rewardReleased: true, status: 'Successful', collected: true, eligible: true,
-    vouchDecision: 'created', vouchCreated: true,
-    date: '2026-09-13', time: '12:34', displayAmount: '$5.00', paymentMethod: 'NETS' },
-  { id: 'tx-h2', source: 'SMART_MATCH', merchantId: 'green-bowl', merchantName: 'Green Bowl',
-    outlet: 'Republic Polytechnic · North Food Court', itemName: 'Vegan Grain Bowl',
-    purchaseAmount: 9.20, merchantCreditUsed: 0, netsPaid: 9.20,
-    merchantRewardEarned: 0.50, cashbackAwarded: 0.50, promisedReward: 0.50,
-    rewardReleased: true, status: 'Successful', collected: true, eligible: true,
-    vouchDecision: 'created', vouchCreated: true,
-    date: '2026-09-12', time: '13:05', displayAmount: '$9.20', paymentMethod: 'NETS' },
-  { id: 'tx-h3', source: 'DIRECT_SCAN', merchantId: 'felicia-chicken-rice', merchantName: "Felicia's Chicken Rice",
-    outlet: 'RP North Food Court · Stall 08', itemName: null,
-    purchaseAmount: 7.50, merchantCreditUsed: 0.50, netsPaid: 7.00,
-    merchantRewardEarned: 0.50, cashbackAwarded: 0.50, promisedReward: 0.50,
-    rewardReleased: true, status: 'Successful', collected: true, eligible: true,
-    vouchDecision: 'not-eligible', vouchCreated: false,
-    date: '2026-09-10', time: '12:11', displayAmount: '$7.00', paymentMethod: 'NETS' },
-  { id: 'tx-h4', source: 'SMART_MATCH', merchantId: 'felicia-chicken-rice', merchantName: "Felicia's Chicken Rice",
-    outlet: 'RP North Food Court · Stall 08', itemName: 'Chicken Rice',
-    purchaseAmount: 5.00, merchantCreditUsed: 0, netsPaid: 5.00,
-    merchantRewardEarned: 0.50, cashbackAwarded: 0.50, promisedReward: 0.50,
-    rewardReleased: true, status: 'Successful', collected: true, eligible: true,
-    vouchDecision: 'created', vouchCreated: true,
-    date: '2026-09-08', time: '11:58', displayAmount: '$5.00', paymentMethod: 'NETS' },
-  { id: 'tx-h5', source: 'DIRECT_SCAN', merchantId: 'green-bowl', merchantName: 'Green Bowl',
-    outlet: 'Republic Polytechnic · North Food Court', itemName: null,
-    purchaseAmount: 9.20, merchantCreditUsed: 0, netsPaid: 9.20,
-    merchantRewardEarned: 0, cashbackAwarded: 0, promisedReward: 0,
-    rewardReleased: true, status: 'Successful', collected: true, eligible: false,
-    vouchDecision: 'not-eligible', vouchCreated: false,
-    date: '2026-09-06', time: '12:47', displayAmount: '$9.20', paymentMethod: 'NETS' }
-];
+const initialMerchantPaymentFeed = merchantPaymentFeed.map(function(payment) { return { ...payment }; });
 
 const seedPromotionalRedemptions = [
   { transactionId: 'tx-h1', merchantName: "Felicia's Chicken Rice", itemName: 'Chicken Rice', rewardAmount: 0.50, date: '2026-09-13', status: 'Redeemed' },
@@ -413,6 +480,12 @@ function createInitialDemo(userId) {
 }
 
 function initialiseDemoSession(req) {
+  if (req.session.demoResetGeneration !== demoResetGeneration &&
+      (req.session.demoResetGeneration !== undefined || demoResetGeneration > 0)) {
+    req.session.demo = createInitialDemo('jia');
+    req.session.demoUserStates = {};
+  }
+  req.session.demoResetGeneration = demoResetGeneration;
   if (!req.session.demo || req.session.demo.version !== 16) {
     req.session.demo = createInitialDemo('jia');
     req.session.demoUserStates = {};
@@ -473,6 +546,19 @@ function findTransactionById(transactions, transactionId) {
 function getOwnedTransaction(demo, transactionId) {
   const transaction = findTransactionById(demo.transactions, transactionId);
   return transaction && transaction.ownerUserId === demo.user.id ? transaction : null;
+}
+
+function isCompletedActivityTransaction(transaction) {
+  return transaction && transaction.status === 'Successful' && transaction.paymentMethod === 'NETS' &&
+    typeof transaction.merchantName === 'string' && transaction.merchantName.length > 0 &&
+    Number.isFinite(transaction.netsPaid) && transaction.netsPaid > 0 &&
+    Number.isFinite(Date.parse(transaction.createdAt));
+}
+
+function getActivityTransactions(demo) {
+  return demo.transactions.filter(function(transaction) {
+    return transaction && transaction.ownerUserId === demo.user.id && isCompletedActivityTransaction(transaction);
+  }).sort(function(a, b) { return Date.parse(b.createdAt) - Date.parse(a.createdAt); });
 }
 
 function transactionNotFound(res) {
@@ -546,8 +632,9 @@ function merchantMatchesProfile(merchant, profile) {
   if (merchant.price !== null && merchant.price > profile.budget) return false;
   if (merchant.distanceMinutes > profile.maxDistanceMinutes) return false;
   if (profile.dietaryPreference === 'none') return true;
-  // Geoapify does not verify dietary suitability. Unknown is not a confirmed mismatch.
-  if (merchant.source === 'GEOAPIFY' && merchant.dietary.length === 0) return true;
+  // A real discovered merchant (Foursquare) does not verify dietary suitability the way the
+  // curated local demo merchants do. Unknown is not a confirmed mismatch - it stays eligible.
+  if (merchant.source === 'FOURSQUARE' && merchant.dietary.length === 0) return true;
 
   for (let i = 0; i < merchant.dietary.length; i++) {
     if (merchant.dietary[i] === profile.dietaryPreference) return true;
@@ -568,72 +655,165 @@ function calculateDistanceMetres(latitude, longitude, origin) {
   return Math.round(distanceKm * 1000);
 }
 
-function parseGeoapifyPlaces(features, origin) {
-  const preferred = [];
-  const fastFood = [];
-  if (!Array.isArray(features)) return preferred;
+// Factual Foursquare category names that clearly indicate a non-food place. Used only to
+// exclude obvious non-food results that the `query=food` search term can still surface -
+// never used to guess a merchant's cuisine.
+const nonFoodCategoryKeywords = ['salon', 'spa', 'gym', 'fitness', 'hotel', 'bank', 'atm',
+  'pharmacy', 'hospital', 'clinic', 'school', 'office', 'retail', 'clothing', 'electronics',
+  'hardware', 'laundry', 'parking', 'gas station', 'bus stop', 'metro station', 'park',
+  'playground', 'residence', 'apartment', 'real estate', 'insurance', 'lawyer', 'dentist'];
+const foodCategoryKeywords = ['restaurant', 'café', 'cafe', 'coffee', 'bakery', 'dessert',
+  'food', 'snack', 'diner', 'tea', 'noodle', 'bistro', 'eatery', 'grill', 'kitchen', 'hawker',
+  'pizzeria', 'buffet', 'deli', 'sandwich', 'burger', 'sushi', 'ramen', 'dim sum', 'bbq',
+  'steakhouse', 'bar', 'pub', 'brewery'];
 
-  for (let i = 0; i < features.length; i++) {
-    const feature = features[i];
-    const place = feature && feature.properties ? feature.properties : {};
-    const categories = Array.isArray(place.categories) ? place.categories : [];
-    const hasCategory = function(prefix) {
-      return categories.some(function(value) {
-        return typeof value === 'string' && (value === prefix || value.startsWith(prefix + '.'));
-      });
-    };
-    if (hasCategory('catering.bar') || hasCategory('catering.pub') ||
-        hasCategory('catering.biergarten')) continue;
-    const isFastFood = hasCategory('catering.fast_food');
-    const category = hasCategory('catering.restaurant') ? 'catering.restaurant' :
-      hasCategory('catering.cafe') ? 'catering.cafe' :
-      hasCategory('catering.food_court') ? 'catering.food_court' :
-      isFastFood ? 'catering.fast_food' : null;
-    if (!category) continue;
-    const coordinates = feature && feature.geometry && Array.isArray(feature.geometry.coordinates)
-      ? feature.geometry.coordinates : [];
-    const latitude = Number.isFinite(place.lat) ? place.lat : coordinates[1];
-    const longitude = Number.isFinite(place.lon) ? place.lon : coordinates[0];
-    if (typeof place.place_id !== 'string' || !place.place_id.trim() ||
-        typeof place.name !== 'string' || !place.name.trim() ||
-        !validCoordinates(latitude, longitude)) continue;
+// Category names are the only factual signal used - an unrecognised category is kept, not
+// excluded, so a real merchant is never dropped just because our keyword list is incomplete.
+function isFoursquareFoodCategory(categories) {
+  if (!Array.isArray(categories) || categories.length === 0) return true;
+  const names = categories.map(function(c) {
+    return c && typeof c.name === 'string' ? c.name.toLowerCase() : '';
+  });
+  if (names.some(function(n) { return foodCategoryKeywords.some(function(k) { return n.indexOf(k) !== -1; }); })) {
+    return true;
+  }
+  if (names.some(function(n) { return nonFoodCategoryKeywords.some(function(k) { return n.indexOf(k) !== -1; }); })) {
+    return false;
+  }
+  return true;
+}
+
+// Explicit container/venue categories (Part G). Deliberately does NOT include "coffee shop" or
+// "café" - a coffee-shop venue is only ever treated as a container via the factual parent
+// relationship below (Part H), never guessed from its category name alone.
+const containerCategoryKeywords = ['food court', 'hawker centre', 'hawker center', 'shopping mall', 'market'];
+
+function isContainerCategory(categories) {
+  if (!Array.isArray(categories)) return false;
+  return categories.some(function(c) {
+    const name = c && typeof c.name === 'string' ? c.name.toLowerCase() : '';
+    return containerCategoryKeywords.some(function(k) { return name.indexOf(k) !== -1; });
+  });
+}
+
+// Part F: a place is acting as a container/parent venue when some OTHER returned place names
+// it as `related_places.parent`. Computed over the full raw response, since even a place that
+// itself fails the food-category check still proves its parent is a container.
+function identifyContainerPlaceIds(results) {
+  const ids = new Set();
+  if (!Array.isArray(results)) return ids;
+  results.forEach(function(place) {
+    const parentId = place && place.related_places && place.related_places.parent &&
+      place.related_places.parent.fsq_place_id;
+    if (typeof parentId === 'string' && parentId.trim()) ids.add(parentId);
+  });
+  return ids;
+}
+
+// Normalises a Foursquare Places Search response into Smart Match candidates. Foursquare is
+// the sole broad discovery provider (Sprint 1.8/1.9) - individual merchants/stalls survive,
+// but a place acting as the factual parent of other returned merchants (Part F) or carrying an
+// explicit container category (Part G) is excluded so Smart Match never recommends the
+// building/venue itself when real merchants inside it are available (Part I: a standalone
+// restaurant/café with no parent is unaffected and remains fully eligible).
+function parseFoursquareNearbyPlaces(results, origin) {
+  const merchants = [];
+  if (!Array.isArray(results)) return merchants;
+
+  const containerIds = identifyContainerPlaceIds(results);
+  const suppressed = [];
+
+  for (let i = 0; i < results.length; i++) {
+    const place = results[i];
+    if (!place || typeof place.fsq_place_id !== 'string' || !place.fsq_place_id.trim() ||
+        typeof place.name !== 'string' || !place.name.trim()) continue;
+    if (!isFoursquareFoodCategory(place.categories)) continue;
+    if (containerIds.has(place.fsq_place_id)) {
+      suppressed.push({ name: place.name.trim(), reason: 'parent of another returned merchant' });
+      continue;
+    }
+    if (isContainerCategory(place.categories)) {
+      suppressed.push({ name: place.name.trim(), reason: 'container category' });
+      continue;
+    }
+    const geocodeMain = place.geocodes && place.geocodes.main ? place.geocodes.main : {};
+    const latitude = Number.isFinite(place.latitude) ? place.latitude : Number(geocodeMain.latitude);
+    const longitude = Number.isFinite(place.longitude) ? place.longitude : Number(geocodeMain.longitude);
+    if (!validCoordinates(latitude, longitude)) continue;
     const name = place.name.trim();
-    const categoryLabel = category.replace('catering.', '').replace(/_/g, ' ');
     const distanceMetres = Number.isFinite(place.distance) && place.distance >= 0
       ? Math.round(place.distance) : calculateDistanceMetres(latitude, longitude, origin);
-    const merchantId = 'geoapify-' + place.place_id;
-    const merchant = {
+    const merchantId = 'foursquare-' + place.fsq_place_id;
+    const parent = place.related_places && place.related_places.parent;
+    const parentVenueName = parent && typeof parent.name === 'string' && parent.name.trim() ?
+      parent.name.trim() : null;
+    const address = place.location && typeof place.location.formatted_address === 'string' &&
+      place.location.formatted_address.trim() ? place.location.formatted_address.trim() : 'Address unavailable';
+    const categoryLabel = Array.isArray(place.categories) && place.categories[0] &&
+      typeof place.categories[0].name === 'string' ? place.categories[0].name : 'Food & drink';
+    merchants.push({
       id: merchantId,
       merchantId: merchantId,
-      externalPlaceId: place.place_id,
+      externalPlaceId: place.fsq_place_id,
       merchantName: name,
       name: name,
       itemName: null,
       price: null,
-      category: category,
+      category: 'foursquare.place',
       categoryLabel: categoryLabel,
-      address: place.formatted || [place.address_line1, place.address_line2].filter(Boolean).join(', ') ||
-        'Address unavailable',
+      address: address,
       dietary: [],
+      cuisineTags: parseFoursquareCuisineTags(place.categories),
       // Used only for the existing distance filter; the UI displays metres, never walking time.
       distanceMinutes: Math.max(1, Math.round(distanceMetres / 80)),
       distanceMetres: distanceMetres,
       distanceLabel: distanceMetres < 1000 ? distanceMetres + ' m away' :
         (distanceMetres / 1000).toFixed(1) + ' km away',
-      coordinates: {
-        latitude: latitude,
-        longitude: longitude
-      },
-      source: 'GEOAPIFY', participationMode: 'DEMO_SIMULATED',
+      coordinates: { latitude: latitude, longitude: longitude },
+      source: 'FOURSQUARE', participationMode: 'DEMO_SIMULATED',
       rating: null,
       priceLevel: null,
-      available: true
-    };
-    if (isFastFood) fastFood.push(merchant);
-    else preferred.push(merchant);
+      available: true,
+      parentVenueName: parentVenueName
+    });
   }
-  // Fast food is only a backup when fewer than three meal options were found.
-  return (preferred.length >= 3 ? preferred : preferred.concat(fastFood)).slice(0, 10);
+  if (suppressed.length) {
+    logDiscovery('Container venues suppressed: ' + suppressed.length + '\n' +
+      suppressed.map(function(s) { return '- ' + s.name + ' (' + s.reason + ')'; }).join('\n'));
+  }
+  // No early cap here - craving relevance and seen-history filtering need the full useful pool
+  // (Sprint 1.10: "Do not cap too early"). Capping only happens later, for the AI prompt itself.
+  return { merchants: merchants, containersRemoved: suppressed.length };
+}
+
+// Two entries are the same real place only when both the normalised name matches AND the
+// coordinates are very close - sharing an address (e.g. two stalls in the same food court)
+// must never be treated as a duplicate on its own (Step 13).
+function isSameMerchant(a, b) {
+  if (normaliseMerchantName(a.merchantName) !== normaliseMerchantName(b.merchantName)) return false;
+  if (!a.coordinates || !b.coordinates) return false;
+  return calculateDistanceMetres(a.coordinates.latitude, a.coordinates.longitude, b.coordinates) < 50;
+}
+
+// Keeps the first-seen record's identity (so rejection/campaign history stays stable) and
+// fills in any gaps from the duplicate.
+function mergeMerchantFacts(primary, secondary) {
+  return Object.assign({}, primary, {
+    cuisineTags: primary.cuisineTags && primary.cuisineTags.length ? primary.cuisineTags : secondary.cuisineTags,
+    dietary: primary.dietary && primary.dietary.length ? primary.dietary : secondary.dietary,
+    parentVenueName: primary.parentVenueName || secondary.parentVenueName
+  });
+}
+
+function dedupeMerchantPool(merchantList) {
+  const result = [];
+  for (let i = 0; i < merchantList.length; i++) {
+    const candidate = merchantList[i];
+    const existingIndex = result.findIndex(function(m) { return isSameMerchant(m, candidate); });
+    if (existingIndex === -1) { result.push(candidate); continue; }
+    result[existingIndex] = mergeMerchantFacts(result[existingIndex], candidate);
+  }
+  return result;
 }
 
 function normaliseMerchantName(name) {
@@ -655,69 +835,165 @@ function combineMerchantLists(localMerchants, apiMerchants) {
   return combined;
 }
 
-async function getNearbyMerchants(location) {
-  const searchLocation = location && validCoordinates(location.latitude, location.longitude)
-    ? location : demoLocation;
-  const usingDemoLocation = searchLocation === demoLocation;
-  logDiscovery('Smart Match discovery location: ' + (usingDemoLocation ? 'demo fallback' : 'browser'));
-  if (!process.env.GEOAPIFY_API_KEY) {
-    logDiscovery('Geoapify fallback: key missing');
-    return { merchants: copyObjects(fallbackMerchants), source: 'local-fallback' };
+// Minimum useful pool size before we bother with a broader fallback search (Issue 1's
+// "if that produces too few useful merchant candidates, perform at most ONE broader fallback").
+const MIN_CRAVING_POOL_SIZE = 5;
+const DISCOVERY_CACHE_TTL_MS = 15 * 60 * 1000;
+const DISCOVERY_CACHE_MAX_ENTRIES = 200;
+const discoveryCache = new Map();
+
+// Roughly 110 m latitude buckets near Singapore; query is part of the key so
+// craving-specific and broad food searches never share provider results.
+function discoveryCacheKey(location, query) {
+  const bucket = location.latitude.toFixed(3) + ',' + location.longitude.toFixed(3);
+  return bucket + '|' + query.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function clearDiscoveryCache() {
+  discoveryCache.clear();
+}
+
+function removeExpiredDiscoveryEntries(now) {
+  for (const [key, entry] of discoveryCache) {
+    if (entry.expiresAt <= now) discoveryCache.delete(key);
   }
+}
 
-  const controller = new AbortController();
-  const timeout = setTimeout(function() {
-    controller.abort();
-  }, PLACES_REQUEST_TIMEOUT_MS);
-
-  let failureReason = 'request failed';
-  try {
-    const url = new URL('https://api.geoapify.com/v2/places');
-    const point = searchLocation.longitude + ',' + searchLocation.latitude;
-    url.searchParams.set('categories', 'catering');
-    url.searchParams.set('filter', 'circle:' + point + ',' + demoLocation.searchRadiusMetres);
-    url.searchParams.set('bias', 'proximity:' + point);
-    url.searchParams.set('limit', '20');
-    url.searchParams.set('lang', 'en');
-    url.searchParams.set('apiKey', process.env.GEOAPIFY_API_KEY);
-    const response = await fetch(url, {
-      signal: controller.signal
+function cachedFoursquareResults(entry, location) {
+  const results = structuredClone(entry.results);
+  if (entry.latitude !== location.latitude || entry.longitude !== location.longitude) {
+    // Provider distances belong to the first caller. Recalculate for this visitor
+    // without mutating the shared raw discovery or any other session's results.
+    results.forEach(function(place) {
+      const main = place.geocodes && place.geocodes.main ? place.geocodes.main : {};
+      const latitude = Number.isFinite(place.latitude) ? place.latitude : Number(main.latitude);
+      const longitude = Number.isFinite(place.longitude) ? place.longitude : Number(main.longitude);
+      if (validCoordinates(latitude, longitude)) {
+        place.distance = calculateDistanceMetres(latitude, longitude, location);
+      }
     });
-    if (!response.ok) {
-      failureReason = 'HTTP ' + response.status;
-      throw new Error('Geoapify request failed');
-    }
-    failureReason = 'malformed response';
+  }
+  return results;
+}
+
+// One Foursquare Place Search call with a given query string. Returns raw/food-filtered/
+// container-removed counts alongside the merchants so callers can log and merge safely.
+async function fetchFoursquarePlaces(searchLocation, query) {
+  const now = Date.now();
+  removeExpiredDiscoveryEntries(now);
+  const cacheKey = discoveryCacheKey(searchLocation, query);
+  const cached = discoveryCache.get(cacheKey);
+  if (cached) {
+    logDiscovery('FOURSQUARE CACHE HIT\nbucket: ' + cacheKey.split('|')[0] +
+      '\nquery: ' + query + '\nage: ' + Math.floor((now - cached.createdAt) / 1000) + 's');
+    const results = cachedFoursquareResults(cached, searchLocation);
+    const parsed = parseFoursquareNearbyPlaces(results, searchLocation);
+    return { ok: true, rawCount: results.length, merchants: parsed.merchants,
+      containersRemoved: parsed.containersRemoved, note: results.length === 0 ? 'empty response' : null };
+  }
+  logDiscovery('FOURSQUARE CACHE MISS\nbucket: ' + cacheKey.split('|')[0] + '\nquery: ' + query);
+  const controller = new AbortController();
+  const timeout = setTimeout(function() { controller.abort(); }, PLACES_REQUEST_TIMEOUT_MS);
+  try {
+    const url = new URL('https://places-api.foursquare.com/places/search');
+    url.searchParams.set('ll', searchLocation.latitude + ',' + searchLocation.longitude);
+    url.searchParams.set('radius', String(demoLocation.searchRadiusMetres));
+    url.searchParams.set('query', query);
+    url.searchParams.set('sort', 'DISTANCE');
+    url.searchParams.set('limit', String(FOURSQUARE_RESULT_LIMIT));
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'Authorization': 'Bearer ' + process.env.FOURSQUARE_API_KEY,
+        'X-Places-Api-Version': FOURSQUARE_API_VERSION,
+        'Accept': 'application/json'
+      }
+    });
+    if (!response.ok) return { ok: false, rawCount: 0, merchants: [], containersRemoved: 0, note: 'HTTP ' + response.status };
     const data = await response.json();
-    if (!data || !Array.isArray(data.features)) {
-      failureReason = 'malformed response';
-      throw new Error('Geoapify response invalid');
+    if (!data || !Array.isArray(data.results)) {
+      return { ok: false, rawCount: 0, merchants: [], containersRemoved: 0, note: 'malformed response' };
     }
-    if (data.features.length === 0) failureReason = 'empty response';
-    const apiMerchants = parseGeoapifyPlaces(data.features, searchLocation);
-    logDiscovery('Geoapify candidates received: ' + data.features.length +
-      '; usable food merchants: ' + apiMerchants.length);
-    if (apiMerchants.length === 0) {
-      if (data.features.length) failureReason = 'zero usable food merchants';
-      throw new Error('Geoapify returned no usable merchants');
+    const parsed = parseFoursquareNearbyPlaces(data.results, searchLocation);
+    removeExpiredDiscoveryEntries(Date.now());
+    if (discoveryCache.size >= DISCOVERY_CACHE_MAX_ENTRIES) {
+      discoveryCache.delete(discoveryCache.keys().next().value);
     }
-    apiMerchants.forEach(registerDemoMerchant);
-    return {
-      merchants: usingDemoLocation ? combineMerchantLists(fallbackMerchants, apiMerchants) : apiMerchants,
-      source: 'geoapify'
-    };
+    const createdAt = Date.now();
+    discoveryCache.set(cacheKey, { createdAt: createdAt, expiresAt: createdAt + DISCOVERY_CACHE_TTL_MS,
+      latitude: searchLocation.latitude, longitude: searchLocation.longitude,
+      results: structuredClone(data.results) });
+    return { ok: true, rawCount: data.results.length, merchants: parsed.merchants,
+      containersRemoved: parsed.containersRemoved, note: data.results.length === 0 ? 'empty response' : null };
   } catch (error) {
-    logDiscovery('Geoapify fallback: ' + (controller.signal.aborted ? 'timeout' : failureReason));
-    return { merchants: copyObjects(fallbackMerchants), source: 'local-fallback' };
+    return { ok: false, rawCount: 0, merchants: [], containersRemoved: 0,
+      note: controller.signal.aborted ? 'timeout' : error.message };
   } finally {
     clearTimeout(timeout);
   }
 }
 
+// Sprint 1.8: Foursquare is now the sole broad Smart Match discovery provider - Geoapify no
+// longer participates (see NETS_Vouch_Claude_Code_Handover_Clean.md sprint history). When the
+// key is missing or the live call fails for any reason, the curated local demo merchants keep
+// the Open House prototype working, exactly as the old Geoapify fallback used to.
+// Sprint 1.10 (Issue 1): a specific craving drives the Foursquare query itself, with at most one
+// broader query=food fallback if that produces too few useful candidates.
+async function getNearbyMerchants(location, sessionLabel, craving) {
+  const searchLocation = location && validCoordinates(location.latitude, location.longitude)
+    ? location : demoLocation;
+  const usingDemoLocation = searchLocation === demoLocation;
+  const specificCraving = isSpecificCraving(craving);
+  const normalizedCraving = normaliseCravingQuery(craving);
+  const primaryQuery = specificCraving ? normalizedCraving : 'food';
+  logDiscovery('SMART MATCH LOCATION\nsession: ' + (sessionLabel || 'unknown') +
+    '\nlatitude: ' + searchLocation.latitude + '\nlongitude: ' + searchLocation.longitude +
+    '\nsource: ' + (usingDemoLocation ? 'demo fallback (no real browser coordinates)' : 'browser') +
+    '\nCraving: ' + (specificCraving ? normalizedCraving : 'none') + '\nForeground query: ' + primaryQuery);
+  if (!process.env.FOURSQUARE_API_KEY) {
+    logDiscovery('Foursquare fallback: key missing');
+    return { merchants: copyObjects(fallbackMerchants), source: 'local-fallback' };
+  }
+
+  const primary = await fetchFoursquarePlaces(searchLocation, primaryQuery);
+  if (!primary.ok) {
+    logDiscovery('Foursquare fallback: ' + primary.note);
+    return { merchants: copyObjects(fallbackMerchants), source: 'local-fallback' };
+  }
+
+  let apiMerchants = dedupeMerchantPool(primary.merchants);
+  let fallbackUsed = false;
+  let fallbackRawCount = 0;
+  let containersRemoved = primary.containersRemoved;
+  if (specificCraving && apiMerchants.length < MIN_CRAVING_POOL_SIZE) {
+    const fallback = await fetchFoursquarePlaces(searchLocation, 'food');
+    fallbackUsed = true;
+    if (fallback.ok) {
+      fallbackRawCount = fallback.rawCount;
+      containersRemoved += fallback.containersRemoved;
+      apiMerchants = dedupeMerchantPool(apiMerchants.concat(fallback.merchants));
+    }
+  }
+
+  logDiscovery('FOURSQUARE DISCOVERY\nPrimary raw results: ' + primary.rawCount +
+    '\nFallback food query used: ' + (fallbackUsed ? 'yes (' + fallbackRawCount + ' raw)' : 'no') +
+    '\ncontainer venues removed: ' + containersRemoved +
+    '\nMerchant pool: ' + apiMerchants.length);
+  if (apiMerchants.length === 0) {
+    logDiscovery('Foursquare fallback: zero usable food merchants');
+    return { merchants: copyObjects(fallbackMerchants), source: 'local-fallback' };
+  }
+  apiMerchants.forEach(registerDemoMerchant);
+  return {
+    merchants: usingDemoLocation ? combineMerchantLists(fallbackMerchants, apiMerchants) : apiMerchants,
+    source: 'foursquare'
+  };
+}
+
 // Called at most once per recommendation cycle when the current nearby batch is exhausted.
 // Returns true only if the fresh discovery produced merchants not already in the current batch.
 async function refreshNearbyBatch(demo) {
-  const nearby = await getNearbyMerchants(demo.discoveryLocation);
+  const nearby = await getNearbyMerchants(demo.discoveryLocation, demo.user.id, demo.profile.craving);
   const newMerchants = nearby.merchants.filter(function(merchant) {
     return !findMerchantById(demo.nearbyMerchants, merchant.id);
   });
@@ -777,10 +1053,17 @@ async function getAIRanking(profile, eligible, feedbackItems, demo) {
     return {
       id: m.id,
       name: m.merchantName,
+      insideFoodCourt: m.parentVenueName || null,
       dish: m.itemName || 'unknown',
       price: m.price !== null ? '$' + m.price.toFixed(2) : 'unknown',
       distance: m.distanceLabel || m.distanceMinutes + ' min walk (demo estimate)',
+      distanceMetres: Number.isFinite(m.distanceMetres) ? m.distanceMetres : null,
+      cuisine: merchantCuisineTags(m).length ? merchantCuisineTags(m).join(', ') : 'unknown',
       dietary: m.dietary.length ? m.dietary.join(', ') : 'unknown',
+      matchesCurrentMood: merchantMatchesMood(m, profile.moodCuisine),
+      matchesDietaryPreference: profile.dietaryPreference !== 'none' &&
+        m.dietary.indexOf(profile.dietaryPreference) !== -1,
+      cravingMatch: matchStateLabel(getCravingMatchState(m, profile.craving)),
       location: m.address || ''
     };
   });
@@ -802,10 +1085,15 @@ async function getAIRanking(profile, eligible, feedbackItems, demo) {
 
   const system = [
     'You are Smart Match, the recommendation engine in NETS Vouch AI — a Singapore payments app rewarding people for eating at local merchants.',
-    'Pick the single best merchant for this user. Write a short, specific reason a real person would find useful.',
-    'Only use supplied facts. Unknown dietary suitability, exact prices, menu items and walking times must not be inferred.',
+    'Pick the single best merchant for this user from the supplied "Eligible merchants" list only. Write a short, specific reason a real person would find useful.',
+    'Only use supplied facts. Unknown dietary suitability, cuisine, exact prices, menu items and walking times must not be inferred.',
     '',
-    'GOOD reasons name a concrete supplied detail, such as merchant category or straight-line distance.',
+    'Weigh signals in this order: (1) cravingMatch === "match" when the user gave a specific craving, (2) matchesDietaryPreference, (3) matchesCurrentMood, (4) distanceMetres - a candidate materially nearer than the others should usually win unless another candidate clearly matches the craving/preference and this one does not.',
+    'cravingMatch is "unknown" whenever the merchant\'s factual data does not confirm or rule out the craving - treat "unknown" exactly like "non-match": never pick it AS the reason for the match, and never claim a merchant satisfies the craving unless cravingMatch is literally "match". A near merchant with cravingMatch "unknown" must not be described as matching the craving.',
+    'A far generic merchant must not casually outrank a much nearer merchant that already matches the craving/mood/preference. matchesCurrentMood/matchesDietaryPreference being false is neutral, not a confirmed mismatch - never say a merchant "doesn\'t match" because a field is unknown.',
+    'When insideFoodCourt is set, the candidate is a specific stall inside that food court - recommend the stall, not the food court name.',
+    '',
+    'GOOD reasons name a concrete supplied detail, such as cuisine, matchesCurrentMood, or straight-line distance.',
     'For discovered places, do not turn straight-line distance into a walking time.',
     '',
     'BAD reasons are vague and must never be written:',
@@ -885,55 +1173,213 @@ function getEligibleMerchants(profile, nearbyMerchants, rejectedMerchantIds, dem
   });
 }
 
-function getFallbackRecommendation(eligible, feedbackItems, profile) {
+// Real metres give far more meaningful resolution than the derived walking-minute bucket -
+// e.g. two food court stalls 180m and 650m apart both round to a handful of minutes.
+// Local demo merchants only carry distanceMinutes, so they keep the original coarse scale.
+function distancePenalty(merchant) {
+  return Number.isFinite(merchant.distanceMetres) ? merchant.distanceMetres / 20 : merchant.distanceMinutes;
+}
+
+function merchantDistanceMetres(merchant) {
+  return Number.isFinite(merchant.distanceMetres) ? merchant.distanceMetres : merchant.distanceMinutes * 80;
+}
+
+function merchantCuisineTags(merchant) {
+  return Array.isArray(merchant.cuisineTags) ? merchant.cuisineTags : [];
+}
+
+// Step 4: every factual comparison distinguishes MATCH / NON_MATCH / UNKNOWN - unknown data
+// must never collapse into a mismatch.
+const MATCH_STATE = { MATCH: 'match', NON_MATCH: 'non-match', UNKNOWN: 'unknown' };
+
+// All local-demo categories that moodCategoryMap actually maps to. A merchant carrying one of
+// these has a definite, known cuisine - if it isn't the requested mood's category, that is a
+// confirmed non-match, not an unknown.
+const knownSpecificCategories = Object.keys(moodCategoryMap).reduce(function(list, mood) {
+  return list.concat(moodCategoryMap[mood]);
+}, []);
+
+function getMoodMatchState(merchant, moodCuisine) {
+  if (!moodCuisine || moodCuisine === 'any') return MATCH_STATE.UNKNOWN;
+  const moodCats = moodCategoryMap[moodCuisine] || [];
+  if (moodCats.indexOf(merchant.category) !== -1) return MATCH_STATE.MATCH;
+  const keywords = moodCuisineKeywords[moodCuisine] || [];
+  const tags = merchantCuisineTags(merchant);
+  if (tags.some(function(tag) { return keywords.indexOf(tag) !== -1; })) return MATCH_STATE.MATCH;
+  const hasKnownCuisine = tags.length > 0 || knownSpecificCategories.indexOf(merchant.category) !== -1;
+  return hasKnownCuisine ? MATCH_STATE.NON_MATCH : MATCH_STATE.UNKNOWN;
+}
+
+function getDietaryMatchState(merchant, dietaryPreference) {
+  if (!dietaryPreference || dietaryPreference === 'none') return MATCH_STATE.UNKNOWN;
+  if (merchant.dietary.indexOf(dietaryPreference) !== -1) return MATCH_STATE.MATCH;
+  return merchant.dietary.length > 0 ? MATCH_STATE.NON_MATCH : MATCH_STATE.UNKNOWN;
+}
+
+// Kept for the "Why this match" copy, which only needs a yes/no.
+function merchantMatchesMood(merchant, moodCuisine) {
+  return getMoodMatchState(merchant, moodCuisine) === MATCH_STATE.MATCH;
+}
+
+// Step 5-9: a rejection reason with an obvious deterministic meaning must actually constrain
+// the next candidate pool, not just nudge a score. Only "too-far" has a hard, unambiguous
+// meaning (strictly closer than the rejected merchant); the others stay soft/scoring signals
+// because "cheaper"/"different cuisine" cannot be enforced without risking a fabricated
+// comparison against unknown data.
+function applyDeterministicRejectionConstraint(eligible, lastFeedback) {
+  if (!lastFeedback || lastFeedback.reason !== 'too-far') {
+    return { candidates: eligible, noCloserMatch: false };
+  }
+  const rejectedMetres = Number.isFinite(lastFeedback.distanceMetres) ? lastFeedback.distanceMetres :
+    Number.isFinite(lastFeedback.distanceMinutes) ? lastFeedback.distanceMinutes * 80 : null;
+  if (rejectedMetres === null) return { candidates: eligible, noCloserMatch: false };
+  const closer = eligible.filter(function(merchant) { return merchantDistanceMetres(merchant) < rejectedMetres; });
+  return { candidates: closer, noCloserMatch: closer.length === 0 };
+}
+
+function getFallbackRecommendation(candidates, feedbackItems, profile) {
   let bestMerchant = null;
   let bestScore = -1000;
   const lastFeedback = getLastFeedback(feedbackItems);
-  for (let i = 0; i < eligible.length; i++) {
-    const merchant = eligible[i];
-    let score = 100 - merchant.distanceMinutes + 50;
+  for (let i = 0; i < candidates.length; i++) {
+    const merchant = candidates[i];
+    // Proximity: a HIGH-priority signal (Step 10/12), not merely decorative context.
+    let score = 150 - distancePenalty(merchant);
     if (!lastFeedback && merchant.id === 'felicia-chicken-rice') score += 15;
     if (merchant.price !== null) score += Math.max(0, profile.budget - merchant.price);
-    if (profile.moodCuisine && profile.moodCuisine !== 'any') {
-      const moodCats = moodCategoryMap[profile.moodCuisine] || [];
-      if (moodCats.indexOf(merchant.category) !== -1) score += 40;
-    }
-    if (profile.craving) {
-      const words = profile.craving.toLowerCase().split(/\s+/);
-      const haystack = (merchant.merchantName + ' ' + (merchant.itemName || '') + ' ' + merchant.category).toLowerCase();
-      words.forEach(function(w) { if (w.length > 2 && haystack.indexOf(w) !== -1) score += 30; });
+    // Issue 1: a specific craving is the strongest ranking signal - a factual match must not be
+    // casually outranked by a merely-closer unrelated merchant. Unknown/non-match stays neutral.
+    if (getCravingMatchState(merchant, profile.craving) === MATCH_STATE.MATCH) score += 100;
+    // Explicit factual preference match only - unknown/non-match dietary data stays neutral.
+    if (getDietaryMatchState(merchant, profile.dietaryPreference) === MATCH_STATE.MATCH) score += 35;
+    // Current mood outranks historical preference for this session (Step 11), but only when the
+    // user hasn't already given a more specific craving this cycle.
+    if (!isSpecificCraving(profile.craving) && getMoodMatchState(merchant, profile.moodCuisine) === MATCH_STATE.MATCH) {
+      score += 45;
     }
     if (lastFeedback && lastFeedback.reason === 'too-far') {
-      score += Math.max(0, 20 - merchant.distanceMinutes * 2);
+      // The hard constraint already removed farther merchants; this only orders what remains.
+      score += Math.max(0, 40 - distancePenalty(merchant));
     }
-    if (lastFeedback && lastFeedback.reason === 'too-expensive' && merchant.price !== null) {
+    if (lastFeedback && lastFeedback.reason === 'too-expensive' && merchant.price !== null &&
+        lastFeedback.price !== null) {
       score += Math.max(0, 20 - merchant.price);
     }
-    if (lastFeedback &&
-        (lastFeedback.reason === 'not-in-mood' || lastFeedback.reason === 'ate-recently') &&
-        merchant.category === lastFeedback.category) {
-      score -= 30;
+    if (lastFeedback && (lastFeedback.reason === 'not-in-mood' || lastFeedback.reason === 'ate-recently')) {
+      // Foursquare's generic internal category ('foursquare.place') is not cuisine-specific, so a
+      // category match there is meaningless - only a specific local-demo category (e.g.
+      // 'chicken-rice') or an actual shared factual cuisine tag counts as "the same thing again".
+      const sameSpecificCategory = merchant.category === lastFeedback.category &&
+        knownSpecificCategories.indexOf(merchant.category) !== -1;
+      const rejectedTags = Array.isArray(lastFeedback.cuisineTags) ? lastFeedback.cuisineTags : [];
+      const overlapsCuisine = rejectedTags.length > 0 &&
+        merchantCuisineTags(merchant).some(function(tag) { return rejectedTags.indexOf(tag) !== -1; });
+      if (sameSpecificCategory || overlapsCuisine) score -= 30;
     }
     if (score > bestScore) { bestMerchant = merchant; bestScore = score; }
   }
   return bestMerchant;
 }
 
-async function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchantIds, feedbackItems, demo) {
-  const eligible = getEligibleMerchants(profile, nearbyMerchants, rejectedMerchantIds, demo);
-  if (eligible.length === 0) return { merchant: null, reason: null };
+function matchStateLabel(state) {
+  return state === MATCH_STATE.MATCH ? 'true' : state === MATCH_STATE.NON_MATCH ? 'false' : 'unknown';
+}
 
+// Step 1: development-only visibility into what Smart Match actually ranked. Never runs in
+// production and never prints API keys or payment data.
+function logSmartMatchDebug(profile, feedbackItems, candidates, noCloserMatch, excludedCount, recycled) {
+  if (process.env.NODE_ENV === 'production') return;
+  const lastFeedback = getLastFeedback(feedbackItems);
+  const lines = ['=== SMART MATCH DEBUG ==='];
+  lines.push('Preferences: dietary=' + profile.dietaryPreference + ', mood=' + (profile.moodCuisine || 'any') +
+    ', craving=' + (profile.craving || 'none'));
+  lines.push('Previously shown/rejected excluded: ' + excludedCount + (recycled ? ' (pool exhausted - recycling oldest-shown)' : ''));
+  const cravingMatches = isSpecificCraving(profile.craving) ?
+    candidates.filter(function(m) { return getCravingMatchState(m, profile.craving) === MATCH_STATE.MATCH; }).length : null;
+  if (cravingMatches !== null) lines.push('Craving matches: ' + cravingMatches);
+  lines.push('Eligible candidates: ' + candidates.length);
+  lines.push('Last rejection: ' + (lastFeedback ?
+    lastFeedback.reason + ' (' + (lastFeedback.merchantId || 'unknown') + ')' : 'none'));
+  if (noCloserMatch) lines.push('Too-far constraint: no eligible candidate is closer than the rejected merchant');
+  candidates.slice(0, 10).forEach(function(m, index) {
+    lines.push((index + 1) + '. ' + m.merchantName + ' [' + m.id + '] distanceMetres=' +
+      merchantDistanceMetres(m) + ' category=' + m.category +
+      ' cuisineTags=' + JSON.stringify(merchantCuisineTags(m)) +
+      ' dietary=' + JSON.stringify(m.dietary) +
+      ' parentVenue=' + (m.parentVenueName || 'none') +
+      ' preferenceMatch=' + matchStateLabel(getDietaryMatchState(m, profile.dietaryPreference)) +
+      ' moodMatch=' + matchStateLabel(getMoodMatchState(m, profile.moodCuisine)) +
+      ' cravingMatch=' + matchStateLabel(getCravingMatchState(m, profile.craving)));
+  });
+  logDiscovery(lines.join('\n'));
+}
+
+// Bounds the AI prompt's candidate list only - never the deterministic eligible pool itself
+// (Sprint 1.10: "only cap where necessary for AI prompt/token size AFTER deterministic
+// filtering"). Craving matches are kept first, then nearest distance.
+function capCandidatesForPrompt(candidates, profile, limit) {
+  if (candidates.length <= limit) return candidates;
+  const scored = candidates.map(function(m) {
+    const cravingBonus = getCravingMatchState(m, profile.craving) === MATCH_STATE.MATCH ? 1000000 : 0;
+    return { m: m, key: cravingBonus - merchantDistanceMetres(m) };
+  });
+  scored.sort(function(a, b) { return b.key - a.key; });
+  return scored.slice(0, limit).map(function(s) { return s.m; });
+}
+const AI_PROMPT_CANDIDATE_LIMIT = 20;
+
+async function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchantIds, feedbackItems, demo, shownMerchantIds) {
+  const shown = shownMerchantIds || [];
+  // A merchant is excluded once it has been shown OR rejected - shown alone already prevents an
+  // immediate repeat even outside an explicit rejection (Issue 3).
+  const excludedIds = rejectedMerchantIds.concat(
+    shown.filter(function(id) { return rejectedMerchantIds.indexOf(id) === -1; }));
+  let eligible = getEligibleMerchants(profile, nearbyMerchants, excludedIds, demo);
+  let recycled = false;
+  // Pool exhaustion: only when there are truly no unseen eligible merchants left do we allow a
+  // previously-shown (but never the just-rejected) merchant back in, preferring the one shown
+  // longest ago so normal usage never bounces between the same 2-3 merchants.
+  if (eligible.length === 0 && shown.length > 0) {
+    // Every shown merchant may well have already been rejected too (that's the whole point of
+    // "pool exhausted") - the only merchant that must stay excluded here is the one JUST
+    // rejected, not the entire rejection history.
+    const justRejectedId = rejectedMerchantIds.length ? rejectedMerchantIds[rejectedMerchantIds.length - 1] : null;
+    const recyclable = nearbyMerchants.filter(function(m) {
+      return m.available && m.id !== justRejectedId &&
+        shown.indexOf(m.id) !== -1 && merchantMatchesProfile(m, profile) && Boolean(findCampaignForMerchant(m, demo));
+    });
+    recyclable.sort(function(a, b) { return shown.indexOf(a.id) - shown.indexOf(b.id); });
+    if (recyclable.length > 0) { eligible = recyclable; recycled = true; }
+  }
+  if (eligible.length === 0) return { merchant: null, reason: null, noCloserMatch: false };
+
+  const lastFeedback = getLastFeedback(feedbackItems);
+  const constraint = applyDeterministicRejectionConstraint(eligible, lastFeedback);
+  const candidates = constraint.candidates;
+  logSmartMatchDebug(profile, feedbackItems, candidates, constraint.noCloserMatch, excludedIds.length, recycled);
+  if (candidates.length === 0) return { merchant: null, reason: null, noCloserMatch: constraint.noCloserMatch };
+
+  // Step 13/14: AI only ever sees the deterministically-constrained subset, and its choice is
+  // validated against that same subset - it cannot resurrect a merchant the "too far" rule or
+  // the seen/rejected history removed.
   if (process.env.OPENAI_API_KEY) {
     try {
-      const ranking = await getAIRanking(profile, eligible, feedbackItems, demo);
-      const aiMerchant = findMerchantById(eligible, ranking.merchantId);
-      if (aiMerchant) return { merchant: aiMerchant, reason: ranking.reason };
+      const promptCandidates = capCandidatesForPrompt(candidates, profile, AI_PROMPT_CANDIDATE_LIMIT);
+      const ranking = await getAIRanking(profile, promptCandidates, feedbackItems, demo);
+      const aiMerchant = findMerchantById(candidates, ranking.merchantId);
+      if (aiMerchant) {
+        logDiscovery('Selection source: OPENAI -> ' + aiMerchant.merchantName);
+        return { merchant: aiMerchant, reason: ranking.reason, noCloserMatch: false };
+      }
     } catch (error) {
       console.log('AI ranking unavailable, using rule-based fallback:', error.message);
     }
   }
 
-  return { merchant: getFallbackRecommendation(eligible, feedbackItems, profile), reason: null };
+  // Step 15: fallback ranks the identical constrained subset - never a superset AI would have seen.
+  const fallbackMerchant = getFallbackRecommendation(candidates, feedbackItems, profile);
+  logDiscovery('Selection source: FALLBACK -> ' + (fallbackMerchant ? fallbackMerchant.merchantName : 'none'));
+  return { merchant: fallbackMerchant, reason: null, noCloserMatch: false };
 }
 
 function getMatchReasons(profile, merchant, feedbackItems) {
@@ -945,17 +1391,14 @@ function getMatchReasons(profile, merchant, feedbackItems) {
   if (profile.dietaryPreference !== 'none' && merchant.dietary.includes(profile.dietaryPreference)) {
     reasons.push('Matches your dietary preference');
   }
-  if (profile.moodCuisine && profile.moodCuisine !== 'any') {
-    const moodCats = moodCategoryMap[profile.moodCuisine] || [];
-    if (moodCats.indexOf(merchant.category) !== -1) {
-      reasons.push('Matches your mood today');
-    }
+  if (merchantMatchesMood(merchant, profile.moodCuisine)) {
+    reasons.push('Matches your mood today');
   }
   if (merchant.distanceMinutes <= profile.maxDistanceMinutes) {
     reasons.push('Nearby right now');
   }
   if (lastFeedback && lastFeedback.reason === 'too-far' &&
-      merchant.distanceMinutes < lastFeedback.distanceMinutes) {
+      merchantDistanceMetres(merchant) < merchantDistanceMetres(lastFeedback)) {
     reasons.push('Closer than your last match');
   }
   if (lastFeedback && lastFeedback.reason === 'too-expensive' &&
@@ -1238,7 +1681,7 @@ function setVouchDecision(demo, transaction, decision) {
 function matchView(demo, recommendation) {
   return {
     recommendation: recommendation,
-    locationNotice: demo.nearbySource === 'local-fallback',
+    locationNotice: !demo.discoveryLocation,
     campaign: recommendation ? findCampaignForMerchant(recommendation, demo) : null,
     matchReasons: recommendation ? getMatchReasons(demo.profile, recommendation, demo.recommendationFeedback) : [],
     rejectionReasons: rejectionReasons, recommendationAccepted: demo.recommendationAccepted,
@@ -1302,7 +1745,8 @@ app.get('/home', function(req, res) {
   const recommendation = findMerchantForDemo(demo, demo.selectedMerchantId);
   res.render('home', {
     ...matchView(demo, recommendation), user: demo.user,
-    matchingAgain: req.query.matching === 'again', homeGreeting: getHomeGreeting(),
+    matchingAgain: req.query.matching === 'again', resetComplete: req.query.reset === 'done',
+    homeGreeting: getHomeGreeting(),
     showOnboarding: !demo.hasSetPreferences, locationAttempted: demo.locationAttempted
   });
 });
@@ -1319,6 +1763,9 @@ app.post('/setup-preferences', function(req, res) {
   demo.recommendationAccepted = false;
   demo.nearbyMerchants = [];
   demo.nearbyRefreshAttempted = false;
+  // A new Smart Match discovery re-acquires current GPS rather than depending on a stale
+  // coordinate (Part C) - harmless here since this is normally the first-ever discovery anyway.
+  demo.locationAttempted = false;
   res.redirect('/home');
 });
 
@@ -1351,24 +1798,23 @@ app.get('/smart-match/result', async function(req, res) {
     let recommendation = findMerchantForDemo(demo, demo.selectedMerchantId);
     if (!recommendation) {
       if (!demo.nearbyMerchants.length) {
-        const nearby = await getNearbyMerchants(demo.discoveryLocation);
+        const nearby = await getNearbyMerchants(demo.discoveryLocation, demo.user.id, demo.profile.craving);
         demo.nearbyMerchants = nearby.merchants;
         demo.nearbySource = nearby.source;
         logDiscovery('Smart Match merchant source: ' +
-          (nearby.source === 'geoapify' ? 'GEOAPIFY' : 'LOCAL_FALLBACK'));
+          (nearby.source === 'foursquare' ? 'FOURSQUARE' : 'LOCAL_FALLBACK'));
       }
-      logDiscovery('Smart Match eligible candidates: ' +
-        getEligibleMerchants(demo.profile, demo.nearbyMerchants, demo.rejectedMerchantIds, demo).length);
       let result = await getSmartRecommendation(demo.profile, demo.nearbyMerchants,
-        demo.rejectedMerchantIds, demo.recommendationFeedback, demo);
+        demo.rejectedMerchantIds, demo.recommendationFeedback, demo, demo.shownMerchantIds);
       recommendation = result.merchant;
-      // Current batch exhausted: try exactly one fresh discovery before showing the empty state.
-      if (!recommendation && !demo.nearbyRefreshAttempted) {
+      // A "too far" rejection with no closer candidate is a deterministic outcome, not a
+      // genuine batch exhaustion - never silently re-query Foursquare to paper over it (Step 6).
+      if (!recommendation && !result.noCloserMatch && !demo.nearbyRefreshAttempted) {
         demo.nearbyRefreshAttempted = true;
         const gotNewMerchants = await refreshNearbyBatch(demo);
         if (gotNewMerchants) {
           result = await getSmartRecommendation(demo.profile, demo.nearbyMerchants,
-            demo.rejectedMerchantIds, demo.recommendationFeedback, demo);
+            demo.rejectedMerchantIds, demo.recommendationFeedback, demo, demo.shownMerchantIds);
           recommendation = result.merchant;
         }
       }
@@ -1381,11 +1827,17 @@ app.get('/smart-match/result', async function(req, res) {
           if (c) c.metrics.smartMatchShown += 1;
         }
       }
+      if (!recommendation && result.noCloserMatch) {
+        return res.render('smart-match-empty', { profile: demo.profile,
+          dietaryPreferenceOptions: dietaryPreferenceOptions, moodCuisineOptions: moodCuisineOptions,
+          dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference),
+          locationNotice: !demo.discoveryLocation, noCloserMatch: true });
+      }
     }
     if (!recommendation) return res.render('smart-match-empty', { profile: demo.profile,
       dietaryPreferenceOptions: dietaryPreferenceOptions, moodCuisineOptions: moodCuisineOptions,
       dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference),
-      locationNotice: demo.nearbySource === 'local-fallback' });
+      locationNotice: !demo.discoveryLocation, noCloserMatch: false });
     res.render('smart-match-card', matchView(demo, recommendation));
   } catch (err) {
     console.error('smart-match/result error:', err);
@@ -1400,7 +1852,7 @@ app.get('/smart-match/static', async function(req, res) {
     demo.nearbyMerchants = copyObjects(fallbackMerchants);
     demo.nearbySource = 'local-fallback';
     const result = await getSmartRecommendation(demo.profile, demo.nearbyMerchants,
-      demo.rejectedMerchantIds, demo.recommendationFeedback, demo);
+      demo.rejectedMerchantIds, demo.recommendationFeedback, demo, demo.shownMerchantIds);
     const merchant = result.merchant;
     if (merchant) {
       demo.selectedMerchantId = merchant.id;
@@ -1428,9 +1880,12 @@ app.post('/recommendation/reject', function(req, res) {
   demo.rejectedMerchantIds.push(merchant.id);
   demo.recommendationFeedback.push({ merchantId: merchant.id, reason: req.body.reason,
     category: merchant.category, price: merchant.price, distanceMinutes: merchant.distanceMinutes,
-    distanceLabel: merchant.distanceLabel || null });
+    distanceMetres: Number.isFinite(merchant.distanceMetres) ? merchant.distanceMetres : null,
+    distanceLabel: merchant.distanceLabel || null, cuisineTags: merchantCuisineTags(merchant) });
   demo.selectedMerchantId = null;
   demo.recommendationAccepted = false;
+  logDiscovery('Rejected: ' + merchant.id + '\nReason: ' + req.body.reason +
+    '\nShown history size: ' + demo.shownMerchantIds.length + '\nNew API request: no');
   if (req.get('X-Requested-With') === 'smart-match') return res.sendStatus(204);
   res.redirect('/home?matching=again');
 });
@@ -1439,7 +1894,9 @@ function restartMatch(req, res) {
   const demo = req.session.demo;
   demo.selectedMerchantId = null;
   demo.recommendationAccepted = false;
-  demo.shownMerchantIds = [];
+  // Issue 3: session-level shown history survives a restart - a merchant already shown must not
+  // immediately reappear just because the user pressed "Try again". Pool-exhaustion recycling
+  // (in getSmartRecommendation) is what allows a controlled repeat, not clearing this array.
   if (req.path === '/recommendation/try-again') {
     demo.rejectedMerchantIds = [];
     demo.nearbyRefreshAttempted = false;
@@ -1483,7 +1940,7 @@ app.get('/scan', function(req, res) {
   const activeMerchantId = activeClaim && activeClaim.status === 'CLAIMED'
     ? activeClaim.merchantId
     : demo.recommendationAccepted && demo.selectedMerchantId ? demo.selectedMerchantId : null;
-  const scanMerchants = demo.discoveryLocation && demo.nearbySource === 'geoapify'
+  const scanMerchants = demo.discoveryLocation && demo.nearbySource === 'foursquare'
     ? demo.nearbyMerchants.slice() : fallbackMerchants.slice();
   const activeMerchant = findMerchantForDemo(demo, activeMerchantId);
   if (activeMerchant && !findMerchantById(scanMerchants, activeMerchant.id)) scanMerchants.unshift(activeMerchant);
@@ -1708,9 +2165,7 @@ app.get('/profile/vouches', function(req, res) {
   res.render('profile-vouches', { paymentVerifiedVouches: req.session.demo.paymentVerifiedVouches });
 });
 app.get('/profile/activity', function(req, res) {
-  const live = req.session.demo.transactions;
-  const display = live.length ? live : live.concat(seedTransactions);
-  res.render('profile-activity', { transactions: display });
+  res.render('profile-activity', { transactions: getActivityTransactions(req.session.demo) });
 });
 app.post('/profile', function(req, res) {
   const demo = req.session.demo;
@@ -1727,16 +2182,19 @@ app.post('/profile', function(req, res) {
   demo.hasSetPreferences = true;
   demo.selectedMerchantId = null;
   demo.recommendationAccepted = false;
-  demo.rejectedMerchantIds = [];
-  demo.recommendationFeedback = [];
-  demo.shownMerchantIds = [];
+  // Issue 3 (Edit filters): session-level shown/rejected history survives a filter/craving edit.
+  // A new Foursquare search may legitimately run below, but a merchant already shown must not
+  // reappear immediately just because the craving/mood/dietary filters changed.
   demo.nearbyMerchants = [];
   demo.nearbyRefreshAttempted = false;
+  // A new Smart Match discovery re-acquires current GPS rather than depending on a stale
+  // coordinate (Part C).
+  demo.locationAttempted = false;
   res.redirect('/home?matching=again');
 });
 app.get('/transactions/:id', function(req, res) {
   const transaction = getOwnedTransaction(req.session.demo, req.params.id);
-  if (!transaction) return transactionNotFound(res);
+  if (!isCompletedActivityTransaction(transaction)) return transactionNotFound(res);
   res.render('transaction-detail', { transaction: transaction });
 });
 
@@ -1799,25 +2257,61 @@ app.post('/merchant/offer', function(req, res) {
   res.redirect(destination);
 });
 app.post('/reset-demo', function(req, res) {
-  sharedOffers.forEach(function(offer, token) {
-    if (offer.ownerSessionId === req.sessionID) sharedOffers.delete(token);
+  // This helper control has always reset shared campaign state, so reset all demo
+  // sessions too. The generation also protects against an in-flight stale save.
+  demoResetGeneration += 1;
+  sharedOffers.clear();
+  referralCooldowns.clear();
+  merchantPaymentFeed.splice(0, merchantPaymentFeed.length,
+    ...initialMerchantPaymentFeed.map(function(payment) { return { ...payment }; }));
+  merchantCampaignStore.forEach(function(campaign) {
+    const clean = createDemoCampaign(campaign.merchantId, campaign.participationMode);
+    campaign.redemptionsToday = 0;
+    campaign.rewardBudgetSpentToday = 0;
+    campaign.platformFeeAccrued = 0;
+    campaign.day = clean.day;
+    campaign.metrics = clean.metrics;
   });
   req.session.demo = createInitialDemo('jia');
   req.session.demoUserStates = {};
-  merchantCampaignStore = createCampaigns();
-  res.redirect('/home');
+  req.session.demoResetGeneration = demoResetGeneration;
+  demoStore.all(function(error, sessions) {
+    if (error) return res.status(500).send('Demo reset could not be completed');
+    const ids = Object.keys(sessions || {}).filter(function(id) { return id !== req.sessionID; });
+    let remaining = ids.length;
+    if (!remaining) return res.redirect('/home?reset=done');
+    let failed = false;
+    ids.forEach(function(id) {
+      const stored = sessions[id];
+      stored.demo = createInitialDemo('jia');
+      stored.demoUserStates = {};
+      stored.demoResetGeneration = demoResetGeneration;
+      demoStore.set(id, stored, function(saveError) {
+        if (saveError) failed = true;
+        remaining -= 1;
+        if (!remaining) {
+          if (failed) return res.status(500).send('Demo reset could not be completed');
+          res.redirect('/home?reset=done');
+        }
+      });
+    });
+  });
 });
 
 // Start server. Export the app and demo factory for local automated tests.
 if (require.main === module) {
   app.listen(PORT, function() {
     console.log('NETS Vouch AI running on http://localhost:' + PORT);
-    console.log('GEOAPIFY_API_KEY configured: ' + (process.env.GEOAPIFY_API_KEY ? 'yes' : 'no'));
+    console.log('FOURSQUARE_API_KEY configured: ' + (process.env.FOURSQUARE_API_KEY ? 'yes' : 'no'));
   });
 }
 module.exports = { app: app, createInitialDemo: createInitialDemo, demoStore: demoStore,
   getNearbyMerchants: getNearbyMerchants, getEligibleMerchants: getEligibleMerchants,
   getSmartRecommendation: getSmartRecommendation,
+  getMoodMatchState: getMoodMatchState, getDietaryMatchState: getDietaryMatchState,
+  getCravingMatchState: getCravingMatchState,
+  MATCH_STATE: MATCH_STATE,
   getMerchantCampaigns: function() { return merchantCampaignStore; },
   resetMerchantCampaigns: function() { merchantCampaignStore = createCampaigns(); },
-  resetReferralCooldowns: function() { referralCooldowns.clear(); } };
+  resetReferralCooldowns: function() { referralCooldowns.clear(); },
+  clearDiscoveryCache: clearDiscoveryCache };
