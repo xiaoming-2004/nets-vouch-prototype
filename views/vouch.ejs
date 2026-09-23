@@ -1,5 +1,5 @@
 <%- include('partials/start', { title: 'Vouch this spot' }) %>
-<a class="back" href="/payment-success/<%= transaction.id %>">← Payment</a><p class="eyebrow">Payment-Verified</p><h1>Enjoyed this place?</h1>
+<a class="back" href="/payment-success/<%= transaction.id %>">← Payment</a><p><span class="badge badge--verified">✓ Payment-Verified</span></p><h1>Enjoyed this place?</h1>
 <section class="verified-visit"><span class="monogram"><%= transaction.merchantName.charAt(0) %></span><span><small>Verified NETS visit</small><strong><%= transaction.merchantName %></strong><em>Choose a quick tag, or simply Vouch.</em></span></section>
 <form method="POST" action="/vouch/<%= transaction.id %>" class="tag-form" data-single-submit>
 <input type="hidden" name="action" value="create"><fieldset><legend>Add a tag <span>(optional)</span></legend><div class="tag-grid">

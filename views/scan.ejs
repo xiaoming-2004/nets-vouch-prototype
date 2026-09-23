@@ -1,7 +1,10 @@
 <%- include('partials/start', { title: 'Scan to Pay' }) %>
 <header class="page-heading">
-  <h1>Scan to Pay</h1>
+  <h1>Scan to pay</h1>
+  <p>Point your camera at the merchant's NETS QR code.</p>
 </header>
+<% var headingTo = activeMerchantId ? merchants.find(function(m) { return m.id === activeMerchantId; }) : null; %>
+<% if (headingTo) { %><section class="heading-to"><span class="scan-merchant-mono" aria-hidden="true"><%= headingTo.merchantName.charAt(0) %></span><span><small>You're paying at</small><strong><%= headingTo.merchantName %></strong><em><%= headingTo.parentVenueName || headingTo.address %></em></span></section><% } %>
 <% if (error) { %><p class="error" role="alert">QR not recognised — try a participating merchant.</p><% } %>
 
 <div class="camera-section">
@@ -37,6 +40,7 @@
   <input type="hidden" name="merchantId" id="qr-merchant-id" value="">
 </form>
 
+<p class="or-divider">or</p>
 <details class="scan-fallback" id="scan-fallback">
   <summary>No camera? Tap a merchant</summary>
   <div class="scan-merchants">

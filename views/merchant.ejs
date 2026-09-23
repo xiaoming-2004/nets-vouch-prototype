@@ -1,4 +1,4 @@
-<%- include('partials/start', { title: 'Merchant demo' }) %>
+<%- include('partials/start', { title: 'Merchant demo', layout: 'wide' }) %>
 <p class="eyebrow">Merchant demo</p><h1><%= merchant.merchantName %></h1>
 <form method="GET" action="/merchant" class="merchant-picker"><input type="hidden" name="tab" value="<%= tab %>"><label class="field">Merchant<select name="merchantId"><% merchants.forEach(function(item) { %><option value="<%= item.id %>" <%= item.id === merchant.id ? 'selected' : '' %>><%= item.merchantName %></option><% }); %></select></label><button class="text-button" type="submit">Switch</button></form>
 <nav class="tabs" aria-label="Merchant sections"><% ['campaign', 'results'].forEach(function(item) { %><a href="/merchant?merchantId=<%= merchant.id %>&tab=<%= item %>" <%- tab === item ? 'aria-current="page"' : '' %>><%= item.charAt(0).toUpperCase() + item.slice(1) %></a><% }); %></nav>

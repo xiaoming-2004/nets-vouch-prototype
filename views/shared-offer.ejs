@@ -3,10 +3,11 @@
 <section class="claim-state">
 <div class="empty-icon" aria-hidden="true"><svg viewBox="0 0 52 52" fill="none"><circle cx="26" cy="26" r="25" stroke-width="2.5"/><line x1="18" y1="18" x2="34" y2="34" stroke-width="2.5" stroke-linecap="round"/><line x1="34" y1="18" x2="18" y2="34" stroke-width="2.5" stroke-linecap="round"/></svg></div>
 <h1>This offer is no longer available.</h1>
+<p>The link may have expired or been removed. You can still find somewhere great nearby.</p>
 <a class="button" href="/home">Explore NETS Vouch</a>
 </section>
 <% } else { %>
-<section class="shared-vouch-card"><p class="eyebrow">A Vouch from a friend</p><h1><%= offer.user %> Vouched for this place</h1><h2><%= offer.merchantName %></h2><div><span><%= offer.tagLabel %></span><span>✓ Verified NETS Visit</span></div></section>
+<section class="shared-vouch-card reveal"><p class="eyebrow">A Vouch from a friend</p><h1><%= offer.user %> Vouched for this place</h1><h2><%= offer.merchantName %></h2><div><% if (offer.tagLabel && offer.tagLabel !== 'Payment-Verified') { %><span>“<%= offer.tagLabel %>”</span><% } %><span>✓ Verified NETS Visit</span></div></section>
 <section class="offer-card card">
 <p class="eyebrow">Referral offer</p>
 <h2>Earn $<%= offer.rewardAmount.toFixed(2) %> <%= offer.merchantName %> Vouch Credit</h2>

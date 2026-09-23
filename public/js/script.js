@@ -133,11 +133,35 @@ async function prepareDiscoveryLocation() {
 }
 
 function renderLocationNeeded() {
-  matchRegion.innerHTML = '<section class="card"><h2>Location needed</h2>' +
-    '<p>Allow location access to find nearby spots, or use the demo location instead.</p>' +
+  clearMatchingStages();
+  matchRegion.innerHTML = '<section class="card state-card reveal"><div class="state-icon" aria-hidden="true">' +
+    '<svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg></div>' +
+    '<h2>Location needed</h2><p>We use your location to find places nearby.</p>' +
     '<button class="button" type="button" data-retry-location>Try again</button>' +
     '<button class="text-button" type="button" data-use-demo-location>Use demo location</button></section>';
   matchRegion.setAttribute('aria-busy', 'false');
+}
+
+// Loading copy only - no fake progress. If the match takes a while (e.g. preference checks),
+// the message changes so the app never looks frozen. Backend timing is untouched.
+let matchingStageTimer = null;
+function clearMatchingStages() {
+  if (matchingStageTimer) { window.clearTimeout(matchingStageTimer); matchingStageTimer = null; }
+}
+function matchingMarkup(again) {
+  return '<div class="matching"><div class="matching-spinner" aria-hidden="true"></div><h2 data-matching-title>' +
+    (again ? 'Finding something better…' : 'Finding nearby places…') + '</h2><p data-matching-sub>' +
+    (again ? 'Using your feedback' : 'Checking what\'s around you right now') +
+    '</p><div class="skeleton" aria-hidden="true"><i></i><i></i><i></i></div></div>';
+}
+function startMatchingStages() {
+  clearMatchingStages();
+  matchingStageTimer = window.setTimeout(function() {
+    const title = matchRegion.querySelector('[data-matching-title]');
+    const sub = matchRegion.querySelector('[data-matching-sub]');
+    if (title) title.textContent = 'Checking which places fit your preferences…';
+    if (sub) sub.textContent = 'Hang tight — this can take a few seconds.';
+  }, 4000);
 }
 
 // Only an explicit tap on "Use demo location" may put Smart Match into the demo fallback -
@@ -156,9 +180,8 @@ async function useDemoLocation() {
 async function loadMatch(again) {
   if (!matchRegion) return;
   matchRegion.setAttribute('aria-busy', 'true');
-  matchRegion.innerHTML = '<div class="matching"><div class="matching-dots" aria-hidden="true"><i></i><i></i><i></i></div><h2>' +
-    (again ? 'Finding something better...' : 'Finding your next spot...') +
-    '</h2><p>' + (again ? 'Using your feedback' : 'Checking what fits right now') + '</p></div>';
+  matchRegion.innerHTML = matchingMarkup(again);
+  startMatchingStages();
   const locationReady = await prepareDiscoveryLocation();
   if (!locationReady) { renderLocationNeeded(); return; }
   try {
@@ -170,13 +193,17 @@ async function loadMatch(again) {
       }),
       wait(1800)
     ]);
+    clearMatchingStages();
     matchRegion.innerHTML = results[0];
     const card = matchRegion.querySelector('[data-merchant-id]');
     smartMatchDebug('recommendation rendered: ' + (card ? 'yes (' + card.dataset.merchantId + ')' : 'no (empty state)'));
     initMerchantMap();
   } catch (error) {
     smartMatchDebug('load failed: ' + error.message);
-    matchRegion.innerHTML = '<section class="card"><h2>Let’s try that again.</h2><a class="button" href="/home">Return Home</a></section>';
+    clearMatchingStages();
+    matchRegion.innerHTML = '<section class="card state-card reveal"><div class="state-icon" aria-hidden="true">' +
+      '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg></div>' +
+      '<h2>Let’s try that again.</h2><p>We couldn’t load a match just now.</p><a class="button" href="/home">Return Home</a></section>';
   }
   matchRegion.setAttribute('aria-busy', 'false');
 }
@@ -273,15 +300,27 @@ if (shareGrid) {
       if (!opened) await copyShareLink(link);
     }
     const status = document.querySelector('.share-status');
-    status.textContent = platform === 'copy' ? 'Copied ✓' : 'Share ready ✓';
+    status.textContent = platform === 'copy' ? 'Link copied' : 'Share ready — link copied as backup';
   });
 }
 
 // Capture the clicked action BEFORE disabling controls. Keeps Vouch/Skip values intact.
 document.addEventListener('submit', function(event) {
   const form = event.target;
-  if (form.matches('[data-confirm-reset]') && !window.confirm('Reset this demo for the next visitor?')) {
-    event.preventDefault(); return;
+  if (form.matches('[data-confirm-reset]') && !form.dataset.confirmed) {
+    event.preventDefault();
+    const dialog = document.querySelector('[data-reset-dialog]');
+    if (dialog && typeof dialog.showModal === 'function') {
+      dialog.addEventListener('close', function() {
+        if (dialog.returnValue !== 'confirm') return;
+        form.dataset.confirmed = 'true';
+        HTMLFormElement.prototype.submit.call(form);
+      }, { once: true });
+      dialog.showModal();
+    } else if (window.confirm('Reset the entire demo? This clears all active visitor sessions and live demo data.')) {
+      HTMLFormElement.prototype.submit.call(form);
+    }
+    return;
   }
   if (!form.matches('[data-single-submit], [data-payment], [data-scan]')) return;
   event.preventDefault();
@@ -317,3 +356,14 @@ document.addEventListener('submit', function(event) {
 window.addEventListener('pageshow', function(event) {
   if (event.persisted) window.location.reload();
 });
+
+// Simulated iOS status bar clock (presentation only).
+const statusTime = document.querySelector('[data-status-time]');
+if (statusTime) {
+  const renderTime = function() {
+    const now = new Date();
+    statusTime.textContent = now.getHours() + ':' + String(now.getMinutes()).padStart(2, '0');
+  };
+  renderTime();
+  window.setInterval(renderTime, 30000);
+}

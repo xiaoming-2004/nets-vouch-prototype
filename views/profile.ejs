@@ -6,5 +6,7 @@
 <a class="text-button" href="/profile/rewards">View all →</a>
 <% } %>
 </section>
+<section class="profile-section"><h2>Your account</h2>
 <nav class="profile-menu" aria-label="Profile menu"><a href="/profile/vouches"><span><strong>My Vouches</strong><small>Payment-Verified Vouches</small></span><b>›</b></a><a href="/profile/activity"><span><strong>NETS Activity</strong><small>Recent NETS payments</small></span><b>›</b></a><a href="/profile/preferences"><span><strong>Preferences</strong><small><%= dietaryLabel %> · $<%= profile.budget.toFixed(0) %> · <%= profile.maxDistanceMinutes %> min</small></span><b>›</b></a><a href="/profile/preferences"><span><strong>Notifications</strong><small>Payment and reward updates</small></span><em><%= profile.notifications ? 'On' : 'Off' %></em></a></nav>
+</section>
 <%- include('partials/end', { active: 'profile' }) %>

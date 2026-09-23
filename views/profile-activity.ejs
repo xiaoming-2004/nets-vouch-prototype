@@ -3,7 +3,7 @@
 <h1>NETS Activity</h1>
 <p>Your completed NETS payments.</p>
 <% if (!transactions.length) { %>
-<p class="empty-line">No NETS activity yet.<br>Your completed payments will appear here.</p>
+<section class="card state-card"><div class="state-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/></svg></div><h2>No NETS activity yet.</h2><p>Your completed payments will appear here.</p><a class="button" href="/scan">Scan to pay</a></section>
 <% } else { %>
 <div class="activity-list">
 <% transactions.forEach(function(transaction) { %>
@@ -22,4 +22,4 @@
 <% }); %>
 </div>
 <% } %>
-<%- include('partials/end', { active: 'profile' }) %>
+<%- include('partials/end', { active: 'activity' }) %>
