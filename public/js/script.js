@@ -367,3 +367,10 @@ if (statusTime) {
   renderTime();
   window.setInterval(renderTime, 30000);
 }
+
+// Close the header account menu when tapping anywhere outside it.
+document.addEventListener('click', function(event) {
+  document.querySelectorAll('.account-menu[open]').forEach(function(menu) {
+    if (!menu.contains(event.target)) menu.removeAttribute('open');
+  });
+});

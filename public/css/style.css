@@ -64,7 +64,7 @@ form { margin:0; }
   background:radial-gradient(circle at 35% 35%,#2b3550 0%,#10131c 55%,#050608 100%); }
 .status-icons { display:flex; align-items:center; gap:6px; }
 .status-icons svg { display:block; height:12px; width:auto; fill:currentColor; }
-/* Explicit rows so hiding the status bar (real phones / dashboard) never shifts the layout. */
+/* Explicit rows so hiding the status bar (real phones) never shifts the layout. */
 .status-bar { grid-row:1; } .app-header { grid-row:2; } .screen { grid-row:3; } .navigation { grid-row:4; }
 .home-indicator { position:absolute; left:50%; bottom:8px; width:36%; height:5px; transform:translateX(-50%); border-radius:3px; background:rgba(13,29,46,.88); z-index:4; pointer-events:none; }
 
@@ -78,7 +78,7 @@ form { margin:0; }
 .screen::-webkit-scrollbar { display:none; }
 
 /* iOS-style tab bar, fixed inside the screen, translucent. Bottom padding leaves room for the home indicator. */
-.navigation { display:grid; grid-template-columns:repeat(4,1fr); padding:6px 10px 26px; background:rgba(250,251,252,.84);
+.navigation { display:grid; grid-auto-flow:column; grid-auto-columns:1fr; padding:6px 10px 26px; background:rgba(250,251,252,.84);
   -webkit-backdrop-filter:saturate(180%) blur(20px); backdrop-filter:saturate(180%) blur(20px); border-top:.5px solid rgba(13,29,46,.12); z-index:2; }
 .navigation a { min-height:50px; display:grid; align-content:center; justify-items:center; gap:3px; font-size:10.5px; font-weight:600; text-decoration:none; color:var(--text-3); border-radius:12px; transition:color .15s; }
 .navigation svg { width:25px; height:25px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
@@ -97,17 +97,8 @@ form { margin:0; }
   .navigation { padding-bottom:calc(6px + env(safe-area-inset-bottom)); }
 }
 
-/* ---------- Business dashboard (merchant): responsive page, not a phone ---------- */
-.layout-wide .stage { justify-content:flex-start; padding:24px; }
-.layout-wide .stage-caption,.layout-wide .status-bar,.layout-wide .home-indicator,.layout-wide .device-button { display:none; }
-.layout-wide .device { width:min(1080px,100%); height:calc(100dvh - 72px); aspect-ratio:auto; padding:0; border-radius:var(--r-xl); background:none; box-shadow:var(--shadow-lg); }
-.layout-wide .device-bezel { padding:0; border-radius:var(--r-xl); background:none; box-shadow:none; }
-.layout-wide .phone { border-radius:var(--r-xl); }
-.layout-wide .screen { padding:28px clamp(20px,4vw,48px) 40px; }
-.layout-wide .screen>* { max-width:860px; margin-left:auto; margin-right:auto; }
-.layout-wide .navigation { padding-bottom:8px; }
-@media (min-width:900px) { .layout-wide .roi-summary { grid-template-columns:repeat(4,1fr); } .layout-wide .roi-stat,.layout-wide .roi-stat:nth-child(even) { border-bottom:0; border-right:1px solid var(--border); } .layout-wide .roi-stat:last-child { border-right:0; } }
-@media (max-width:560px) { .layout-wide .stage { padding:0; } .layout-wide .device { height:100dvh; border-radius:0; box-shadow:none; } .layout-wide .phone { border-radius:0; } }
+/* ---------- Merchant mode: same iPhone shell, merchant avatar ---------- */
+.mode-merchant .app-header .avatar { background:var(--nets-red); }
 
 /* ---------- Core components ---------- */
 .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-lg); padding:var(--space-5); margin-bottom:var(--space-4); box-shadow:var(--shadow-sm); }
@@ -564,3 +555,27 @@ button:disabled { opacity:.55; cursor:wait; }
 @keyframes sheet-up { from { transform:translateY(110%); opacity:0; } to { transform:translateY(0); opacity:1; } }
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; }
   .status-icon--success polyline,.receipt-success-icon polyline { stroke-dashoffset:0; } }
+
+/* Header account menu: switch between the customer app and the merchant dashboard. */
+.account-menu { position:relative; }
+.account-menu>summary { list-style:none; cursor:pointer; }
+.account-menu>summary::-webkit-details-marker { display:none; }
+.account-menu[open]>summary { box-shadow:0 0 0 3px rgba(214,33,47,.25); }
+.account-menu-sheet { position:absolute; right:0; top:calc(100% + 8px); z-index:20; width:230px; padding:12px 8px 8px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-lg); box-shadow:var(--shadow-lg); animation:pop .18s ease-out; }
+.account-menu-sheet .eyebrow { margin:0 8px 6px; }
+.account-menu-sheet a { display:flex; align-items:center; gap:10px; min-height:52px; padding:8px; border-radius:var(--r-md); text-decoration:none; color:var(--text); }
+.account-menu-sheet a:hover { background:var(--surface-2); }
+.account-menu-sheet a[aria-current] { background:var(--nets-red-soft); }
+.account-menu-sheet a>span:last-child { display:grid; gap:1px; }
+.account-menu-sheet strong { font-size:14px; }
+.account-menu-sheet small { font-size:12px; }
+.account-menu-icon { width:32px; height:32px; flex:0 0 32px; display:grid; place-items:center; border-radius:50%; background:var(--nets-navy); color:white; font-size:13px; font-weight:700; }
+.account-menu-icon--merchant { border-radius:9px; background:var(--nets-red); }
+.account-menu-sheet .account-menu-link { min-height:40px; justify-content:center; margin-top:4px; border-top:1px solid var(--border); border-radius:0 0 var(--r-md) var(--r-md); font-size:13px; font-weight:600; color:var(--nets-red); }
+/* Small, deliberately understated global reset control at the bottom of Profile. */
+.profile-reset { display:grid; justify-items:center; gap:4px; margin:26px 0 6px; }
+.profile-reset small { font-size:11px; color:var(--text-3); }
+.reset-demo-button { min-height:34px; padding:6px 14px; border:1px solid #e3b9bd; border-radius:var(--r-pill); background:var(--surface); color:var(--danger); font-size:12.5px; font-weight:650; cursor:pointer; }
+.reset-demo-button:hover { background:var(--danger-bg); }
+.admin-zone .reset-demo-form { margin-top:4px; }
+.mode-merchant .merchant-picker { margin-bottom:18px; }

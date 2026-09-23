@@ -9,6 +9,5 @@
 <small>For testing Shared Vouch between two people on this one browser.</small>
 </section>
 <a class="button" href="/merchant">Merchant view</a>
-<section class="admin-zone"><p class="eyebrow">Admin · affects everyone</p><p>Reset clears all active visitor sessions and live demo data.</p><form method="POST" action="/reset-demo" data-confirm-reset><button class="button button--danger-outline" type="submit">Reset Demo</button></form></section>
-<dialog class="sheet-dialog" data-reset-dialog aria-labelledby="reset-title"><form method="dialog"><h2 id="reset-title">Reset the entire demo?</h2><p>This clears all active visitor sessions and live demo data.</p><div class="sheet-actions"><button class="text-button" value="cancel">Cancel</button><button class="button" value="confirm">Reset Demo</button></div></form></dialog>
+<section class="admin-zone"><p class="eyebrow">Admin · affects everyone</p><p>Reset clears all active visitor sessions and live demo data.</p><%- include('partials/reset-demo') %></section>
 <%- include('partials/end', { active: '' }) %>
