@@ -218,41 +218,36 @@ function isSpecificCraving(craving) {
   return normalized.length > 0 && genericCravingPhrases.indexOf(normalized) === -1;
 }
 
-// Conservative hints that help recognise when Foursquare's own factual category/cuisine data
-// satisfies a specific craving (e.g. a "Bakery" satisfies "bread") - the user's own words remain
-// the primary signal; this only fills obvious gaps and never invents a merchant's identity.
-const cravingKeywordHints = {
-  bread: ['bakery', 'bread'],
-  bakery: ['bakery'],
-  sushi: ['sushi', 'japanese'],
-  ramen: ['ramen', 'noodles', 'japanese'],
-  noodles: ['noodles', 'noodle'],
-  pizza: ['pizza', 'italian'],
-  dessert: ['dessert', 'bakery', 'ice cream'],
-  'bubble tea': ['bubble tea', 'tea', 'coffee'],
-  western: ['western'],
-  'chicken rice': ['chicken rice', 'rice', 'chinese'],
-  coffee: ['coffee', 'cafe']
-};
+// Craving interpretation is semantic and belongs to the AI ranker (see getAIRanking) - there is
+// deliberately NO craving vocabulary here. The only deterministic craving signal is whether the
+// user's OWN words literally appear in a merchant's factual name/category data, used to order the
+// AI prompt cap and as a small nudge in the non-AI fallback. It never gates eligibility.
 
-// Step 1 of Issue 1: tri-state, same discipline as mood/dietary matching. A generic craving (or
-// none) is always UNKNOWN/neutral. A specific craving is MATCH only when the user's own words or
-// a conservative hint actually appear in the merchant's factual name/category/cuisine data -
-// never inferred by AI, never assumed from an unrelated merchant simply being nearby.
-function getCravingMatchState(merchant, craving) {
-  if (!isSpecificCraving(craving)) return MATCH_STATE.UNKNOWN;
-  const normalized = normaliseCravingQuery(craving);
-  const words = normalized.split(' ').filter(function(w) { return w.length > 2; });
-  const tags = merchantCuisineTags(merchant);
-  const haystack = (merchant.merchantName + ' ' + (merchant.itemName || '') + ' ' +
-    (merchant.categoryLabel || '') + ' ' + tags.join(' ')).toLowerCase();
-  const hints = cravingKeywordHints[normalized] || [];
-  const directMatch = haystack.indexOf(normalized) !== -1 ||
-    words.some(function(w) { return haystack.indexOf(w) !== -1; });
-  const hintMatch = hints.some(function(hint) { return haystack.indexOf(hint) !== -1; });
-  if (directMatch || hintMatch) return MATCH_STATE.MATCH;
-  const hasFactualData = tags.length > 0 || (merchant.categoryLabel && merchant.categoryLabel !== 'Food & drink');
-  return hasFactualData ? MATCH_STATE.NON_MATCH : MATCH_STATE.UNKNOWN;
+// Lower-cases, strips accents and punctuation, and pads with spaces so a term can be matched as
+// a whole word/phrase with indexOf(' ' + term + ' ').
+function normaliseMatchText(text) {
+  return ' ' + String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
+}
+
+// Whole word/phrase match, tolerating a simple plural ("noodle" -> "noodles").
+function textHasTerm(text, term) {
+  const t = normaliseMatchText(term).trim();
+  if (!t) return false;
+  return text.indexOf(' ' + t + ' ') !== -1 || text.indexOf(' ' + t + 's ') !== -1 ||
+    text.indexOf(' ' + t + 'es ') !== -1;
+}
+
+function merchantCategoryNames(merchant) {
+  if (Array.isArray(merchant.categoryNames) && merchant.categoryNames.length) return merchant.categoryNames;
+  return merchant.categoryLabel ? [merchant.categoryLabel] : [];
+}
+
+function merchantMentionsCraving(merchant, craving) {
+  if (!isSpecificCraving(craving)) return false;
+  const text = normaliseMatchText([merchant.merchantName, merchant.itemName || '']
+    .concat(merchantCategoryNames(merchant), merchantCuisineTags(merchant)).join(' '));
+  return textHasTerm(text, normaliseCravingQuery(craving));
 }
 
 // Conservative, explicit Foursquare category-name -> factual cuisine tag mapping. Only obvious
@@ -759,6 +754,9 @@ function parseFoursquareNearbyPlaces(results, origin) {
       price: null,
       category: 'foursquare.place',
       categoryLabel: categoryLabel,
+      categoryNames: Array.isArray(place.categories) ? place.categories.map(function(c) {
+        return c && typeof c.name === 'string' ? c.name.trim() : '';
+      }).filter(Boolean) : [],
       address: address,
       dietary: [],
       cuisineTags: parseFoursquareCuisineTags(place.categories),
@@ -1057,13 +1055,37 @@ function getLastFeedback(feedbackItems) {
   return feedbackItems[feedbackItems.length - 1];
 }
 
+const AI_RELEVANCE_LEVELS = ['high', 'medium', 'low'];
+const LOW_RELEVANCE_REASON = 'This is the closest available fit from the nearby options.';
+
+// Conservative guard on the AI's free-text reason - not an NLP validator. A reason that asserts
+// dietary, price, menu or rating facts the merchant record does not carry is discarded, so the
+// card falls back to its deterministic "Why this match" copy instead of an invented claim.
+function aiReasonClaimsUnsupportedFacts(reason, merchant) {
+  const dietaryClaims = reason.toLowerCase().match(/\b(halal|vegetarian|vegan|kosher|gluten[- ]free|muslim[- ]friendly)\b/g) || [];
+  if (dietaryClaims.some(function(claim) { return merchant.dietary.indexOf(claim) === -1; })) return true;
+  if (merchant.price === null &&
+      /\$\s?\d|\b(cheap|cheapest|affordable|inexpensive|budget|pric(e|ed|es|ey)|value for money)\b/i.test(reason)) return true;
+  if (!merchant.itemName &&
+      /\b(menu|serves?|serving|signature|famous for|known for|speciali[sz]es in|dish(es)?)\b/i.test(reason)) return true;
+  return /\b(rated|ratings?|reviews?|popular)\b/i.test(reason);
+}
+
+// Server-side acceptance of an AI ranking that already passed the eligible-ID check: a "low"
+// relevance pick keeps honest fixed wording; an unsupported factual claim drops the AI reason.
+function safeAIReason(ranking, merchant) {
+  if (ranking.relevance === 'low') return LOW_RELEVANCE_REASON;
+  return aiReasonClaimsUnsupportedFacts(ranking.reason, merchant) ? null : ranking.reason;
+}
+
 async function getAIRanking(profile, eligible, feedbackItems, demo) {
   const merchantSummaries = eligible.map(function(m) {
     return {
       id: m.id,
       name: m.merchantName,
-      insideFoodCourt: m.parentVenueName || null,
-      dish: m.itemName || 'unknown',
+      categories: merchantCategoryNames(m),
+      parentVenue: m.parentVenueName || null,
+      dish: m.itemName || null,
       price: m.price !== null ? '$' + m.price.toFixed(2) : 'unknown',
       distance: m.distanceLabel || m.distanceMinutes + ' min walk (demo estimate)',
       distanceMetres: Number.isFinite(m.distanceMetres) ? m.distanceMetres : null,
@@ -1072,7 +1094,6 @@ async function getAIRanking(profile, eligible, feedbackItems, demo) {
       matchesCurrentMood: merchantMatchesMood(m, profile.moodCuisine),
       matchesDietaryPreference: profile.dietaryPreference !== 'none' &&
         m.dietary.indexOf(profile.dietaryPreference) !== -1,
-      cravingMatch: matchStateLabel(getCravingMatchState(m, profile.craving)),
       location: m.address || ''
     };
   });
@@ -1094,19 +1115,19 @@ async function getAIRanking(profile, eligible, feedbackItems, demo) {
 
   const system = [
     'You are Smart Match, the recommendation engine in NETS Vouch AI — a Singapore payments app rewarding people for eating at local merchants.',
-    'Pick the single best merchant for this user from the supplied "Eligible merchants" list only. Write a short, specific reason a real person would find useful.',
-    'Only use supplied facts. Unknown dietary suitability, cuisine, exact prices, menu items and walking times must not be inferred.',
+    'Pick the single best merchant for this user from the supplied "Eligible merchants" list only. Every listed merchant is already allowed; never mention or invent any other place.',
     '',
-    'Weigh signals in this order: (1) cravingMatch === "match" when the user gave a specific craving, (2) matchesDietaryPreference, (3) matchesCurrentMood, (4) distanceMetres - a candidate materially nearer than the others should usually win unless another candidate clearly matches the craving/preference and this one does not.',
-    'cravingMatch is "unknown" whenever the merchant\'s factual data does not confirm or rule out the craving - treat "unknown" exactly like "non-match": never pick it AS the reason for the match, and never claim a merchant satisfies the craving unless cravingMatch is literally "match". A near merchant with cravingMatch "unknown" must not be described as matching the craving.',
-    'A far generic merchant must not casually outrank a much nearer merchant that already matches the craving/mood/preference. matchesCurrentMood/matchesDietaryPreference being false is neutral, not a confirmed mismatch - never say a merchant "doesn\'t match" because a field is unknown.',
-    'When insideFoodCourt is set, the candidate is a specific stall inside that food court - recommend the stall, not the food court name.',
+    'CRAVING: the user may type any free-text craving - specific ("crispy chicken"), a mood ("warm comfort food"), or vague ("surprise me"). Interpret it semantically and judge each merchant ONLY from its supplied name, categories, cuisine tags, dish (when given) and parentVenue.',
+    'relevance: "high" when those facts clearly fit the craving; "medium" when they plausibly relate; "low" when nothing clearly fits. Always still pick the best available merchant - never refuse.',
+    'For a vague craving or none, pick a good nearby option using mood and distance.',
+    'When relevance is similar, prefer the nearer merchant (distanceMetres). A generic category such as "Restaurant" is uncertain, not a fit.',
+    'matchesCurrentMood/matchesDietaryPreference being false is neutral, not a confirmed mismatch.',
+    'When parentVenue is set, the candidate is a specific stall inside that venue - recommend the stall, not the venue.',
     '',
-    'GOOD reasons name a concrete supplied detail, such as cuisine, matchesCurrentMood, or straight-line distance.',
-    'For discovered places, do not turn straight-line distance into a walking time.',
-    '',
-    'BAD reasons are vague and must never be written:',
-    '  "Best match for your preferences."  "Matches your dietary preference and budget."  "Good option for you."',
+    'REASON: one short sentence (max 20 words) citing only supplied facts, e.g. "Its Fried Chicken Restaurant category is a close fit for your crispy chicken craving."',
+    'If relevance is "low", say it is the closest available fit - never claim it satisfies the craving.',
+    'Never claim menu items or dishes that are not in the dish field, dietary suitability (halal/vegetarian/vegan) not in the dietary field, prices or affordability when price is "unknown", ratings or popularity.',
+    'Do not turn straight-line distance into a walking time. Avoid vague reasons like "Good option for you."',
     '',
     'Reply with valid JSON only — no markdown, no extra text.'
   ].join('\n');
@@ -1134,7 +1155,7 @@ async function getAIRanking(profile, eligible, feedbackItems, demo) {
     'Eligible merchants:',
     JSON.stringify(merchantSummaries),
     '',
-    'Output: {"merchantId":"<exact id>","reason":"<specific one sentence, max 15 words>"}'
+    'Output: {"merchantId":"<exact id>","relevance":"high|medium|low","reason":"<one sentence, max 20 words>"}'
   );
   const userMessage = userParts.join('\n');
 
@@ -1151,7 +1172,7 @@ async function getAIRanking(profile, eligible, feedbackItems, demo) {
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
-        max_tokens: 100,
+        max_tokens: 120,
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: userMessage }
@@ -1164,10 +1185,11 @@ async function getAIRanking(profile, eligible, feedbackItems, demo) {
     aiContent = aiContent.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
     const parsed = JSON.parse(aiContent);
     if (typeof parsed.merchantId !== 'string' || typeof parsed.reason !== 'string' ||
-        !parsed.reason.trim() || parsed.reason.trim().length > 160 || /[\r\n<>]/.test(parsed.reason)) {
-      throw new Error('AI response missing merchantId or reason');
+        !parsed.reason.trim() || parsed.reason.trim().length > 160 || /[\r\n<>]/.test(parsed.reason) ||
+        AI_RELEVANCE_LEVELS.indexOf(parsed.relevance) === -1) {
+      throw new Error('AI response missing merchantId, relevance or reason');
     }
-    return { merchantId: parsed.merchantId, reason: parsed.reason.trim() };
+    return { merchantId: parsed.merchantId, relevance: parsed.relevance, reason: parsed.reason.trim() };
   } finally {
     clearTimeout(timeout);
   }
@@ -1256,9 +1278,9 @@ function getFallbackRecommendation(candidates, feedbackItems, profile) {
     let score = 150 - distancePenalty(merchant);
     if (!lastFeedback && merchant.id === 'felicia-chicken-rice') score += 15;
     if (merchant.price !== null) score += Math.max(0, profile.budget - merchant.price);
-    // Issue 1: a specific craving is the strongest ranking signal - a factual match must not be
-    // casually outranked by a merely-closer unrelated merchant. Unknown/non-match stays neutral.
-    if (getCravingMatchState(merchant, profile.craving) === MATCH_STATE.MATCH) score += 100;
+    // No semantic craving understanding here (that is the AI's job) - only the user's own words
+    // literally appearing in the merchant's factual name/category data earn a nudge.
+    if (merchantMentionsCraving(merchant, profile.craving)) score += 100;
     // Explicit factual preference match only - unknown/non-match dietary data stays neutral.
     if (getDietaryMatchState(merchant, profile.dietaryPreference) === MATCH_STATE.MATCH) score += 35;
     // Current mood outranks historical preference for this session (Step 11), but only when the
@@ -1303,9 +1325,9 @@ function logSmartMatchDebug(profile, feedbackItems, candidates, noCloserMatch, e
   lines.push('Preferences: dietary=' + profile.dietaryPreference + ', mood=' + (profile.moodCuisine || 'any') +
     ', craving=' + (profile.craving || 'none'));
   lines.push('Previously shown/rejected excluded: ' + excludedCount + (recycled ? ' (pool exhausted - recycling oldest-shown)' : ''));
-  const cravingMatches = isSpecificCraving(profile.craving) ?
-    candidates.filter(function(m) { return getCravingMatchState(m, profile.craving) === MATCH_STATE.MATCH; }).length : null;
-  if (cravingMatches !== null) lines.push('Craving matches: ' + cravingMatches);
+  const cravingMentions = isSpecificCraving(profile.craving) ?
+    candidates.filter(function(m) { return merchantMentionsCraving(m, profile.craving); }).length : null;
+  if (cravingMentions !== null) lines.push('Literal craving mentions: ' + cravingMentions);
   lines.push('Eligible candidates: ' + candidates.length);
   lines.push('Last rejection: ' + (lastFeedback ?
     lastFeedback.reason + ' (' + (lastFeedback.merchantId || 'unknown') + ')' : 'none'));
@@ -1318,21 +1340,23 @@ function logSmartMatchDebug(profile, feedbackItems, candidates, noCloserMatch, e
       ' parentVenue=' + (m.parentVenueName || 'none') +
       ' preferenceMatch=' + matchStateLabel(getDietaryMatchState(m, profile.dietaryPreference)) +
       ' moodMatch=' + matchStateLabel(getMoodMatchState(m, profile.moodCuisine)) +
-      ' cravingMatch=' + matchStateLabel(getCravingMatchState(m, profile.craving)));
+      ' cravingMention=' + merchantMentionsCraving(m, profile.craving));
   });
   logDiscovery(lines.join('\n'));
 }
 
-// Bounds the AI prompt's candidate list only - never the deterministic eligible pool itself
-// (Sprint 1.10: "only cap where necessary for AI prompt/token size AFTER deterministic
-// filtering"). Craving matches are kept first, then nearest distance.
+// Bounds the AI prompt's candidate list only - never the deterministic eligible pool itself.
+// Literal craving mentions are kept first. For a specific craving the remaining order is the
+// discovery order (craving-query results before any broad "food" fallback results), so nearby
+// generic places cannot crowd out what Foursquare returned for the craving; otherwise nearest.
 function capCandidatesForPrompt(candidates, profile, limit) {
   if (candidates.length <= limit) return candidates;
-  const scored = candidates.map(function(m) {
-    const cravingBonus = getCravingMatchState(m, profile.craving) === MATCH_STATE.MATCH ? 1000000 : 0;
-    return { m: m, key: cravingBonus - merchantDistanceMetres(m) };
+  const specific = isSpecificCraving(profile.craving);
+  const scored = candidates.map(function(m, index) {
+    return { m: m, mention: merchantMentionsCraving(m, profile.craving) ? 1 : 0,
+      order: specific ? index : merchantDistanceMetres(m) };
   });
-  scored.sort(function(a, b) { return b.key - a.key; });
+  scored.sort(function(a, b) { return (b.mention - a.mention) || (a.order - b.order); });
   return scored.slice(0, limit).map(function(s) { return s.m; });
 }
 const AI_PROMPT_CANDIDATE_LIMIT = 20;
@@ -1377,8 +1401,8 @@ async function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchant
       const ranking = await getAIRanking(profile, promptCandidates, feedbackItems, demo);
       const aiMerchant = findMerchantById(candidates, ranking.merchantId);
       if (aiMerchant) {
-        logDiscovery('Selection source: OPENAI -> ' + aiMerchant.merchantName);
-        return { merchant: aiMerchant, reason: ranking.reason, noCloserMatch: false };
+        logDiscovery('Selection source: OPENAI -> ' + aiMerchant.merchantName + ' (relevance: ' + ranking.relevance + ')');
+        return { merchant: aiMerchant, reason: safeAIReason(ranking, aiMerchant), noCloserMatch: false };
       }
     } catch (error) {
       console.log('AI ranking unavailable, using rule-based fallback:', error.message);
@@ -2324,7 +2348,7 @@ module.exports = { app: app, createInitialDemo: createInitialDemo, demoStore: de
   getNearbyMerchants: getNearbyMerchants, getEligibleMerchants: getEligibleMerchants,
   getSmartRecommendation: getSmartRecommendation,
   getMoodMatchState: getMoodMatchState, getDietaryMatchState: getDietaryMatchState,
-  getCravingMatchState: getCravingMatchState,
+  merchantMentionsCraving: merchantMentionsCraving,
   MATCH_STATE: MATCH_STATE,
   getMerchantCampaigns: function() { return merchantCampaignStore; },
   resetMerchantCampaigns: function() { merchantCampaignStore = createCampaigns(); },

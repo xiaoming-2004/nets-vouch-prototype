@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { app, createInitialDemo, getNearbyMerchants, getEligibleMerchants,
   getSmartRecommendation, getMerchantCampaigns, resetMerchantCampaigns,
-  getMoodMatchState, getDietaryMatchState, getCravingMatchState, MATCH_STATE,
+  getMoodMatchState, getDietaryMatchState, merchantMentionsCraving, MATCH_STATE,
   clearDiscoveryCache } = require('../app');
 
 const originalFetch = global.fetch;
@@ -52,9 +52,10 @@ async function candidates() {
   return (await getNearbyMerchants()).merchants;
 }
 
-function aiResponse(merchantId, reason) {
+function aiResponse(merchantId, reason, relevance) {
   return { ok: true, json: async function() {
-    return { choices: [{ message: { content: JSON.stringify({ merchantId: merchantId, reason: reason }) } }] };
+    return { choices: [{ message: { content: JSON.stringify({ merchantId: merchantId,
+      relevance: relevance === undefined ? 'high' : relevance, reason: reason }) } }] };
   } };
 }
 
@@ -984,33 +985,33 @@ test('TEST C: a specific craving with too few results triggers at most one broad
   assert.ok(names.includes('Some Diner'), 'the fallback pool must be merged in');
 });
 
-test('TEST D: a factual craving match ranks ahead of a generic candidate', async function() {
+test('TEST D: without AI, the fallback nudges a merchant that literally names the craving', async function() {
   process.env.FOURSQUARE_API_KEY = 'test-key';
-  const mock = mockFoursquareByQuery({ bread: [
+  const mock = mockFoursquareByQuery({ bakery: [
     fsqPlace('bakery', 'Corner Bakery', 'Bakery', { distance: 300 }),
     fsqPlace('generic', 'Generic Restaurant', 'Restaurant', { distance: 100 })
   ] });
   global.fetch = mock.fetchFn;
   const demo = createInitialDemo('jia');
-  demo.profile.craving = 'bread';
+  demo.profile.craving = 'bakery';
   demo.profile.maxDistanceMinutes = 30;
-  const nearby = await getNearbyMerchants({ latitude: 1.45, longitude: 103.82 }, 'jia', 'bread');
+  const nearby = await getNearbyMerchants({ latitude: 1.45, longitude: 103.82 }, 'jia', 'bakery');
   const result = await getSmartRecommendation(demo.profile, nearby.merchants, [], [], demo);
   assert.equal(result.merchant.merchantName, 'Corner Bakery',
-    'the factual bread/bakery match must outrank the nearer but unrelated generic restaurant');
+    'the user\'s own words appearing in factual data must outrank a nearer generic restaurant');
 });
 
-test('TEST E: no fabricated craving match for a merchant with only generic metadata', async function() {
-  const genericMerchant = { category: 'foursquare.place', categoryLabel: 'Restaurant',
-    merchantName: 'Food Leaf', itemName: null, cuisineTags: [], dietary: [] };
-  assert.equal(getCravingMatchState(genericMerchant, 'bread'), MATCH_STATE.NON_MATCH,
-    'a known-generic category with no bread evidence must not be an unresolved unknown either, but it must never be MATCH');
-  const trulyUnknownMerchant = { category: 'foursquare.place', categoryLabel: 'Food & drink',
-    merchantName: 'Mystery Place', itemName: null, cuisineTags: [], dietary: [] };
-  assert.equal(getCravingMatchState(trulyUnknownMerchant, 'bread'), MATCH_STATE.UNKNOWN);
-  const bakery = { category: 'foursquare.place', categoryLabel: 'Bakery',
-    merchantName: 'Corner Bakery', itemName: null, cuisineTags: ['bakery'], dietary: [] };
-  assert.equal(getCravingMatchState(bakery, 'bread'), MATCH_STATE.MATCH);
+test('TEST E: the literal craving check uses only the user\'s words - no vocabulary, no fabrication', function() {
+  const merchant = function(name, category) {
+    return { merchantName: name, itemName: null, categoryLabel: category, categoryNames: [category], cuisineTags: [], dietary: [] };
+  };
+  assert.equal(merchantMentionsCraving(merchant('Food Leaf', 'Restaurant'), 'bread'), false);
+  assert.equal(merchantMentionsCraving(merchant('Corner Bakery', 'Bakery'), 'bread'), false,
+    'bread -> bakery is semantic and belongs to the AI, not a hardcoded mapping');
+  assert.equal(merchantMentionsCraving(merchant('Bread Society', 'Café'), 'bread'), true);
+  assert.equal(merchantMentionsCraving(merchant('Prime Steakhouse', 'Steakhouse'), 'tea'), false,
+    'whole-word only: "tea" must not match inside "Steakhouse"');
+  assert.equal(merchantMentionsCraving(merchant('Bread Society', 'Café'), 'anything'), false);
 });
 
 test('TEST F: fresh GPS options use enableHighAccuracy and maximumAge 0', async function() {
@@ -1285,4 +1286,146 @@ test('CONTAINER H: a known container with no child result is excluded, with no f
   const names = await containerPoolNames([fsqPlace('fc', 'ABC Food Centre', 'Food Court'),
     fsqPlace('s', 'Food Leaf', 'Restaurant')]);
   assert.deepEqual(names, ['Food Leaf']);
+});
+
+// ---------------------------------------------------------------------------
+// CRAVING - free-text craving, AI semantic ranking over rule-approved candidates only
+// ---------------------------------------------------------------------------
+
+// Mocks Foursquare plus OpenAI, recording the merchant IDs and prompt the AI was actually shown.
+function mockFoursquareAndAI(results, aiReply) {
+  const seen = { ids: [], prompt: '' };
+  const foursquare = Array.isArray(results) ? mockFoursquare(results) : mockFoursquareByQuery(results);
+  const fetchFn = async function(url, options) {
+    if (new URL(String(url)).hostname === 'api.openai.com') {
+      const body = JSON.parse(String(options.body));
+      seen.prompt = body.messages.map(function(m) { return m.content; }).join('\n');
+      const listed = seen.prompt.match(/"id":"(foursquare-[^"]+)"/g) || [];
+      seen.ids = listed.map(function(entry) { return entry.slice(6, -1); });
+      if (aiReply === 'throw') throw new Error('provider unavailable');
+      return aiReply;
+    }
+    return foursquare.fetchFn(url, options);
+  };
+  return { fetchFn: fetchFn, seen: seen, getRequests: foursquare.getRequests };
+}
+
+async function recommendFor(craving, results, aiReply, setup) {
+  process.env.FOURSQUARE_API_KEY = 'test-key';
+  process.env.OPENAI_API_KEY = 'test-openai';
+  const mock = mockFoursquareAndAI(results, aiReply);
+  global.fetch = mock.fetchFn;
+  const demo = createInitialDemo('jia');
+  demo.profile.craving = craving;
+  demo.profile.maxDistanceMinutes = 30;
+  const nearby = await getNearbyMerchants({ latitude: 1.45, longitude: 103.82 }, 'jia', craving);
+  const extra = setup ? setup(demo) : {};
+  const result = await getSmartRecommendation(demo.profile, nearby.merchants, extra.rejected || [],
+    extra.feedback || [], demo, []);
+  return { result: result, seen: mock.seen, requests: mock.getRequests() };
+}
+
+const crispyPlaces = [
+  fsqPlace('chicken', 'Seoul Bites', 'Korean Restaurant', { distance: 400,
+    categories: [{ name: 'Korean Restaurant' }, { name: 'Fried Chicken Joint' }] }),
+  fsqPlace('bakery', 'Corner Bakery', 'Bakery', { distance: 200 }),
+  fsqPlace('generic', 'Food Leaf', 'Restaurant', { distance: 100 })
+];
+
+test('CRAVING A: arbitrary craving - AI semantically picks the fried chicken merchant', async function() {
+  const reason = 'Its Fried Chicken Joint category is a close fit for your crispy chicken craving.';
+  const { result, seen } = await recommendFor('crispy chicken', crispyPlaces,
+    aiResponse('foursquare-chicken', reason, 'high'));
+  assert.equal(result.merchant.merchantName, 'Seoul Bites');
+  assert.equal(result.reason, reason);
+  assert.deepEqual(seen.ids.sort(), ['foursquare-bakery', 'foursquare-chicken', 'foursquare-generic'],
+    'the AI ranks every rule-approved candidate; no craving pre-gating');
+  assert.match(seen.prompt, /Fried Chicken Joint/, 'all factual Foursquare category names are supplied');
+});
+
+test('CRAVING B: a phrase with no mapping anywhere still gets an AI recommendation', async function() {
+  const { result } = await recommendFor('warm comforting food', crispyPlaces,
+    aiResponse('foursquare-generic', 'Food Leaf is the nearest restaurant, 100 m away.', 'medium'));
+  assert.equal(result.merchant.merchantName, 'Food Leaf');
+  assert.equal(result.reason, 'Food Leaf is the nearest restaurant, 100 m away.');
+});
+
+test('CRAVING C: a strange craving still recommends, with honest low-relevance wording', async function() {
+  const { result } = await recommendFor('purple unicorn noodles', crispyPlaces,
+    aiResponse('foursquare-generic', 'Food Leaf serves purple unicorn noodles.', 'low'));
+  assert.equal(result.merchant.merchantName, 'Food Leaf');
+  assert.equal(result.reason, 'This is the closest available fit from the nearby options.');
+});
+
+test('CRAVING D: an AI merchant ID outside the candidates is rejected for the fallback', async function() {
+  const { result } = await recommendFor('crispy chicken', crispyPlaces,
+    aiResponse('foursquare-invented', 'A place I made up.', 'high'));
+  assert.ok(result.merchant && result.merchant.id !== 'foursquare-invented');
+  assert.equal(result.reason, null, 'fallback picks carry no AI reason');
+});
+
+test('CRAVING E: the AI cannot select a rejected merchant', async function() {
+  const { result, seen } = await recommendFor('crispy chicken', crispyPlaces,
+    aiResponse('foursquare-chicken', 'Fried chicken fit.', 'high'),
+    function() { return { rejected: ['foursquare-chicken'] }; });
+  assert.ok(!seen.ids.includes('foursquare-chicken'), 'a rejected merchant is never even shown to the AI');
+  assert.notEqual(result.merchant.id, 'foursquare-chicken');
+});
+
+test('CRAVING F: the AI cannot bypass the Too far constraint', async function() {
+  const { result, seen } = await recommendFor('crispy chicken', crispyPlaces,
+    aiResponse('foursquare-chicken', 'Fried chicken fit.', 'high'),
+    function() { return { feedback: [{ merchantId: 'foursquare-x', reason: 'too-far', category: 'foursquare.place',
+      price: null, distanceMinutes: 4, distanceMetres: 300, cuisineTags: [] }] }; });
+  assert.ok(!seen.ids.includes('foursquare-chicken'), 'the 400 m merchant is removed before the AI sees it');
+  assert.ok(result.merchant.distanceMetres < 300);
+});
+
+test('CRAVING G: an AI exception still returns a valid fallback merchant', async function() {
+  const { result } = await recommendFor('crispy chicken', crispyPlaces, 'throw');
+  assert.ok(['foursquare-chicken', 'foursquare-bakery', 'foursquare-generic'].includes(result.merchant.id));
+  assert.equal(result.reason, null);
+});
+
+test('CRAVING H: the raw craving is still the Foursquare query', async function() {
+  const { requests } = await recommendFor('crispy chicken', { 'crispy chicken': crispyPlaces.concat([
+    fsqPlace('d', 'Place D', 'Restaurant'), fsqPlace('e', 'Place E', 'Restaurant')]) },
+  aiResponse('foursquare-chicken', 'Fried chicken fit.', 'high'));
+  assert.deepEqual(requests.map(function(r) { return r.query; }), ['crispy chicken']);
+});
+
+test('CRAVING I: one broad food fallback still runs, and the merged pool is ranked by AI', async function() {
+  const { result, seen, requests } = await recommendFor('crispy chicken', {
+    'crispy chicken': [crispyPlaces[0]],
+    food: [fsqPlace('near', 'Food Leaf', 'Restaurant', { distance: 20 })]
+  }, aiResponse('foursquare-chicken', 'Its Fried Chicken Joint category fits your craving.', 'high'));
+  assert.deepEqual(requests.map(function(r) { return r.query; }), ['crispy chicken', 'food']);
+  assert.deepEqual(seen.ids.sort(), ['foursquare-chicken', 'foursquare-near']);
+  assert.equal(result.merchant.merchantName, 'Seoul Bites');
+});
+
+test('CRAVING J: a reason citing a supplied category is kept', async function() {
+  const reason = 'Categorised as a Bakery, a good fit for something sweet.';
+  const { result } = await recommendFor('something sweet', crispyPlaces, aiResponse('foursquare-bakery', reason, 'medium'));
+  assert.equal(result.reason, reason);
+});
+
+test('CRAVING K: a reason claiming unsupported menu, dietary, price or rating facts is dropped', async function() {
+  const claims = ['Food Leaf serves great crispy chicken wings.', 'A halal-certified spot nearby.',
+    'Cheap and filling, well within your budget.', 'Highly rated by locals.'];
+  for (const claim of claims) {
+    const { result } = await recommendFor('crispy chicken', crispyPlaces, aiResponse('foursquare-generic', claim, 'high'));
+    assert.equal(result.merchant.merchantName, 'Food Leaf', 'the valid pick itself is kept');
+    assert.equal(result.reason, null, 'unsupported claim must not be shown: ' + claim);
+  }
+});
+
+test('CRAVING L: a craving that appears nowhere in the source still produces an AI recommendation', async function() {
+  const craving = 'zqx' + Date.now() + ' glimmerberry stew';
+  const source = require('fs').readFileSync(require('path').join(__dirname, '..', 'app.js'), 'utf8');
+  assert.ok(!source.includes('glimmerberry'));
+  const { result, requests } = await recommendFor(craving, crispyPlaces,
+    aiResponse('foursquare-bakery', 'Corner Bakery is the closest fit on offer.', 'low'));
+  assert.equal(requests[0].query, craving);
+  assert.equal(result.merchant.merchantName, 'Corner Bakery');
 });
