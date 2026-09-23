@@ -6,6 +6,14 @@
 <p>No closer matches available in your current nearby results.</p>
 <form method="POST" action="/recommendation/try-again"><button class="button" type="submit">Try another match</button></form>
 <a class="text-button" href="/scan">Scan a merchant directly</a>
+<% } else if (typeof researchUnavailable !== 'undefined' && researchUnavailable) { %>
+<h2>We couldn't check <%= dietaryLabel.toLowerCase() %> options right now.</h2>
+<% if (locationNotice) { %><p>Using demo location</p><% } %>
+<p>Dietary suitability needs live menu research, which is unavailable at the moment. Please try again shortly.</p>
+<% } else if (typeof noVerifiedDietary !== 'undefined' && noVerifiedDietary) { %>
+<h2>No verified <%= dietaryLabel.toLowerCase() %> matches found nearby.</h2>
+<% if (locationNotice) { %><p>Using demo location</p><% } %>
+<p>We only recommend places where <%= dietaryLabel.toLowerCase() %> suitability is backed by real evidence, and none nearby could be verified right now.</p>
 <% } else { %>
 <h2>No spots nearby right now</h2>
 <% if (locationNotice) { %><p>Using demo location</p><% } %>

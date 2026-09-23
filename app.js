@@ -246,7 +246,7 @@ function merchantCategoryNames(merchant) {
 function merchantMentionsCraving(merchant, craving) {
   if (!isSpecificCraving(craving)) return false;
   const text = normaliseMatchText([merchant.merchantName, merchant.itemName || '']
-    .concat(merchantCategoryNames(merchant), merchantCuisineTags(merchant)).join(' '));
+    .concat(merchantCategoryNames(merchant)).join(' '));
   return textHasTerm(text, normaliseCravingQuery(craving));
 }
 
@@ -603,15 +603,9 @@ function sanitizeCraving(value) {
 function merchantMatchesProfile(merchant, profile) {
   if (merchant.price !== null && merchant.price > profile.budget) return false;
   if (merchant.distanceMinutes > profile.maxDistanceMinutes) return false;
-  if (profile.dietaryPreference === 'none') return true;
-  // A real discovered merchant (Foursquare) does not verify dietary suitability the way the
-  // curated local demo merchants do. Unknown is not a confirmed mismatch - it stays eligible.
-  if (merchant.source === 'FOURSQUARE' && merchant.dietary.length === 0) return true;
-
-  for (let i = 0; i < merchant.dietary.length; i++) {
-    if (merchant.dietary[i] === profile.dietaryPreference) return true;
-  }
-  return false;
+  // Only a known dietary NON_MATCH is excluded here. Everything else is resolved by
+  // applyMerchantResearch, which keeps research-verified SUITABLE merchants only.
+  return getDietaryMatchState(merchant, profile.dietaryPreference) !== MATCH_STATE.NON_MATCH;
 }
 
 function calculateDistanceMetres(latitude, longitude, origin) {
@@ -754,10 +748,12 @@ function parseFoursquareNearbyPlaces(results, origin) {
       price: null,
       category: 'foursquare.place',
       categoryLabel: categoryLabel,
+      website: typeof place.website === 'string' && place.website.trim() ? place.website.trim() : null,
       categoryNames: Array.isArray(place.categories) ? place.categories.map(function(c) {
         return c && typeof c.name === 'string' ? c.name.trim() : '';
       }).filter(Boolean) : [],
       address: address,
+      // Dietary suitability is never read from Foursquare words - only from merchant research.
       dietary: [],
       cuisineTags: parseFoursquareCuisineTags(place.categories),
       // Used only for the existing distance filter; the UI displays metres, never walking time.
@@ -1061,21 +1057,574 @@ const LOW_RELEVANCE_REASON = 'This is the closest available fit from the nearby 
 // Conservative guard on the AI's free-text reason - not an NLP validator. A reason that asserts
 // dietary, price, menu or rating facts the merchant record does not carry is discarded, so the
 // card falls back to its deterministic "Why this match" copy instead of an invented claim.
-function aiReasonClaimsUnsupportedFacts(reason, merchant) {
-  const dietaryClaims = reason.toLowerCase().match(/\b(halal|vegetarian|vegan|kosher|gluten[- ]free|muslim[- ]friendly)\b/g) || [];
-  if (dietaryClaims.some(function(claim) { return merchant.dietary.indexOf(claim) === -1; })) return true;
-  if (merchant.price === null &&
+// Dietary claim word -> the existing preference value that must be a verified MATCH to say it.
+const dietaryClaimTerms = [['halal', 'halal'], ['muslim friendly', 'halal'], ['vegetarian', 'vegetarian'],
+  ['veggie', 'vegetarian'], ['meat free', 'vegetarian'], ['meatless', 'vegetarian'], ['vegan', 'vegan'],
+  ['plant based', 'vegan'], ['kosher', null], ['gluten free', null]];
+
+function aiReasonClaimsUnsupportedFacts(reason, merchant, profile) {
+  const text = normaliseMatchText(reason);
+  if (dietaryClaimTerms.some(function(entry) {
+    return textHasTerm(text, entry[0]) &&
+      (!entry[1] || getDietaryMatchState(merchant, entry[1]) !== MATCH_STATE.MATCH);
+  })) return true;
+  if ((textHasTerm(text, 'dietary') || textHasTerm(text, 'diet')) &&
+      (!profile || profile.dietaryPreference === 'none' || isDietaryUnverified(merchant, profile))) return true;
+  if (merchant.price === null && !hasResearchedPrices(merchant) &&
       /\$\s?\d|\b(cheap|cheapest|affordable|inexpensive|budget|pric(e|ed|es|ey)|value for money)\b/i.test(reason)) return true;
-  if (!merchant.itemName &&
+  if (!merchant.itemName && !hasResearchedMenu(merchant) &&
       /\b(menu|serves?|serving|signature|famous for|known for|speciali[sz]es in|dish(es)?)\b/i.test(reason)) return true;
   return /\b(rated|ratings?|reviews?|popular)\b/i.test(reason);
 }
 
 // Server-side acceptance of an AI ranking that already passed the eligible-ID check: a "low"
 // relevance pick keeps honest fixed wording; an unsupported factual claim drops the AI reason.
-function safeAIReason(ranking, merchant) {
-  if (ranking.relevance === 'low') return LOW_RELEVANCE_REASON;
-  return aiReasonClaimsUnsupportedFacts(ranking.reason, merchant) ? null : ranking.reason;
+// An unverified dietary pick keeps an explicit note so it is never read as verified.
+function safeAIReason(ranking, merchant, profile) {
+  let reason = ranking.relevance === 'low' ? LOW_RELEVANCE_REASON :
+    aiReasonClaimsUnsupportedFacts(ranking.reason, merchant, profile) ? null : ranking.reason;
+  if (reason && isDietaryUnverified(merchant, profile)) reason += ' ' + DIETARY_UNVERIFIED_NOTE;
+  return reason;
+}
+
+// ---------------------------------------------------------------------------
+// Merchant research (dietary verification): for an active restriction, Tavily Search looks for the
+// exact outlet's pages about THAT requirement, the strongest 1-2 pages are fetched with Tavily
+// Extract (batched), and one common analysis request - Groq primary, OpenAI fallback - reads that
+// real page content and answers one question per merchant: does this exact merchant offer at least
+// one option suitable for the requested diet? ONE validator checks the answer whichever provider
+// produced it. No Tavily evidence means no analysis at all, so nothing is answered from model
+// memory. Verdicts are cached per place + restriction and reused by every visitor.
+// ---------------------------------------------------------------------------
+const RESEARCH_STATUS = { SUITABLE: 'SUITABLE', UNKNOWN: 'UNKNOWN', UNSUITABLE: 'UNSUITABLE' };
+const RESEARCH_DIETS = ['vegan', 'vegetarian', 'halal'];
+const RESEARCH_SOURCE_TYPES = ['certification', 'official', 'social', 'delivery', 'listing', 'community', 'other'];
+// Batches of 3 keep each analysis request well inside Groq's free-tier token limit; research stops
+// as soon as RESEARCH_TARGET_VERIFIED merchants are verified and never exceeds RESEARCH_MAX_CALLS
+// batches (at most RESEARCH_BATCH_SIZE * RESEARCH_MAX_CALLS merchants per Smart Match).
+const RESEARCH_BATCH_SIZE = 3;
+const RESEARCH_MAX_CALLS = 3;
+const RESEARCH_TARGET_VERIFIED = 2;
+// v6: verdicts are per restriction (targeted search + extracted pages), not a shared profile.
+const RESEARCH_CACHE_VERSION = 'research-v6';
+const RESEARCH_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const RESEARCH_CACHE_MAX_ENTRIES = 1000;
+const RESEARCH_MATCHING_ITEM_LIMIT = 5;
+const RESEARCH_EVIDENCE_CHARS = 240;
+const TAVILY_TIMEOUT_MS = 15000;
+const TAVILY_EXTRACT_TIMEOUT_MS = 25000;
+const TAVILY_SEARCH_RESULTS = 5;
+// Per merchant: the strongest pages are extracted; their cleaned content is size-limited before
+// analysis. If every extraction fails, the strongest search snippets are sent instead (marked weak).
+const RESEARCH_EXTRACT_URLS_PER_MERCHANT = 2;
+const RESEARCH_EXTRACT_CHARS = 1500;
+const RESEARCH_EXTRACT_MIN_USEFUL_CHARS = 200;
+const RESEARCH_SNIPPET_SOURCES = 3;
+const RESEARCH_SNIPPET_CHARS = 300;
+// Retrieval intent only (what pages to look for) - never used to judge suitability.
+const RESEARCH_QUERY_TERMS = { vegetarian: 'vegetarian menu', vegan: 'vegan menu', halal: 'halal MUIS' };
+// Both reasoning providers speak the OpenAI-compatible chat completions API, so one caller serves
+// both. Order is priority: the next provider is only tried when the previous one is unavailable,
+// errors, or returns output that fails validation. Models are overridable without a code change.
+const RESEARCH_PROVIDERS = [
+  { id: 'groq', label: 'Groq', keyEnv: 'GROQ_API_KEY', url: 'https://api.groq.com/openai/v1/chat/completions',
+    model: function() { return process.env.GROQ_RESEARCH_MODEL || 'openai/gpt-oss-20b'; },
+    extra: { reasoning_effort: 'low', max_tokens: 1500 } },
+  { id: 'openai', label: 'OpenAI', keyEnv: 'OPENAI_API_KEY', url: 'https://api.openai.com/v1/chat/completions',
+    model: function() { return process.env.OPENAI_RESEARCH_MODEL || 'gpt-4o-mini'; },
+    extra: { max_tokens: 1500 } }
+];
+const RESEARCH_ANALYSIS_TIMEOUT_MS = 30000;
+const merchantResearchCache = new Map();
+
+function clearMerchantResearchCache() {
+  merchantResearchCache.clear();
+}
+
+// One verdict per real place AND restriction (e.g. "research-v6:<fsq_place_id>:vegetarian") -
+// vegetarian-targeted research is never reused as vegan or halal verification.
+function merchantResearchKey(merchant, restriction) {
+  return RESEARCH_CACHE_VERSION + ':' + (merchant.externalPlaceId || merchant.id) + ':' + restriction;
+}
+
+function getCachedMerchantResearch(merchant, restriction) {
+  const key = merchantResearchKey(merchant, restriction);
+  const entry = merchantResearchCache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) { merchantResearchCache.delete(key); return null; }
+  return entry.research;
+}
+
+function cacheMerchantResearch(merchant, research) {
+  if (merchantResearchCache.size >= RESEARCH_CACHE_MAX_ENTRIES) {
+    merchantResearchCache.delete(merchantResearchCache.keys().next().value);
+  }
+  merchantResearchCache.set(merchantResearchKey(merchant, research.restriction),
+    { expiresAt: research.researchedAt + RESEARCH_CACHE_TTL_MS, research: research });
+}
+
+// Every cached verdict for this merchant (any restriction), keyed by restriction.
+function attachCachedResearch(merchant) {
+  const research = {};
+  RESEARCH_DIETS.forEach(function(diet) {
+    const cached = getCachedMerchantResearch(merchant, diet);
+    if (cached) research[diet] = cached;
+  });
+  merchant.research = research;
+}
+
+// Menu items that research actually evidenced for this merchant (from any restriction's verdict).
+function merchantResearchedItems(merchant) {
+  const items = [];
+  if (!merchant.research) return items;
+  RESEARCH_DIETS.forEach(function(diet) {
+    const verdict = merchant.research[diet];
+    if (verdict && verdict.identified) {
+      verdict.matchingItems.forEach(function(item) {
+        if (!items.some(function(existing) { return existing.name === item.name; })) items.push(item);
+      });
+    }
+  });
+  return items;
+}
+
+function hasResearchedMenu(merchant) {
+  return merchantResearchedItems(merchant).length > 0;
+}
+
+function hasResearchedPrices(merchant) {
+  return merchantResearchedItems(merchant).some(function(item) { return item.price !== null; });
+}
+
+function formatResearchedMenuItem(item) {
+  return item.name + (item.price !== null ? ' $' + item.price.toFixed(2) : '');
+}
+
+// Researched facts shown to the craving ranker: evidenced items plus the active diet's evidence.
+function researchSummaryForRanking(merchant, dietaryPreference) {
+  const items = merchantResearchedItems(merchant);
+  const verdict = dietaryPreference !== 'none' && merchant.research ? merchant.research[dietaryPreference] : null;
+  if (!items.length && !(verdict && verdict.identified)) return null;
+  return { menu: items.map(formatResearchedMenuItem), dietaryEvidence: verdict && verdict.identified ? verdict.evidence : null };
+}
+
+function emptyMerchantResearch(restriction, provider, evidenceStrength) {
+  return { restriction: restriction, identified: false, status: RESEARCH_STATUS.UNKNOWN, evidence: '',
+    matchingItems: [], sources: [], evidenceStrength: evidenceStrength || 'none',
+    researchedAt: Date.now(), researchProvider: provider, method: 'tavily' };
+}
+
+function parseHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url : null;
+  } catch (error) { return null; }
+}
+
+function urlKey(url) {
+  return url.hostname.replace(/^www\./, '') + url.pathname.replace(/\/+$/, '');
+}
+
+// Exact identity plus the active requirement's retrieval intent.
+function researchSearchQuery(merchant, restriction) {
+  const identity = [merchant.merchantName, merchant.parentVenueName, merchant.address, 'Singapore']
+    .filter(Boolean).join(' ');
+  return (identity.slice(0, 340) + ' ' + RESEARCH_QUERY_TERMS[restriction]).trim();
+}
+
+async function tavilyRequest(pathname, body, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(function() { controller.abort(); }, timeoutMs);
+  try {
+    const response = await fetch('https://api.tavily.com/' + pathname, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + process.env.TAVILY_API_KEY },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) throw new Error('Tavily ' + pathname + ' returned ' + response.status);
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// One Tavily search. Returns cleaned {title, url, content} results; throws on any failure.
+async function tavilySearch(query) {
+  const data = await tavilyRequest('search', { query: query, search_depth: 'basic', max_results: TAVILY_SEARCH_RESULTS },
+    TAVILY_TIMEOUT_MS);
+  if (!data || !Array.isArray(data.results)) throw new Error('malformed Tavily response');
+  return data.results.map(function(r) {
+    const url = r && typeof r.url === 'string' ? parseHttpUrl(r.url) : null;
+    if (!url) return null;
+    return { title: typeof r.title === 'string' ? r.title.replace(/\s+/g, ' ').trim().slice(0, 160) : url.hostname,
+      url: url.href, content: typeof r.content === 'string' ? r.content.replace(/\s+/g, ' ').trim() : '' };
+  }).filter(Boolean);
+}
+
+// One batched Tavily Extract call. Returns Map(urlKey -> raw page content) for pages it returned;
+// an HTTP/transport failure yields an empty Map (callers fall back to other evidence).
+async function tavilyExtract(urls, depth) {
+  const pages = new Map();
+  if (!urls.length) return pages;
+  try {
+    const data = await tavilyRequest('extract', { urls: urls, extract_depth: depth }, TAVILY_EXTRACT_TIMEOUT_MS);
+    (data && Array.isArray(data.results) ? data.results : []).forEach(function(r) {
+      const url = r && typeof r.url === 'string' ? parseHttpUrl(r.url) : null;
+      if (url && typeof r.raw_content === 'string') pages.set(urlKey(url), r.raw_content);
+    });
+  } catch (error) {
+    logDiscovery('Merchant research: Tavily extract (' + depth + ') failed (' + error.message + ')');
+  }
+  return pages;
+}
+
+// Generic page-text clean-up and size limiting. Markdown images/links and bare URLs are removed and
+// whitespace collapsed. A long page keeps its head; when the requested requirement's own name
+// first appears beyond the head, a window around it is kept too. This only chooses WHICH part of a
+// long page is sent - suitability is always judged by the reasoning provider, never here.
+function cleanExtractedContent(raw, restriction) {
+  const text = String(raw || '').replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/https?:\/\/\S+/g, ' ').replace(/[<>]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (text.length <= RESEARCH_EXTRACT_CHARS) return text;
+  const head = Math.floor(RESEARCH_EXTRACT_CHARS / 2);
+  const index = text.toLowerCase().indexOf(restriction, head);
+  if (index === -1) return text.slice(0, RESEARCH_EXTRACT_CHARS);
+  const windowStart = Math.max(head, index - Math.floor(head / 3));
+  return text.slice(0, head) + ' … ' + text.slice(windowStart, windowStart + RESEARCH_EXTRACT_CHARS - head);
+}
+
+// Generic source-quality tiers (lower is stronger) - never merchant-specific domains:
+// government/certification, the merchant's own site, its social page, delivery menus, food
+// listings, other, then community forums last.
+const DELIVERY_HOST_PATTERN = /(^|\.)(grab\.com|foodpanda\.[a-z.]+|deliveroo\.[a-z.]+)$/;
+const LISTING_HOST_PATTERN = /(^|\.)(tripadvisor\.[a-z.]+|burpple\.com|yelp\.[a-z.]+|sethlui\.com|eatbook\.sg|hungrygowhere\.com|chope\.co|quandoo\.[a-z.]+|google\.[a-z.]+)$/;
+const SOCIAL_HOST_PATTERN = /(^|\.)(facebook\.com|instagram\.com|tiktok\.com)$/;
+const COMMUNITY_HOST_PATTERN = /(^|\.)(reddit\.com|quora\.com|hardwarezone\.com\.sg|forums?\.[a-z.]+)$/;
+const SOURCE_TIER_TYPES = ['certification', 'official', 'social', 'delivery', 'listing', 'other', 'community'];
+
+function compactName(value) {
+  return String(value || '').toLowerCase().normalize('NFD').replace(/[^a-z0-9]/g, '');
+}
+
+function tavilySourceTier(result, merchant) {
+  const url = new URL(result.url);
+  const host = url.hostname.replace(/^www\./, '');
+  const name = compactName(merchant.merchantName).slice(0, 12);
+  const website = merchant.website ? parseHttpUrl(merchant.website) : null;
+  const ownsHost = (website && website.hostname.replace(/^www\./, '') === host) ||
+    (name.length >= 5 && compactName(host.split('.')[0]).indexOf(name) !== -1);
+  if (/\.gov(\.[a-z]{2})?$/.test(host)) return 0;
+  if (ownsHost) return 1;
+  if (SOCIAL_HOST_PATTERN.test(host) && name.length >= 5 && compactName(url.pathname).indexOf(name) !== -1) return 2;
+  if (DELIVERY_HOST_PATTERN.test(host)) return 3;
+  if (LISTING_HOST_PATTERN.test(host)) return 4;
+  if (COMMUNITY_HOST_PATTERN.test(host)) return 6;
+  return 5;
+}
+
+// Likely about this merchant: its name appears in the source's title, URL or text.
+function resultMentionsMerchant(result, merchant) {
+  const name = compactName(merchant.merchantName).slice(0, 12);
+  return name.length > 0 && compactName(result.title + ' ' + result.url + ' ' + result.content).indexOf(name) !== -1;
+}
+
+// Results ordered by exact-merchant relevance, then source quality, then Tavily's own order.
+function rankSearchResults(results, merchant) {
+  return results.map(function(result, index) {
+    return { result: result, relevant: resultMentionsMerchant(result, merchant) ? 0 : 1,
+      tier: tavilySourceTier(result, merchant), index: index };
+  }).sort(function(a, b) { return (a.relevant - b.relevant) || (a.tier - b.tier) || (a.index - b.index); });
+}
+
+function researchAnalysisMessages(evidence, restriction) {
+  const label = getDietaryPreferenceLabel(restriction).toLowerCase();
+  const definitions = {
+    vegetarian: 'SUITABLE when the sources establish at least one real menu item that is vegetarian - explicitly marked vegetarian, or an official menu description/ingredients that clearly make it vegetarian.',
+    vegan: 'SUITABLE when the sources establish at least one genuinely vegan item - explicitly marked vegan, or official ingredients that clearly make it vegan (no meat, fish, egg, dairy or honey). A vegetarian item is NOT vegan unless the sources establish that. If sauces/dairy/egg cannot be established, UNKNOWN. Never invent ingredients.',
+    halal: 'SUITABLE only with explicit outlet-level evidence: MUIS/official halal certification, an official merchant/outlet halal statement, or a reliable current source explicitly confirming this outlet is halal. A pork-free menu, cuisine or owner name is NOT enough.'
+  };
+  const system = [
+    'You verify ONE dietary requirement (' + label + ') for real Singapore food merchants for the NETS Vouch app.',
+    'Use ONLY the supplied sources (extracted web page content, or search snippets when evidenceStrength is "snippets"). Never use your own memory or knowledge of any merchant.',
+    'For each merchant answer: based only on these sources, does THIS exact merchant currently offer at least one menu option suitable for ' + label + '?',
+    'A mixed menu is fine: other items containing meat or other ingredients do not matter. Do not require the whole restaurant to be ' + label + '.',
+    definitions[restriction],
+    'identified=true only when the sources clearly concern this exact merchant/outlet (a chain\'s official menu counts for its outlets). With snippets-only evidence be conservative.',
+    'UNSUITABLE only when reliable evidence explicitly shows no suitable option (e.g. explicitly non-halal). Otherwise, when evidence is insufficient, UNKNOWN.',
+    'Source priority: certification authority, official merchant site/menu, official social/menu page, delivery menu, reputable listing, community sources last. Conflicting strong evidence means UNKNOWN.',
+    'matchingItems: up to ' + RESEARCH_MATCHING_ITEM_LIMIT + ' suitable items exactly as a source names them; price as a number (e.g. 8.9) only when shown, else null; sourceUrl = the source URL it came from.',
+    'Every URL you output MUST be copied exactly from that merchant\'s sources. evidence: one short sentence (max 25 words), "" when UNKNOWN with nothing to say.',
+    'Return one entry per merchant, as valid JSON only:',
+    '{"results":[{"merchantId":"<exact id>","identified":true,"status":"SUITABLE|UNKNOWN|UNSUITABLE","evidence":"...","matchingItems":[{"name":"...","price":8.9,"sourceUrl":"https://..."}],"sources":[{"title":"...","url":"https://...","sourceType":"certification|official|social|delivery|listing|community|other"}]}]}'
+  ].join('\n');
+  const merchants = evidence.map(function(e) {
+    const m = e.merchant;
+    return { merchantId: m.id, name: m.merchantName, categories: merchantCategoryNames(m),
+      parentVenue: m.parentVenueName || null, address: m.address || null, website: m.website || null,
+      evidenceStrength: e.strength, sources: e.sources };
+  });
+  return [{ role: 'system', content: system },
+    { role: 'user', content: 'Dietary requirement: ' + label + '\nMerchants:\n' + JSON.stringify(merchants) }];
+}
+
+// One OpenAI-compatible chat completions call returning the raw JSON text; throws on any failure.
+async function callResearchProvider(provider, messages) {
+  const controller = new AbortController();
+  const timeout = setTimeout(function() { controller.abort(); }, RESEARCH_ANALYSIS_TIMEOUT_MS);
+  try {
+    const response = await fetch(provider.url, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + process.env[provider.keyEnv] },
+      body: JSON.stringify(Object.assign({ model: provider.model(), messages: messages,
+        response_format: { type: 'json_object' } }, provider.extra))
+    });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const data = await response.json();
+    const content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+    if (typeof content !== 'string' || !content.trim()) throw new Error('empty response');
+    return content;
+  } catch (error) {
+    throw new Error(controller.signal.aborted ? 'timeout' : error.message);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Safe text normalisation: collapse whitespace/newlines, drop angle brackets and quote-only
+// filler, cap the length.
+function normaliseResearchText(value, max) {
+  if (typeof value !== 'string') return '';
+  const text = value.replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().replace(/^["'\s]+$/, '');
+  return text.length > max ? text.slice(0, max - 1).trim() + '…' : text;
+}
+
+// The ONE validator for every provider, applied at three levels:
+//  - whole response (throws, so the next provider is tried): non-JSON, no results array, a
+//    merchantId outside the batch or duplicated, or any URL that was not one of the sources
+//    supplied for that merchant (source injection);
+//  - per merchant: an unusable entry (not an object / no boolean identified) is dropped on its
+//    own - not cached, retried later - without affecting the rest of the batch;
+//  - per field: a bad status becomes UNKNOWN, a bad item is dropped, a bad price becomes null.
+//    SUITABLE/UNSUITABLE need evidence and a cited source that names this merchant (exact
+//    outlet); a vegetarian/vegan SUITABLE also needs at least one evidenced matching item.
+// Returns { profiles: Map(merchantId -> verdict), stats: { valid, partial, failed } }.
+function validateResearchAnalysis(content, evidence, restriction, providerId) {
+  const text = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  const parsed = JSON.parse(text);
+  if (!parsed || !Array.isArray(parsed.results)) throw new Error('missing results');
+  const allowedUrls = new Map();
+  const identityUrls = new Map();
+  const strengths = new Map();
+  evidence.forEach(function(e) {
+    allowedUrls.set(e.merchant.id, new Set(e.sources.map(function(s) { return urlKey(parseHttpUrl(s.url)); })));
+    identityUrls.set(e.merchant.id, new Set(e.sources.filter(function(s) { return resultMentionsMerchant(s, e.merchant); })
+      .map(function(s) { return urlKey(parseHttpUrl(s.url)); })));
+    strengths.set(e.merchant.id, e.strength);
+  });
+  const seenIds = new Set();
+  parsed.results.forEach(function(item) {
+    const id = item && typeof item === 'object' ? item.merchantId : null;
+    if (typeof id === 'string' && (!allowedUrls.has(id) || seenIds.has(id))) throw new Error('unexpected merchantId');
+    if (typeof id === 'string') seenIds.add(id);
+  });
+  const suppliedUrl = function(merchantId, value) {
+    if (value === null || value === undefined || value === '') return null;
+    const url = typeof value === 'string' ? parseHttpUrl(value) : null;
+    if (!url || !allowedUrls.get(merchantId).has(urlKey(url))) throw new Error('URL not from supplied sources');
+    return url.href;
+  };
+  const statuses = Object.keys(RESEARCH_STATUS).map(function(k) { return RESEARCH_STATUS[k]; });
+  const profiles = new Map();
+  const stats = { valid: 0, partial: 0, failed: 0 };
+  parsed.results.forEach(function(item) {
+    if (!item || typeof item !== 'object' || typeof item.merchantId !== 'string' || typeof item.identified !== 'boolean') {
+      stats.failed += 1;
+      return;
+    }
+    const id = item.merchantId;
+    let partial = false;
+    const verdict = emptyMerchantResearch(restriction, providerId, strengths.get(id));
+    const sources = (Array.isArray(item.sources) ? item.sources : []).slice(0, 5).map(function(src) {
+      if (!src || typeof src !== 'object') { partial = true; return null; }
+      const url = suppliedUrl(id, src.url);
+      if (!url) { partial = true; return null; }
+      return { title: normaliseResearchText(src.title, 120) || new URL(url).hostname, url: url,
+        sourceType: RESEARCH_SOURCE_TYPES.indexOf(src.sourceType) !== -1 ? src.sourceType : 'other' };
+    }).filter(Boolean);
+    const matchingItems = (Array.isArray(item.matchingItems) ? item.matchingItems : []).slice(0, RESEARCH_MATCHING_ITEM_LIMIT)
+      .map(function(m) {
+        const name = m && typeof m === 'object' ? normaliseResearchText(m.name, 80) : '';
+        if (!name) { partial = true; return null; }
+        const priceValid = typeof m.price === 'number' && Number.isFinite(m.price) && m.price >= 0 && m.price < 1000;
+        if (m.price !== null && m.price !== undefined && !priceValid) partial = true;
+        return { name: name, price: priceValid ? m.price : null, sourceUrl: suppliedUrl(id, m.sourceUrl) };
+      }).filter(Boolean);
+    let status = statuses.indexOf(item.status) !== -1 ? item.status : null;
+    const evidenceText = normaliseResearchText(item.evidence, RESEARCH_EVIDENCE_CHARS);
+    if (!status) { partial = true; status = RESEARCH_STATUS.UNKNOWN; }
+    const needsItems = restriction !== 'halal' && status === RESEARCH_STATUS.SUITABLE;
+    // Exact-outlet identity: a verdict must cite at least one source that actually names this
+    // merchant, so a page about a different outlet nearby can never verify it.
+    const namesMerchant = sources.some(function(src) { return identityUrls.get(id).has(urlKey(parseHttpUrl(src.url))); });
+    if (status !== RESEARCH_STATUS.UNKNOWN &&
+        (!evidenceText || !sources.length || !namesMerchant || (needsItems && !matchingItems.length))) {
+      partial = true;
+      status = RESEARCH_STATUS.UNKNOWN;
+    }
+    if (item.identified && sources.length) {
+      verdict.identified = true;
+      verdict.status = status;
+      verdict.evidence = status === RESEARCH_STATUS.UNKNOWN && !evidenceText ? '' : evidenceText;
+      verdict.matchingItems = matchingItems;
+      verdict.sources = sources;
+    }
+    stats[partial ? 'partial' : 'valid'] += 1;
+    profiles.set(id, verdict);
+  });
+  return { profiles: profiles, stats: stats };
+}
+
+// Providers still usable in this Smart Match request (configured, and not rate-limited earlier in it).
+function usableResearchProviders(state) {
+  return RESEARCH_PROVIDERS.filter(function(p) { return Boolean(process.env[p.keyEnv]) && !state.blocked[p.id]; });
+}
+
+// Common analysis: providers in priority order; the first VALID response wins, so OpenAI is never
+// called when Groq succeeded. A 429 blocks that provider for the rest of this Smart Match request
+// (no hammering) and the SAME evidence goes straight to the next provider. Returns an empty Map
+// when no provider is usable or all fail.
+async function analyseMerchantResearch(evidence, restriction, state) {
+  const messages = researchAnalysisMessages(evidence, restriction);
+  const available = usableResearchProviders(state);
+  if (!available.length) {
+    logDiscovery('Merchant research: AI analysis unavailable (no usable Groq/OpenAI provider)');
+    return new Map();
+  }
+  for (let i = 0; i < available.length; i++) {
+    const provider = available[i];
+    const next = available[i + 1];
+    try {
+      const outcome = validateResearchAnalysis(await callResearchProvider(provider, messages), evidence, restriction, provider.id);
+      logDiscovery(provider.label + ' research: ' + outcome.stats.valid + ' valid, ' + outcome.stats.partial +
+        ' partial, ' + outcome.stats.failed + ' failed');
+      return outcome.profiles;
+    } catch (error) {
+      if (error.message === 'HTTP 429') {
+        state.blocked[provider.id] = true;
+        logDiscovery(provider.label + ' 429 — stopping ' + provider.label + ' for this request');
+      } else {
+        logDiscovery('Merchant research: ' + provider.label + ' failed (' + error.message + ')');
+      }
+      logDiscovery(next ? 'Using ' + next.label + ' fallback for the same evidence' : 'Research fallback: unavailable');
+    }
+  }
+  return new Map();
+}
+
+// Researches one batch for one restriction:
+//  1. a targeted Tavily search per merchant (in parallel);
+//  2. the strongest RESEARCH_EXTRACT_URLS_PER_MERCHANT pages per merchant are fetched in ONE
+//     batched basic Tavily Extract call; strong (certification/official/social) pages that came
+//     back unusable get one batched advanced retry;
+//  3. merchants with no usable extracted page fall back to their strongest snippets (weak);
+//  4. one common analysis request over the whole batch.
+// Returns Map(merchantId -> verdict). A merchant whose search failed is absent (not cached,
+// retried later); one whose search found nothing gets a cached UNKNOWN without any LLM call.
+async function researchMerchants(batch, restriction, state) {
+  const profiles = new Map();
+  if (!batch.length) return profiles;
+  if (!process.env.TAVILY_API_KEY) {
+    logDiscovery('Merchant research unavailable: Tavily not configured (no web evidence, no AI guessing)');
+    return profiles;
+  }
+  logDiscovery('Merchant research batch (' + restriction + '): ' + batch.length + ' merchants');
+  const searched = await Promise.all(batch.map(async function(merchant) {
+    try {
+      return { merchant: merchant, ranked: rankSearchResults(await tavilySearch(researchSearchQuery(merchant, restriction)), merchant) };
+    } catch (error) {
+      logDiscovery('Merchant research: Tavily search failed for ' + merchant.id + ' (' + error.message + ')');
+      return null;
+    }
+  }));
+  const withResults = [];
+  searched.forEach(function(entry) {
+    if (!entry) return;
+    if (entry.ranked.length) withResults.push(entry);
+    else profiles.set(entry.merchant.id, emptyMerchantResearch(restriction, 'none'));
+  });
+  if (!withResults.length) return profiles;
+
+  const picks = withResults.map(function(entry) { return entry.ranked.slice(0, RESEARCH_EXTRACT_URLS_PER_MERCHANT); });
+  const uniqueUrls = function(list) {
+    return list.map(function(p) { return p.result.url; }).filter(function(url, i, all) { return all.indexOf(url) === i; });
+  };
+  const pages = await tavilyExtract(uniqueUrls([].concat.apply([], picks)), 'basic');
+  const usable = function(pick) {
+    const raw = pages.get(urlKey(parseHttpUrl(pick.result.url)));
+    return typeof raw === 'string' && cleanExtractedContent(raw, restriction).length >= RESEARCH_EXTRACT_MIN_USEFUL_CHARS;
+  };
+  const retry = [].concat.apply([], picks).filter(function(pick) { return pick.tier <= 2 && !usable(pick); });
+  if (retry.length) {
+    (await tavilyExtract(uniqueUrls(retry), 'advanced')).forEach(function(raw, key) { pages.set(key, raw); });
+  }
+
+  const evidence = withResults.map(function(entry, i) {
+    const extracted = picks[i].filter(usable).map(function(pick) {
+      return { title: pick.result.title, url: pick.result.url, sourceType: SOURCE_TIER_TYPES[pick.tier],
+        content: cleanExtractedContent(pages.get(urlKey(parseHttpUrl(pick.result.url))), restriction) };
+    });
+    const strength = extracted.length ? 'extracted' : 'snippets';
+    const sources = extracted.length ? extracted : entry.ranked.slice(0, RESEARCH_SNIPPET_SOURCES).map(function(pick) {
+      return { title: pick.result.title, url: pick.result.url, sourceType: SOURCE_TIER_TYPES[pick.tier],
+        content: pick.result.content.slice(0, RESEARCH_SNIPPET_CHARS) };
+    });
+    logDiscovery('Research ' + entry.merchant.merchantName + ': ' + entry.ranked.length + ' search results, ' +
+      extracted.length + '/' + picks[i].length + ' pages extracted (' + strength + ')');
+    return { merchant: entry.merchant, strength: strength, sources: sources };
+  });
+  (await analyseMerchantResearch(evidence, restriction, state)).forEach(function(profile, id) { profiles.set(id, profile); });
+  return profiles;
+}
+
+// Runs after every deterministic rule. Cached verdicts are attached to every Foursquare candidate
+// for free. New research is only MANDATORY for an active dietary restriction: the nearest
+// candidates without a verdict for that restriction are researched RESEARCH_BATCH_SIZE at a time,
+// stopping as soon as RESEARCH_TARGET_VERIFIED merchants are verified, after RESEARCH_MAX_CALLS
+// batches, or once no reasoning provider is usable (e.g. Groq rate-limited with no OpenAI) - so
+// no Tavily credits are spent on evidence nobody can analyse. With a restriction only
+// research-verified SUITABLE merchants are returned (original order); researchUnavailable flags
+// that research was needed but produced nothing at all, as opposed to "nothing verified".
+async function applyMerchantResearch(candidates, restriction) {
+  candidates.forEach(function(m) { if (m.source === 'FOURSQUARE') attachCachedResearch(m); });
+  if (!restriction || restriction === 'none') return { candidates: candidates, researchUnavailable: false };
+  const isVerified = function(m) { return getDietaryMatchState(m, restriction) === MATCH_STATE.MATCH; };
+  const pending = candidates.filter(function(m) { return m.source === 'FOURSQUARE' && !m.research[restriction]; })
+    .sort(function(a, b) { return merchantDistanceMetres(a) - merchantDistanceMetres(b); });
+  const state = { blocked: {} };
+  let researchCalls = 0;
+  let attempted = 0;
+  let obtained = 0;
+  while (pending.length && researchCalls < RESEARCH_MAX_CALLS &&
+      candidates.filter(isVerified).length < RESEARCH_TARGET_VERIFIED) {
+    if (researchCalls > 0 && (!process.env.TAVILY_API_KEY || !usableResearchProviders(state).length)) break;
+    const batch = pending.splice(0, RESEARCH_BATCH_SIZE);
+    researchCalls += 1;
+    attempted += batch.length;
+    const researched = await researchMerchants(batch, restriction, state);
+    batch.forEach(function(merchant) {
+      const research = researched.get(merchant.id);
+      if (!research) return; // failed: UNKNOWN now, not cached, retried later
+      obtained += 1;
+      cacheMerchantResearch(merchant, research);
+      merchant.research[restriction] = research;
+    });
+  }
+  const verified = candidates.filter(isVerified);
+  logDiscovery(getDietaryPreferenceLabel(restriction) + ' verified: ' + verified.length + ' of ' + candidates.length +
+    ' (' + researchCalls + ' research batch(es))');
+  return { candidates: verified, researchUnavailable: verified.length === 0 && attempted > 0 && obtained === 0 };
 }
 
 async function getAIRanking(profile, eligible, feedbackItems, demo) {
@@ -1091,9 +1640,11 @@ async function getAIRanking(profile, eligible, feedbackItems, demo) {
       distanceMetres: Number.isFinite(m.distanceMetres) ? m.distanceMetres : null,
       cuisine: merchantCuisineTags(m).length ? merchantCuisineTags(m).join(', ') : 'unknown',
       dietary: m.dietary.length ? m.dietary.join(', ') : 'unknown',
+      dietaryStatus: profile.dietaryPreference === 'none' ? 'no restriction' :
+        getDietaryMatchState(m, profile.dietaryPreference) === MATCH_STATE.MATCH ? 'verified' : 'unknown',
+      // Menu items evidenced by validated web research (cached per merchant + diet), when available.
+      research: researchSummaryForRanking(m, profile.dietaryPreference),
       matchesCurrentMood: merchantMatchesMood(m, profile.moodCuisine),
-      matchesDietaryPreference: profile.dietaryPreference !== 'none' &&
-        m.dietary.indexOf(profile.dietaryPreference) !== -1,
       location: m.address || ''
     };
   });
@@ -1117,16 +1668,18 @@ async function getAIRanking(profile, eligible, feedbackItems, demo) {
     'You are Smart Match, the recommendation engine in NETS Vouch AI — a Singapore payments app rewarding people for eating at local merchants.',
     'Pick the single best merchant for this user from the supplied "Eligible merchants" list only. Every listed merchant is already allowed; never mention or invent any other place.',
     '',
-    'CRAVING: the user may type any free-text craving - specific ("crispy chicken"), a mood ("warm comfort food"), or vague ("surprise me"). Interpret it semantically and judge each merchant ONLY from its supplied name, categories, cuisine tags, dish (when given) and parentVenue.',
+    'CRAVING: the user may type any free-text craving - specific ("crispy chicken"), a mood ("warm comfort food"), or vague ("surprise me"). Interpret it semantically and judge each merchant ONLY from its supplied name, categories, cuisine tags, dish (when given), research (current menu evidence from web research, when present) and parentVenue. A researched menu that clearly fits the craving is strong evidence.',
     'relevance: "high" when those facts clearly fit the craving; "medium" when they plausibly relate; "low" when nothing clearly fits. Always still pick the best available merchant - never refuse.',
     'For a vague craving or none, pick a good nearby option using mood and distance.',
     'When relevance is similar, prefer the nearer merchant (distanceMetres). A generic category such as "Restaurant" is uncertain, not a fit.',
-    'matchesCurrentMood/matchesDietaryPreference being false is neutral, not a confirmed mismatch.',
+    'matchesCurrentMood being false is neutral, not a confirmed mismatch.',
+    'BUDGET: budgetFit "within" only when prices in price or research.menu show relevant items at or under the user\'s budget, "over" only when they are all above it, otherwise "unknown". Never invent prices; an unknown price is not a reason to reject.',
+    'DIETARY: the server has already applied the user\'s dietary restriction - never judge dietary suitability yourself. dietaryStatus "verified" means factual evidence exists; "unknown" means suitability is NOT verified, so never call that merchant halal, vegetarian, vegan or suitable for the user\'s diet.',
     'When parentVenue is set, the candidate is a specific stall inside that venue - recommend the stall, not the venue.',
     '',
     'REASON: one short sentence (max 20 words) citing only supplied facts, e.g. "Its Fried Chicken Restaurant category is a close fit for your crispy chicken craving."',
     'If relevance is "low", say it is the closest available fit - never claim it satisfies the craving.',
-    'Never claim menu items or dishes that are not in the dish field, dietary suitability (halal/vegetarian/vegan) not in the dietary field, prices or affordability when price is "unknown", ratings or popularity.',
+    'Never claim menu items or dishes that are not in the dish or research.menu fields, dietary suitability (halal/vegetarian/vegan) unless dietaryStatus is "verified", prices or affordability not shown in price or research.menu, ratings or popularity.',
     'Do not turn straight-line distance into a walking time. Avoid vague reasons like "Good option for you."',
     '',
     'Reply with valid JSON only — no markdown, no extra text.'
@@ -1155,7 +1708,7 @@ async function getAIRanking(profile, eligible, feedbackItems, demo) {
     'Eligible merchants:',
     JSON.stringify(merchantSummaries),
     '',
-    'Output: {"merchantId":"<exact id>","relevance":"high|medium|low","reason":"<one sentence, max 20 words>"}'
+    'Output: {"merchantId":"<exact id>","relevance":"high|medium|low","budgetFit":"within|over|unknown","reason":"<one sentence, max 20 words>"}'
   );
   const userMessage = userParts.join('\n');
 
@@ -1189,7 +1742,8 @@ async function getAIRanking(profile, eligible, feedbackItems, demo) {
         AI_RELEVANCE_LEVELS.indexOf(parsed.relevance) === -1) {
       throw new Error('AI response missing merchantId, relevance or reason');
     }
-    return { merchantId: parsed.merchantId, relevance: parsed.relevance, reason: parsed.reason.trim() };
+    const budgetFit = ['within', 'over', 'unknown'].indexOf(parsed.budgetFit) !== -1 ? parsed.budgetFit : 'unknown';
+    return { merchantId: parsed.merchantId, relevance: parsed.relevance, budgetFit: budgetFit, reason: parsed.reason.trim() };
   } finally {
     clearTimeout(timeout);
   }
@@ -1241,11 +1795,28 @@ function getMoodMatchState(merchant, moodCuisine) {
   return hasKnownCuisine ? MATCH_STATE.NON_MATCH : MATCH_STATE.UNKNOWN;
 }
 
+// Dietary state for filtering/ranking/reasons. For a real (Foursquare) merchant it comes ONLY from
+// validated web research of that merchant - never from its name, category or cuisine words.
+// Curated local demo merchants (the offline/no-key Open House fallback) carry complete records.
 function getDietaryMatchState(merchant, dietaryPreference) {
   if (!dietaryPreference || dietaryPreference === 'none') return MATCH_STATE.UNKNOWN;
-  if (merchant.dietary.indexOf(dietaryPreference) !== -1) return MATCH_STATE.MATCH;
-  return merchant.dietary.length > 0 ? MATCH_STATE.NON_MATCH : MATCH_STATE.UNKNOWN;
+  if (merchant.source === 'FOURSQUARE') {
+    const verdict = merchant.research && merchant.research[dietaryPreference];
+    if (verdict && verdict.status === RESEARCH_STATUS.SUITABLE) return MATCH_STATE.MATCH;
+    if (verdict && verdict.status === RESEARCH_STATUS.UNSUITABLE) return MATCH_STATE.NON_MATCH;
+    return MATCH_STATE.UNKNOWN;
+  }
+  const dietary = merchant.dietary || [];
+  if (dietary.indexOf(dietaryPreference) !== -1 ||
+      (dietaryPreference === 'vegetarian' && dietary.indexOf('vegan') !== -1)) return MATCH_STATE.MATCH;
+  return dietary.length > 0 ? MATCH_STATE.NON_MATCH : MATCH_STATE.UNKNOWN;
 }
+
+function isDietaryUnverified(merchant, profile) {
+  return profile.dietaryPreference !== 'none' &&
+    getDietaryMatchState(merchant, profile.dietaryPreference) !== MATCH_STATE.MATCH;
+}
+const DIETARY_UNVERIFIED_NOTE = 'Dietary suitability has not been verified.';
 
 // Kept for the "Why this match" copy, which only needs a yes/no.
 function merchantMatchesMood(merchant, moodCuisine) {
@@ -1388,9 +1959,16 @@ async function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchant
 
   const lastFeedback = getLastFeedback(feedbackItems);
   const constraint = applyDeterministicRejectionConstraint(eligible, lastFeedback);
-  const candidates = constraint.candidates;
+  if (constraint.candidates.length === 0) return { merchant: null, reason: null, noCloserMatch: constraint.noCloserMatch };
+  // Merchant research runs before craving ranking: with a dietary restriction only
+  // research-verified SUITABLE merchants reach the AI.
+  const research = await applyMerchantResearch(constraint.candidates, profile.dietaryPreference);
+  const candidates = research.candidates;
   logSmartMatchDebug(profile, feedbackItems, candidates, constraint.noCloserMatch, excludedIds.length, recycled);
-  if (candidates.length === 0) return { merchant: null, reason: null, noCloserMatch: constraint.noCloserMatch };
+  if (candidates.length === 0) {
+    return { merchant: null, reason: null, noCloserMatch: false,
+      noVerifiedDietary: !research.researchUnavailable, researchUnavailable: research.researchUnavailable };
+  }
 
   // Step 13/14: AI only ever sees the deterministically-constrained subset, and its choice is
   // validated against that same subset - it cannot resurrect a merchant the "too far" rule or
@@ -1402,7 +1980,10 @@ async function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchant
       const aiMerchant = findMerchantById(candidates, ranking.merchantId);
       if (aiMerchant) {
         logDiscovery('Selection source: OPENAI -> ' + aiMerchant.merchantName + ' (relevance: ' + ranking.relevance + ')');
-        return { merchant: aiMerchant, reason: safeAIReason(ranking, aiMerchant), noCloserMatch: false };
+        // A budget verdict needs a real price behind it.
+        const budgetFit = aiMerchant.price === null && !hasResearchedPrices(aiMerchant) ? 'unknown' : ranking.budgetFit;
+        return { merchant: aiMerchant, reason: safeAIReason(ranking, aiMerchant, profile), budgetFit: budgetFit,
+          noCloserMatch: false };
       }
     } catch (error) {
       console.log('AI ranking unavailable, using rule-based fallback:', error.message);
@@ -1421,8 +2002,8 @@ function getMatchReasons(profile, merchant, feedbackItems) {
   if (merchant.price !== null && merchant.price <= profile.budget) {
     reasons.push('Within your budget');
   }
-  if (profile.dietaryPreference !== 'none' && merchant.dietary.includes(profile.dietaryPreference)) {
-    reasons.push('Matches your dietary preference');
+  if (profile.dietaryPreference !== 'none') {
+    reasons.push(isDietaryUnverified(merchant, profile) ? DIETARY_UNVERIFIED_NOTE : 'Matches your dietary preference');
   }
   if (merchantMatchesMood(merchant, profile.moodCuisine)) {
     reasons.push('Matches your mood today');
@@ -1830,6 +2411,8 @@ app.get('/smart-match/result', async function(req, res) {
   try {
     const demo = req.session.demo;
     let recommendation = findMerchantForDemo(demo, demo.selectedMerchantId);
+    let noVerifiedDietary = false;
+    let researchUnavailable = false;
     if (!recommendation) {
       if (!demo.nearbyMerchants.length) {
         const nearby = await getNearbyMerchants(demo.discoveryLocation, demo.user.id, demo.profile.craving);
@@ -1843,7 +2426,9 @@ app.get('/smart-match/result', async function(req, res) {
       recommendation = result.merchant;
       // A "too far" rejection with no closer candidate is a deterministic outcome, not a
       // genuine batch exhaustion - never silently re-query Foursquare to paper over it (Step 6).
-      if (!recommendation && !result.noCloserMatch && !demo.nearbyRefreshAttempted) {
+      // No verified dietary match is also deterministic - re-querying would only add web research.
+      if (!recommendation && !result.noCloserMatch && !result.noVerifiedDietary && !result.researchUnavailable &&
+          !demo.nearbyRefreshAttempted) {
         demo.nearbyRefreshAttempted = true;
         const gotNewMerchants = await refreshNearbyBatch(demo);
         if (gotNewMerchants) {
@@ -1852,6 +2437,8 @@ app.get('/smart-match/result', async function(req, res) {
           recommendation = result.merchant;
         }
       }
+      noVerifiedDietary = Boolean(!recommendation && result.noVerifiedDietary);
+      researchUnavailable = Boolean(!recommendation && result.researchUnavailable);
       if (recommendation) {
         demo.selectedMerchantId = recommendation.id;
         demo.selectedMerchantReason = result.reason;
@@ -1871,7 +2458,8 @@ app.get('/smart-match/result', async function(req, res) {
     if (!recommendation) return res.render('smart-match-empty', { profile: demo.profile,
       dietaryPreferenceOptions: dietaryPreferenceOptions, moodCuisineOptions: moodCuisineOptions,
       dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference),
-      locationNotice: !demo.discoveryLocation, noCloserMatch: false });
+      locationNotice: !demo.discoveryLocation, noCloserMatch: false, noVerifiedDietary: noVerifiedDietary,
+      researchUnavailable: researchUnavailable });
     res.render('smart-match-card', matchView(demo, recommendation));
   } catch (err) {
     console.error('smart-match/result error:', err);
@@ -2353,4 +2941,5 @@ module.exports = { app: app, createInitialDemo: createInitialDemo, demoStore: de
   getMerchantCampaigns: function() { return merchantCampaignStore; },
   resetMerchantCampaigns: function() { merchantCampaignStore = createCampaigns(); },
   resetReferralCooldowns: function() { referralCooldowns.clear(); },
-  clearDiscoveryCache: clearDiscoveryCache };
+  clearDiscoveryCache: clearDiscoveryCache, clearMerchantResearchCache: clearMerchantResearchCache,
+  RESEARCH_STATUS: RESEARCH_STATUS };
