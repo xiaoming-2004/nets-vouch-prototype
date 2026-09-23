@@ -1200,3 +1200,89 @@ test('TEST R: choosing a merchant still flows into Scan when you arrive', async 
   assert.match(again.html, /Scan when you arrive/);
   assert.match((await v.request('/scan')).html, new RegExp('value="' + id + '"'));
 });
+
+// ---------------------------------------------------------------------------
+// CONTAINER / STALL FIX - combined-result parent detection + conservative name rules
+// ---------------------------------------------------------------------------
+
+async function containerPoolNames(results) {
+  process.env.FOURSQUARE_API_KEY = 'test-key';
+  global.fetch = mockFoursquare(results).fetchFn;
+  const nearby = await getNearbyMerchants({ latitude: 1.45, longitude: 103.82 });
+  return nearby.merchants.map(function(m) { return m.merchantName; });
+}
+
+test('CONTAINER A: parent from the craving search is suppressed by a child from the food fallback', async function() {
+  process.env.FOURSQUARE_API_KEY = 'test-key';
+  const mock = mockFoursquareByQuery({
+    'chicken rice': [fsqPlace('parent-p', 'Yong Li Coffee Station', 'Coffee Shop')],
+    food: [fsqPlace('child-a', 'Flying Wok', 'Chinese Restaurant', { distance: 46,
+      related_places: { parent: { fsq_place_id: 'parent-p' } } })]
+  });
+  global.fetch = mock.fetchFn;
+  const nearby = await getNearbyMerchants({ latitude: 1.45, longitude: 103.82 }, 'jia', 'chicken rice');
+  const names = nearby.merchants.map(function(m) { return m.merchantName; });
+  assert.deepEqual(mock.getRequests().map(function(r) { return r.query; }), ['chicken rice', 'food']);
+  assert.ok(!names.includes('Yong Li Coffee Station'), 'the parent must be suppressed across both responses');
+  const stall = nearby.merchants.find(function(m) { return m.merchantName === 'Flying Wok'; });
+  assert.ok(stall, 'the child stall must be kept');
+  assert.equal(stall.parentVenueName, 'Yong Li Coffee Station',
+    'the parent name is taken from the factual parent place in the combined results');
+});
+
+test('CONTAINER B: a Food Court category venue is excluded', async function() {
+  const names = await containerPoolNames([fsqPlace('fc', 'Blk 105 Eats', 'Food Court'),
+    fsqPlace('s', 'Flying Wok', 'Chinese Restaurant')]);
+  assert.ok(!names.includes('Blk 105 Eats'));
+  assert.ok(names.includes('Flying Wok'));
+});
+
+test('CONTAINER C: an obvious container name is excluded', async function() {
+  const names = await containerPoolNames([fsqPlace('fc', 'ABC Food Centre', 'Restaurant'),
+    fsqPlace('k', 'Chong Pang Kopitiam', 'Café'), fsqPlace('s', 'Flying Wok', 'Chinese Restaurant')]);
+  assert.ok(!names.includes('ABC Food Centre'));
+  assert.ok(!names.includes('Chong Pang Kopitiam'));
+  assert.ok(names.includes('Flying Wok'));
+});
+
+test('CONTAINER D: a "Coffee Shop" named parent with child stalls is excluded', async function() {
+  const names = await containerPoolNames([
+    fsqPlace('parent-p', 'Yong Li Coffee Shop', 'Coffee Shop'),
+    fsqPlace('child-a', 'Flying Wok', 'Chinese Restaurant',
+      { related_places: { parent: { fsq_place_id: 'parent-p', name: 'Yong Li Coffee Shop' } } })
+  ]);
+  assert.ok(!names.includes('Yong Li Coffee Shop'));
+  assert.ok(names.includes('Flying Wok'));
+});
+
+test('CONTAINER E: a café brand containing "Coffee" is not treated as a container', async function() {
+  const names = await containerPoolNames([fsqPlace('cb', 'The Coffee Bean & Tea Leaf', 'Coffee Shop')]);
+  assert.ok(names.includes('The Coffee Bean & Tea Leaf'));
+});
+
+test('CONTAINER F: a standalone Coffee Shop/Café category with no container evidence stays valid', async function() {
+  const names = await containerPoolNames([fsqPlace('a', 'Brew Lab', 'Coffee Shop'),
+    fsqPlace('b', 'Common Man Roasters', 'Café')]);
+  assert.ok(names.includes('Brew Lab'));
+  assert.ok(names.includes('Common Man Roasters'));
+});
+
+test('CONTAINER G: two different stalls in the same coffee shop both remain', async function() {
+  process.env.FOURSQUARE_API_KEY = 'test-key';
+  const parent = { related_places: { parent: { fsq_place_id: 'parent-p', name: 'Yong Li Coffee Station' } } };
+  global.fetch = mockFoursquare([
+    fsqPlace('parent-p', 'Yong Li Coffee Station', 'Coffee Shop'),
+    fsqPlace('a', 'Flying Wok', 'Chinese Restaurant', Object.assign({ latitude: 1.4501, longitude: 103.8201 }, parent)),
+    fsqPlace('b', 'Kalsom Street Food', 'Malay Restaurant', Object.assign({ latitude: 1.4501, longitude: 103.8201 }, parent))
+  ]).fetchFn;
+  const nearby = await getNearbyMerchants({ latitude: 1.45, longitude: 103.82 });
+  const stalls = nearby.merchants.filter(function(m) { return m.parentVenueName === 'Yong Li Coffee Station'; });
+  assert.deepEqual(stalls.map(function(m) { return m.merchantName; }).sort(), ['Flying Wok', 'Kalsom Street Food']);
+  assert.ok(!nearby.merchants.some(function(m) { return m.merchantName === 'Yong Li Coffee Station'; }));
+});
+
+test('CONTAINER H: a known container with no child result is excluded, with no fabricated stall', async function() {
+  const names = await containerPoolNames([fsqPlace('fc', 'ABC Food Centre', 'Food Court'),
+    fsqPlace('s', 'Food Leaf', 'Restaurant')]);
+  assert.deepEqual(names, ['Food Leaf']);
+});

@@ -673,6 +673,15 @@ function isContainerCategory(categories) {
   });
 }
 
+// Obvious Singapore container venue names, matched only as whole words/phrases so a brand such
+// as "The Coffee Bean & Tea Leaf" is never caught just for containing "Coffee". A "Coffee Shop"
+// CATEGORY alone is deliberately not enough - many standalone cafés carry it.
+const containerNamePattern = /\b(food court|food centre|food center|hawker centre|hawker center|kopitiam|coffeeshop|coffee shop)\b/i;
+
+function isContainerName(name) {
+  return typeof name === 'string' && containerNamePattern.test(name);
+}
+
 // Part F: a place is acting as a container/parent venue when some OTHER returned place names
 // it as `related_places.parent`. Computed over the full raw response, since even a place that
 // itself fails the food-category check still proves its parent is a container.
@@ -698,6 +707,12 @@ function parseFoursquareNearbyPlaces(results, origin) {
   if (!Array.isArray(results)) return merchants;
 
   const containerIds = identifyContainerPlaceIds(results);
+  const placeNames = new Map();
+  results.forEach(function(place) {
+    if (place && typeof place.fsq_place_id === 'string' && typeof place.name === 'string' && place.name.trim()) {
+      placeNames.set(place.fsq_place_id, place.name.trim());
+    }
+  });
   const suppressed = [];
 
   for (let i = 0; i < results.length; i++) {
@@ -713,6 +728,10 @@ function parseFoursquareNearbyPlaces(results, origin) {
       suppressed.push({ name: place.name.trim(), reason: 'container category' });
       continue;
     }
+    if (isContainerName(place.name)) {
+      suppressed.push({ name: place.name.trim(), reason: 'container name' });
+      continue;
+    }
     const geocodeMain = place.geocodes && place.geocodes.main ? place.geocodes.main : {};
     const latitude = Number.isFinite(place.latitude) ? place.latitude : Number(geocodeMain.latitude);
     const longitude = Number.isFinite(place.longitude) ? place.longitude : Number(geocodeMain.longitude);
@@ -722,8 +741,10 @@ function parseFoursquareNearbyPlaces(results, origin) {
       ? Math.round(place.distance) : calculateDistanceMetres(latitude, longitude, origin);
     const merchantId = 'foursquare-' + place.fsq_place_id;
     const parent = place.related_places && place.related_places.parent;
+    // Parent name comes from the child's own related_places, or else from the factual parent
+    // place returned elsewhere in the same (combined) discovery results - never guessed.
     const parentVenueName = parent && typeof parent.name === 'string' && parent.name.trim() ?
-      parent.name.trim() : null;
+      parent.name.trim() : (parent && placeNames.get(parent.fsq_place_id)) || null;
     const address = place.location && typeof place.location.formatted_address === 'string' &&
       place.location.formatted_address.trim() ? place.location.formatted_address.trim() : 'Address unavailable';
     const categoryLabel = Array.isArray(place.categories) && place.categories[0] &&
@@ -865,7 +886,7 @@ async function fetchFoursquarePlaces(searchLocation, query) {
       '\nquery: ' + query + '\nage: ' + Math.floor((now - cached.createdAt) / 1000) + 's');
     const results = cachedFoursquareResults(cached, searchLocation);
     const parsed = parseFoursquareNearbyPlaces(results, searchLocation);
-    return { ok: true, rawCount: results.length, merchants: parsed.merchants,
+    return { ok: true, rawCount: results.length, results: results, merchants: parsed.merchants,
       containersRemoved: parsed.containersRemoved, note: results.length === 0 ? 'empty response' : null };
   }
   logDiscovery('FOURSQUARE CACHE MISS\nbucket: ' + cacheKey.split('|')[0] + '\nquery: ' + query);
@@ -900,7 +921,7 @@ async function fetchFoursquarePlaces(searchLocation, query) {
     discoveryCache.set(cacheKey, { createdAt: createdAt, expiresAt: createdAt + DISCOVERY_CACHE_TTL_MS,
       latitude: searchLocation.latitude, longitude: searchLocation.longitude,
       results: structuredClone(data.results) });
-    return { ok: true, rawCount: data.results.length, merchants: parsed.merchants,
+    return { ok: true, rawCount: data.results.length, results: data.results, merchants: parsed.merchants,
       containersRemoved: parsed.containersRemoved, note: data.results.length === 0 ? 'empty response' : null };
   } catch (error) {
     return { ok: false, rawCount: 0, merchants: [], containersRemoved: 0,
@@ -947,8 +968,19 @@ async function getNearbyMerchants(location, sessionLabel, craving) {
     fallbackUsed = true;
     if (fallback.ok) {
       fallbackRawCount = fallback.rawCount;
-      containersRemoved += fallback.containersRemoved;
-      apiMerchants = dedupeMerchantPool(apiMerchants.concat(fallback.merchants));
+      // Container suppression must see BOTH responses: a parent returned only by one query is
+      // still a container if its child stall was returned by the other. Merge the raw places
+      // (first occurrence wins) and parse once, rather than merging two finalised pools.
+      const seenPlaceIds = new Set();
+      const combinedResults = primary.results.concat(fallback.results).filter(function(place) {
+        const id = place && place.fsq_place_id;
+        if (typeof id !== 'string' || seenPlaceIds.has(id)) return false;
+        seenPlaceIds.add(id);
+        return true;
+      });
+      const combined = parseFoursquareNearbyPlaces(combinedResults, searchLocation);
+      containersRemoved = combined.containersRemoved;
+      apiMerchants = dedupeMerchantPool(combined.merchants);
     }
   }
 
