@@ -3,6 +3,7 @@ const express = require('express');
 const session = require('express-session');
 const path = require('path');
 const { randomUUID } = require('node:crypto');
+const { Redis } = require('@upstash/redis');
 
 // Load local environment variables when a .env file exists (Node.js 22+).
 try {
@@ -14,6 +15,9 @@ try {
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MINIMUM_ELIGIBLE_PAYMENT = 1.00;
+// Set to false to run Smart Match on demo merchants only (no Foursquare API calls).
+// Re-enable once Foursquare billing credits are topped up.
+const USE_FOURSQUARE = false;
 const PLACES_REQUEST_TIMEOUT_MS = 5000;
 const AI_RANKING_TIMEOUT_MS = 8000;
 // Foursquare's practical maximum results-per-request for Place Search.
@@ -31,11 +35,42 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Configure session
-const demoStore = new session.MemoryStore();
+// Use Upstash Redis when env vars are present (Vercel multi-instance), fall back to MemoryStore locally.
+function buildSessionStore() {
+  const url   = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return new session.MemoryStore();
+
+  const redis = new Redis({ url, token });
+  const TTL   = 60 * 60 * 24; // 24 h
+
+  class UpstashStore extends session.Store {
+    async get(sid, cb) {
+      try {
+        const data = await redis.get(`sess:${sid}`);
+        cb(null, data ? (typeof data === 'string' ? JSON.parse(data) : data) : null);
+      } catch(e) { cb(e); }
+    }
+    async set(sid, sess, cb) {
+      try {
+        const expire = sess.cookie?.maxAge ? Math.floor(sess.cookie.maxAge / 1000) : TTL;
+        await redis.setex(`sess:${sid}`, expire, JSON.stringify(sess));
+        cb(null);
+      } catch(e) { cb(e); }
+    }
+    async destroy(sid, cb) {
+      try { await redis.del(`sess:${sid}`); cb(null); } catch(e) { cb(e); }
+    }
+  }
+
+  return new UpstashStore();
+}
+
+const demoStore = buildSessionStore();
 let demoResetGeneration = 0;
 app.use(session({
   store: demoStore,
-  secret: 'nets-vouch-ai-demo-secret',
+  secret: process.env.SESSION_SECRET || 'nets-vouch-ai-demo-secret',
   resave: false,
   saveUninitialized: false
 }));
@@ -391,6 +426,24 @@ function registerDemoMerchant(merchant) {
   }
 }
 
+// Module-level caches — survive between requests on the same Vercel instance and act as a
+// fallback when a cold-started instance gets a request whose session data lives elsewhere.
+const txCache = new Map();          // txId → transaction
+const userTxIndex = new Map();      // userId → Set<txId>
+const locationCache = new Map();    // sessionId → {latitude, longitude}
+
+function cacheTx(transaction) {
+  txCache.set(transaction.id, transaction);
+  if (!userTxIndex.has(transaction.ownerUserId)) userTxIndex.set(transaction.ownerUserId, new Set());
+  userTxIndex.get(transaction.ownerUserId).add(transaction.id);
+  if (txCache.size > 500) {
+    const oldest = txCache.keys().next().value;
+    const oldTx = txCache.get(oldest);
+    if (oldTx && userTxIndex.has(oldTx.ownerUserId)) userTxIndex.get(oldTx.ownerUserId).delete(oldest);
+    txCache.delete(oldest);
+  }
+}
+
 // Cross-session payment feed with labelled illustrative examples and live payments.
 // Capped at 200 entries; newest live entries are unshifted to the front.
 const merchantPaymentFeed = [
@@ -421,7 +474,30 @@ const merchantPaymentFeed = [
   { merchantId: 'hawker-88', displayAmount: '$7.00', source: 'DIRECT_SCAN', date: '2026-09-18', time: '13:20', itemName: null },
   { merchantId: 'hawker-88', displayAmount: '$14.00', source: 'DIRECT_SCAN', date: '2026-09-17', time: '12:35', itemName: null },
   { merchantId: 'hawker-88', displayAmount: '$7.00', source: 'SHARED_VOUCH', date: '2026-09-16', time: '12:55', itemName: 'Char Kway Teow' },
-  { merchantId: 'hawker-88', displayAmount: '$7.00', source: 'DIRECT_SCAN', date: '2026-09-15', time: '13:10', itemName: null }
+  { merchantId: 'hawker-88', displayAmount: '$7.00', source: 'DIRECT_SCAN', date: '2026-09-15', time: '13:10', itemName: null },
+  // Woodlands Noodle Bar — vegetarian-friendly, lunch-heavy
+  { merchantId: 'woodlands-noodle-bar', displayAmount: '$6.80', source: 'SMART_MATCH', date: '2026-09-19', time: '12:22', itemName: 'Mushroom Noodles' },
+  { merchantId: 'woodlands-noodle-bar', displayAmount: '$6.80', source: 'DIRECT_SCAN', date: '2026-09-19', time: '12:05', itemName: null },
+  { merchantId: 'woodlands-noodle-bar', displayAmount: '$13.60', source: 'DIRECT_SCAN', date: '2026-09-18', time: '12:40', itemName: null },
+  { merchantId: 'woodlands-noodle-bar', displayAmount: '$6.80', source: 'SHARED_VOUCH', date: '2026-09-18', time: '12:15', itemName: 'Mushroom Noodles' },
+  { merchantId: 'woodlands-noodle-bar', displayAmount: '$6.80', source: 'SMART_MATCH', date: '2026-09-17', time: '13:00', itemName: 'Mushroom Noodles' },
+  { merchantId: 'woodlands-noodle-bar', displayAmount: '$6.80', source: 'DIRECT_SCAN', date: '2026-09-16', time: '12:50', itemName: null },
+  { merchantId: 'woodlands-noodle-bar', displayAmount: '$6.80', source: 'SMART_MATCH', date: '2026-09-15', time: '12:30', itemName: 'Mushroom Noodles' },
+  // Northside Wraps — vegan-friendly, lunch and afternoon
+  { merchantId: 'northside-wraps', displayAmount: '$8.80', source: 'SMART_MATCH', date: '2026-09-19', time: '13:05', itemName: 'Vegan Crunch Wrap' },
+  { merchantId: 'northside-wraps', displayAmount: '$8.80', source: 'DIRECT_SCAN', date: '2026-09-19', time: '12:35', itemName: null },
+  { merchantId: 'northside-wraps', displayAmount: '$17.60', source: 'DIRECT_SCAN', date: '2026-09-18', time: '12:45', itemName: null },
+  { merchantId: 'northside-wraps', displayAmount: '$8.80', source: 'SHARED_VOUCH', date: '2026-09-18', time: '12:10', itemName: 'Vegan Crunch Wrap' },
+  { merchantId: 'northside-wraps', displayAmount: '$8.80', source: 'SMART_MATCH', date: '2026-09-17', time: '13:20', itemName: 'Vegan Crunch Wrap' },
+  { merchantId: 'northside-wraps', displayAmount: '$8.80', source: 'DIRECT_SCAN', date: '2026-09-16', time: '12:55', itemName: null },
+  // Spice Lane — halal, lunch and dinner
+  { merchantId: 'spice-lane', displayAmount: '$8.50', source: 'SMART_MATCH', date: '2026-09-19', time: '12:55', itemName: 'Chicken Biryani' },
+  { merchantId: 'spice-lane', displayAmount: '$8.50', source: 'DIRECT_SCAN', date: '2026-09-19', time: '19:20', itemName: null },
+  { merchantId: 'spice-lane', displayAmount: '$17.00', source: 'DIRECT_SCAN', date: '2026-09-18', time: '12:30', itemName: null },
+  { merchantId: 'spice-lane', displayAmount: '$8.50', source: 'SHARED_VOUCH', date: '2026-09-18', time: '19:45', itemName: 'Chicken Biryani' },
+  { merchantId: 'spice-lane', displayAmount: '$8.50', source: 'SMART_MATCH', date: '2026-09-17', time: '12:50', itemName: 'Chicken Biryani' },
+  { merchantId: 'spice-lane', displayAmount: '$8.50', source: 'DIRECT_SCAN', date: '2026-09-16', time: '19:10', itemName: null },
+  { merchantId: 'spice-lane', displayAmount: '$8.50', source: 'SMART_MATCH', date: '2026-09-15', time: '13:05', itemName: 'Chicken Biryani' }
 ];
 merchantPaymentFeed.forEach(function(payment) { payment.illustrative = true; });
 const initialMerchantPaymentFeed = merchantPaymentFeed.map(function(payment) { return { ...payment }; });
@@ -433,10 +509,44 @@ const seedPromotionalRedemptions = [
   { transactionId: 'tx-h4', merchantName: "Felicia's Chicken Rice", itemName: 'Chicken Rice', rewardAmount: 0.50, date: '2026-09-08', status: 'Redeemed' }
 ];
 
+function createSeedTransactions(identityId) {
+  if (identityId !== 'jia') return [];
+  const uid = demoIdentities.jia.id;
+  return [
+    { id: 'tx-seed-1', ownerUserId: uid, journeyId: 'j-seed-1', source: 'DIRECT_SCAN', journeySource: 'scan',
+      merchantId: 'felicia-chicken-rice', merchantName: "Felicia's Chicken Rice",
+      outlet: 'RP North Food Court · Stall 08', itemName: 'Chicken Rice',
+      purchaseAmount: 5.00, merchantCreditUsed: 0, cashbackUsed: 0, netsPaid: 5.00,
+      merchantRewardEarned: 0.50, cashbackAwarded: 0.50, promisedReward: 0.50,
+      rewardReleased: true, status: 'Successful', eligible: true, collected: true,
+      vouchDecision: 'created', vouchCreated: true, campaignId: 'felicia-chicken-rice-campaign',
+      date: '13 Sep 2026', time: '12:34 pm', createdAt: '2026-09-13T04:34:00.000Z',
+      displayAmount: '$5.00', paymentMethod: 'NETS' },
+    { id: 'tx-seed-2', ownerUserId: uid, journeyId: 'j-seed-2', source: 'SMART_MATCH', journeySource: 'smart-match',
+      merchantId: 'green-bowl', merchantName: 'Green Bowl',
+      outlet: 'Republic Polytechnic · North Food Court', itemName: 'Vegan Grain Bowl',
+      purchaseAmount: 9.20, merchantCreditUsed: 0, cashbackUsed: 0, netsPaid: 9.20,
+      merchantRewardEarned: 0.50, cashbackAwarded: 0.50, promisedReward: 0.50,
+      rewardReleased: true, status: 'Successful', eligible: true, collected: true,
+      vouchDecision: 'created', vouchCreated: true, campaignId: 'green-bowl-campaign',
+      date: '12 Sep 2026', time: '1:05 pm', createdAt: '2026-09-12T05:05:00.000Z',
+      displayAmount: '$9.20', paymentMethod: 'NETS' },
+    { id: 'tx-seed-3', ownerUserId: uid, journeyId: 'j-seed-3', source: 'DIRECT_SCAN', journeySource: 'scan',
+      merchantId: 'felicia-chicken-rice', merchantName: "Felicia's Chicken Rice",
+      outlet: 'RP North Food Court · Stall 08', itemName: null,
+      purchaseAmount: 7.50, merchantCreditUsed: 0.50, cashbackUsed: 0.50, netsPaid: 7.00,
+      merchantRewardEarned: 0, cashbackAwarded: 0, promisedReward: 0,
+      rewardReleased: true, status: 'Successful', eligible: false, collected: true,
+      vouchDecision: 'not-eligible', vouchCreated: false, campaignId: 'felicia-chicken-rice-campaign',
+      date: '10 Sep 2026', time: '12:11 pm', createdAt: '2026-09-10T04:11:00.000Z',
+      displayAmount: '$7.00', paymentMethod: 'NETS' }
+  ];
+}
+
 function createInitialDemo(userId) {
   const identityId = isValidDemoIdentity(userId) ? userId : 'jia';
   return {
-    version: 16,
+    version: 17,
     user: { ...demoIdentities[identityId] },
     profile: { dietaryPreference: 'none', moodCuisine: 'any', craving: '', budget: 10, maxDistanceMinutes: 10, notifications: true },
     hasSetPreferences: false,
@@ -445,7 +555,7 @@ function createInitialDemo(userId) {
     discoveryLocation: null, locationAttempted: false, nearbySource: null, nearbyRefreshAttempted: false,
     recommendationFeedback: [], shownMerchantIds: [],
     currentScanPayment: null, activeVouchClaim: null,
-    transactions: [], paymentVerifiedVouches: [], promotionalRedemptions: [],
+    transactions: createSeedTransactions(identityId), paymentVerifiedVouches: [], promotionalRedemptions: [],
     nextScanNumber: 1, nextTransactionNumber: 1, nextVouchNumber: 1,
     processedPaymentAttempts: {}
   };
@@ -458,7 +568,7 @@ function initialiseDemoSession(req) {
     req.session.demoUserStates = {};
   }
   req.session.demoResetGeneration = demoResetGeneration;
-  if (!req.session.demo || req.session.demo.version !== 16) {
+  if (!req.session.demo || req.session.demo.version !== 17) {
     req.session.demo = createInitialDemo('jia');
     req.session.demoUserStates = {};
   }
@@ -516,8 +626,11 @@ function findTransactionById(transactions, transactionId) {
 }
 
 function getOwnedTransaction(demo, transactionId) {
-  const transaction = findTransactionById(demo.transactions, transactionId);
-  return transaction && transaction.ownerUserId === demo.user.id ? transaction : null;
+  const fromSession = findTransactionById(demo.transactions, transactionId);
+  if (fromSession && fromSession.ownerUserId === demo.user.id) return fromSession;
+  const cached = txCache.get(transactionId);
+  if (cached && cached.ownerUserId === demo.user.id) return cached;
+  return null;
 }
 
 function isCompletedActivityTransaction(transaction) {
@@ -528,9 +641,19 @@ function isCompletedActivityTransaction(transaction) {
 }
 
 function getActivityTransactions(demo) {
-  return demo.transactions.filter(function(transaction) {
-    return transaction && transaction.ownerUserId === demo.user.id && isCompletedActivityTransaction(transaction);
-  }).sort(function(a, b) { return Date.parse(b.createdAt) - Date.parse(a.createdAt); });
+  const sessionIds = new Set(demo.transactions.map(function(t) { return t.id; }));
+  const all = demo.transactions.filter(function(t) { return t && t.ownerUserId === demo.user.id; });
+  const cached = userTxIndex.get(demo.user.id);
+  if (cached) {
+    cached.forEach(function(id) {
+      if (!sessionIds.has(id)) {
+        const tx = txCache.get(id);
+        if (tx && tx.ownerUserId === demo.user.id) all.push(tx);
+      }
+    });
+  }
+  return all.filter(isCompletedActivityTransaction)
+    .sort(function(a, b) { return Date.parse(b.createdAt) - Date.parse(a.createdAt); });
 }
 
 function transactionNotFound(res) {
@@ -600,9 +723,25 @@ function sanitizeCraving(value) {
   return value.replace(/[<>]/g, '').trim().slice(0, 100);
 }
 
+// Foursquare price level 1-4 → conservative minimum SGD spend per person.
+// Only levels 3+ are excluded when they clearly exceed the user's budget; 1-2 are always allowed.
+const PRICE_LEVEL_MIN_SGD = { 1: 0, 2: 0, 3: 20, 4: 40 };
+function priceLevelExceedsBudget(merchant, budget) {
+  if (merchant.price !== null) return merchant.price > budget;
+  if (!merchant.priceLevel) return false; // unknown → never exclude
+  return (PRICE_LEVEL_MIN_SGD[merchant.priceLevel] || 0) > budget;
+}
+
 function merchantMatchesProfile(merchant, profile) {
-  if (merchant.price !== null && merchant.price > profile.budget) return false;
-  if (merchant.distanceMinutes > profile.maxDistanceMinutes) return false;
+  if (priceLevelExceedsBudget(merchant, profile.budget)) return false;
+  // Foursquare merchants carry real distanceMetres; use it for precise filtering.
+  // Local demo merchants only have distanceMinutes, so fall back to the coarser check.
+  const maxMetres = profile.maxDistanceMinutes * 80;
+  if (Number.isFinite(merchant.distanceMetres)) {
+    if (merchant.distanceMetres > maxMetres) return false;
+  } else if (merchant.distanceMinutes > profile.maxDistanceMinutes) {
+    return false;
+  }
   // Only a known dietary NON_MATCH is excluded here. Everything else is resolved by
   // applyMerchantResearch, which keeps research-verified SUITABLE merchants only.
   return getDietaryMatchState(merchant, profile.dietaryPreference) !== MATCH_STATE.NON_MATCH;
@@ -665,7 +804,9 @@ function isContainerCategory(categories) {
 // Obvious Singapore container venue names, matched only as whole words/phrases so a brand such
 // as "The Coffee Bean & Tea Leaf" is never caught just for containing "Coffee". A "Coffee Shop"
 // CATEGORY alone is deliberately not enough - many standalone cafés carry it.
-const containerNamePattern = /\b(food court|food centre|food center|hawker centre|hawker center|kopitiam|coffeeshop|coffee shop)\b/i;
+// Includes major Singapore food court operators (Food Republic, Koufu, Foodfare) that would not
+// be caught by the generic "food court" keyword since they use branded names.
+const containerNamePattern = /\b(food court|food centre|food center|hawker centre|hawker center|kopitiam|coffeeshop|coffee shop|food republic|koufu|foodfare)\b/i;
 
 function isContainerName(name) {
   return typeof name === 'string' && containerNamePattern.test(name);
@@ -756,6 +897,8 @@ function parseFoursquareNearbyPlaces(results, origin) {
       // Dietary suitability is never read from Foursquare words - only from merchant research.
       dietary: [],
       cuisineTags: parseFoursquareCuisineTags(place.categories),
+      // Foursquare integer price scale 1 ($) – 4 ($$$$). Null when not returned.
+      priceLevel: typeof place.price === 'number' && place.price >= 1 && place.price <= 4 ? place.price : null,
       // Used only for the existing distance filter; the UI displays metres, never walking time.
       distanceMinutes: Math.max(1, Math.round(distanceMetres / 80)),
       distanceMetres: distanceMetres,
@@ -764,7 +907,6 @@ function parseFoursquareNearbyPlaces(results, origin) {
       coordinates: { latitude: latitude, longitude: longitude },
       source: 'FOURSQUARE', participationMode: 'DEMO_SIMULATED',
       rating: null,
-      priceLevel: null,
       available: true,
       parentVenueName: parentVenueName
     });
@@ -893,6 +1035,7 @@ async function fetchFoursquarePlaces(searchLocation, query) {
     url.searchParams.set('query', query);
     url.searchParams.set('sort', 'DISTANCE');
     url.searchParams.set('limit', String(FOURSQUARE_RESULT_LIMIT));
+    url.searchParams.set('fields', 'fsq_place_id,name,geocodes,location,categories,distance,price,related_places,website');
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
@@ -931,19 +1074,24 @@ async function fetchFoursquarePlaces(searchLocation, query) {
 // the Open House prototype working, exactly as the old Geoapify fallback used to.
 // Sprint 1.10 (Issue 1): a specific craving drives the Foursquare query itself, with at most one
 // broader query=food fallback if that produces too few useful candidates.
-async function getNearbyMerchants(location, sessionLabel, craving) {
+async function getNearbyMerchants(location, sessionLabel, craving, dietaryPreference) {
   const searchLocation = location && validCoordinates(location.latitude, location.longitude)
     ? location : demoLocation;
   const usingDemoLocation = searchLocation === demoLocation;
   const specificCraving = isSpecificCraving(craving);
   const normalizedCraving = normaliseCravingQuery(craving);
-  const primaryQuery = specificCraving ? normalizedCraving : 'food';
+  // Prepend the dietary preference to the query (e.g. "halal chicken rice", "vegetarian food")
+  // so Foursquare biases discovery toward places that mention that diet in their listing.
+  // The research system still does ground-truth verification afterwards - this is just a hint.
+  const dietaryHint = dietaryPreference && dietaryPreference !== 'none' ? dietaryPreference + ' ' : '';
+  const primaryQuery = specificCraving ? dietaryHint + normalizedCraving : dietaryHint + 'food';
   logDiscovery('SMART MATCH LOCATION\nsession: ' + (sessionLabel || 'unknown') +
     '\nlatitude: ' + searchLocation.latitude + '\nlongitude: ' + searchLocation.longitude +
     '\nsource: ' + (usingDemoLocation ? 'demo fallback (no real browser coordinates)' : 'browser') +
-    '\nCraving: ' + (specificCraving ? normalizedCraving : 'none') + '\nForeground query: ' + primaryQuery);
-  if (!process.env.FOURSQUARE_API_KEY) {
-    logDiscovery('Foursquare fallback: key missing');
+    '\nCraving: ' + (specificCraving ? normalizedCraving : 'none') +
+    '\nDietary: ' + (dietaryHint || 'none') + '\nForeground query: ' + primaryQuery);
+  if (!USE_FOURSQUARE || !process.env.FOURSQUARE_API_KEY) {
+    logDiscovery('Foursquare fallback: ' + (!USE_FOURSQUARE ? 'disabled' : 'key missing'));
     return { merchants: copyObjects(fallbackMerchants), source: 'local-fallback' };
   }
 
@@ -957,7 +1105,7 @@ async function getNearbyMerchants(location, sessionLabel, craving) {
   let fallbackUsed = false;
   let fallbackRawCount = 0;
   let containersRemoved = primary.containersRemoved;
-  if (specificCraving && apiMerchants.length < MIN_CRAVING_POOL_SIZE) {
+  if ((specificCraving || dietaryHint) && apiMerchants.length < MIN_CRAVING_POOL_SIZE) {
     const fallback = await fetchFoursquarePlaces(searchLocation, 'food');
     fallbackUsed = true;
     if (fallback.ok) {
@@ -996,7 +1144,7 @@ async function getNearbyMerchants(location, sessionLabel, craving) {
 // Called at most once per recommendation cycle when the current nearby batch is exhausted.
 // Returns true only if the fresh discovery produced merchants not already in the current batch.
 async function refreshNearbyBatch(demo) {
-  const nearby = await getNearbyMerchants(demo.discoveryLocation, demo.user.id, demo.profile.craving);
+  const nearby = await getNearbyMerchants(demo.discoveryLocation, demo.user.id, demo.profile.craving, demo.profile.dietaryPreference);
   const newMerchants = nearby.merchants.filter(function(merchant) {
     return !findMerchantById(demo.nearbyMerchants, merchant.id);
   });
@@ -1624,7 +1772,21 @@ async function applyMerchantResearch(candidates, restriction) {
   const verified = candidates.filter(isVerified);
   logDiscovery(getDietaryPreferenceLabel(restriction) + ' verified: ' + verified.length + ' of ' + candidates.length +
     ' (' + researchCalls + ' research batch(es))');
-  return { candidates: verified, researchUnavailable: verified.length === 0 && attempted > 0 && obtained === 0 };
+  const researchUnavailable = verified.length === 0 && attempted > 0 && obtained === 0;
+  if (verified.length > 0) return { candidates: verified, researchUnavailable: false, bestEffortOnly: false };
+  // Halal is a strict religious requirement — never show unverified halal candidates.
+  // For vegetarian/vegan, fall back to the nearest non-unsuitable candidates so the user gets
+  // a result rather than an empty state; the card clearly marks suitability as unverified.
+  if (restriction !== 'halal') {
+    const bestEffort = candidates.filter(function(m) {
+      return getDietaryMatchState(m, restriction) !== MATCH_STATE.NON_MATCH;
+    });
+    if (bestEffort.length > 0) {
+      logDiscovery('No verified ' + restriction + ' match — showing ' + bestEffort.length + ' best-effort candidate(s) with unverified warning');
+      return { candidates: bestEffort, researchUnavailable: researchUnavailable, bestEffortOnly: true };
+    }
+  }
+  return { candidates: verified, researchUnavailable: researchUnavailable, bestEffortOnly: false };
 }
 
 async function getAIRanking(profile, eligible, feedbackItems, demo) {
@@ -1636,6 +1798,7 @@ async function getAIRanking(profile, eligible, feedbackItems, demo) {
       parentVenue: m.parentVenueName || null,
       dish: m.itemName || null,
       price: m.price !== null ? '$' + m.price.toFixed(2) : 'unknown',
+      priceLevel: m.priceLevel ? '$'.repeat(m.priceLevel) : null,
       distance: m.distanceLabel || m.distanceMinutes + ' min walk (demo estimate)',
       distanceMetres: Number.isFinite(m.distanceMetres) ? m.distanceMetres : null,
       cuisine: merchantCuisineTags(m).length ? merchantCuisineTags(m).join(', ') : 'unknown',
@@ -1645,7 +1808,9 @@ async function getAIRanking(profile, eligible, feedbackItems, demo) {
       // Menu items evidenced by validated web research (cached per merchant + diet), when available.
       research: researchSummaryForRanking(m, profile.dietaryPreference),
       matchesCurrentMood: merchantMatchesMood(m, profile.moodCuisine),
-      location: m.address || ''
+      location: m.address || '',
+      currentTxPerHour: getSimulatedTransactionVelocity(m.id),
+      busynessLabel: getMerchantBusynessLabel(getSimulatedTransactionVelocity(m.id))
     };
   });
 
@@ -1673,8 +1838,9 @@ async function getAIRanking(profile, eligible, feedbackItems, demo) {
     'For a vague craving or none, pick a good nearby option using mood and distance.',
     'When relevance is similar, prefer the nearer merchant (distanceMetres). A generic category such as "Restaurant" is uncertain, not a fit.',
     'matchesCurrentMood being false is neutral, not a confirmed mismatch.',
-    'BUDGET: budgetFit "within" only when prices in price or research.menu show relevant items at or under the user\'s budget, "over" only when they are all above it, otherwise "unknown". Never invent prices; an unknown price is not a reason to reject.',
+    'BUDGET: budgetFit "within" only when prices in price or research.menu, OR priceLevel is "$" or "$$" (casual/mid-range), show options at or under the user\'s budget; "over" only when price explicitly exceeds it or priceLevel is "$$$"/"$$$$" above budget; otherwise "unknown". Never invent prices; unknown price is not a reason to reject.',
     'DIETARY: the server has already applied the user\'s dietary restriction - never judge dietary suitability yourself. dietaryStatus "verified" means factual evidence exists; "unknown" means suitability is NOT verified, so never call that merchant halal, vegetarian, vegan or suitable for the user\'s diet.',
+    'BUSYNESS: currentTxPerHour is the live NETS payment velocity at that merchant right now (transactions/hour). busynessLabel is "quiet" (<8), "moderate" (8-16), or "busy" (>16). When craving relevance is similar between candidates, prefer the quieter one — the user gets served without waiting and the merchant benefits from the extra footfall during a slow period. Mention busyness in the reason only when it is the deciding factor (e.g. "Quiet right now — no queue" or "Fewer customers here now so you will be served quickly"). Never fabricate queue lengths or wait times in minutes.',
     'When parentVenue is set, the candidate is a specific stall inside that venue - recommend the stall, not the venue.',
     '',
     'REASON: one short sentence (max 20 words) citing only supplied facts, e.g. "Its Fried Chicken Restaurant category is a close fit for your crispy chicken craving."',
@@ -1847,7 +2013,6 @@ function getFallbackRecommendation(candidates, feedbackItems, profile) {
     const merchant = candidates[i];
     // Proximity: a HIGH-priority signal (Step 10/12), not merely decorative context.
     let score = 150 - distancePenalty(merchant);
-    if (!lastFeedback && merchant.id === 'felicia-chicken-rice') score += 15;
     if (merchant.price !== null) score += Math.max(0, profile.budget - merchant.price);
     // No semantic craving understanding here (that is the AI's job) - only the user's own words
     // literally appearing in the merchant's factual name/category data earn a nudge.
@@ -1867,6 +2032,9 @@ function getFallbackRecommendation(candidates, feedbackItems, profile) {
         lastFeedback.price !== null) {
       score += Math.max(0, 20 - merchant.price);
     }
+    // Busyness: quieter merchants score higher — customer waits less, merchant fills slow period.
+    const txNow = getSimulatedTransactionVelocity(merchant.id);
+    score += Math.max(0, 20 - txNow); // max +20 for a completely quiet merchant
     if (lastFeedback && (lastFeedback.reason === 'not-in-mood' || lastFeedback.reason === 'ate-recently')) {
       // Foursquare's generic internal category ('foursquare.place') is not cuisine-specific, so a
       // category match there is meaningless - only a specific local-demo category (e.g.
@@ -1983,7 +2151,7 @@ async function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchant
         // A budget verdict needs a real price behind it.
         const budgetFit = aiMerchant.price === null && !hasResearchedPrices(aiMerchant) ? 'unknown' : ranking.budgetFit;
         return { merchant: aiMerchant, reason: safeAIReason(ranking, aiMerchant, profile), budgetFit: budgetFit,
-          noCloserMatch: false };
+          noCloserMatch: false, bestEffortOnly: research.bestEffortOnly };
       }
     } catch (error) {
       console.log('AI ranking unavailable, using rule-based fallback:', error.message);
@@ -1993,7 +2161,7 @@ async function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchant
   // Step 15: fallback ranks the identical constrained subset - never a superset AI would have seen.
   const fallbackMerchant = getFallbackRecommendation(candidates, feedbackItems, profile);
   logDiscovery('Selection source: FALLBACK -> ' + (fallbackMerchant ? fallbackMerchant.merchantName : 'none'));
-  return { merchant: fallbackMerchant, reason: null, noCloserMatch: false };
+  return { merchant: fallbackMerchant, reason: null, noCloserMatch: false, bestEffortOnly: research.bestEffortOnly };
 }
 
 function getMatchReasons(profile, merchant, feedbackItems) {
@@ -2001,6 +2169,8 @@ function getMatchReasons(profile, merchant, feedbackItems) {
   const lastFeedback = getLastFeedback(feedbackItems);
   if (merchant.price !== null && merchant.price <= profile.budget) {
     reasons.push('Within your budget');
+  } else if (merchant.price === null && merchant.priceLevel !== null && merchant.priceLevel <= 2) {
+    reasons.push('Budget-friendly');
   }
   if (profile.dietaryPreference !== 'none') {
     reasons.push(isDietaryUnverified(merchant, profile) ? DIETARY_UNVERIFIED_NOTE : 'Matches your dietary preference');
@@ -2019,6 +2189,10 @@ function getMatchReasons(profile, merchant, feedbackItems) {
       merchant.price !== null && lastFeedback.price !== null &&
       merchant.price < lastFeedback.price) {
     reasons.push('Costs less than your last match');
+  }
+  const txNow = getSimulatedTransactionVelocity(merchant.id);
+  if (getMerchantBusynessLabel(txNow) === 'quiet') {
+    reasons.push('Quiet now · walk right in');
   }
   if (reasons.length === 0) reasons.push('A nearby option that fits your settings');
   return reasons.slice(0, 3);
@@ -2067,6 +2241,48 @@ function getSingaporeMinutesNow() {
   }
   if (hours === 24) hours = 0;
   return hours * 60 + minutes;
+}
+
+// Simulates real-time NETS payment velocity per merchant. In a live NETS deployment this would
+// call an internal API returning actual transactions/hour per merchant terminal. Here we derive
+// a deterministic figure from time-of-day patterns + a per-merchant hash so the numbers are
+// stable within a 15-min window but vary naturally across meal periods and merchants.
+const TX_BASE_BY_HOUR = [
+  1, 1, 1, 1, 1, 2,    // 12-5am: closed / very late
+  4, 7, 10, 5, 4, 12,  // 6-11am: early opening, breakfast, pre-lunch build
+  22, 25, 18, 8, 5, 6, // 12pm-5pm: lunch peak, afternoon quiet
+  10, 16, 20, 18, 10, 5 // 6-11pm: dinner build, peak, wind-down
+];
+
+function hashMerchantId(id) {
+  let h = 5381;
+  for (let i = 0; i < id.length; i++) h = ((h << 5) + h + id.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+function getSimulatedTransactionVelocity(merchantId, nowMs) {
+  const now = new Date(nowMs || Date.now());
+  const parts = new Intl.DateTimeFormat('en-SG', {
+    hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Singapore'
+  }).formatToParts(now);
+  let sgHour = 0, sgMinute = 0;
+  parts.forEach(function(p) {
+    if (p.type === 'hour') sgHour = parseInt(p.value, 10);
+    if (p.type === 'minute') sgMinute = parseInt(p.value, 10);
+  });
+  if (sgHour === 24) sgHour = 0;
+  const base = TX_BASE_BY_HOUR[sgHour] || 1;
+  const hash = hashMerchantId(merchantId || 'default');
+  const merchantSpread = (hash % 7) - 3;      // per-merchant offset: -3 to +3
+  const bucket = Math.floor(sgMinute / 15);    // 0-3 within the hour
+  const bucketBoost = (bucket === 1 || bucket === 2) ? 2 : 0; // mid-hour slightly busier
+  return Math.max(0, base + merchantSpread + bucketBoost);
+}
+
+function getMerchantBusynessLabel(txPerHour) {
+  if (txPerHour < 8) return 'quiet';
+  if (txPerHour < 17) return 'moderate';
+  return 'busy';
 }
 
 function getCampaignAvailability(campaign, alreadyRedeemed) {
@@ -2186,6 +2402,7 @@ function recordPayment(demo, journey, amount, useCashback) {
     displayAmount: '$' + breakdown.netsPaid.toFixed(2), paymentMethod: 'NETS'
   };
   demo.transactions.unshift(transaction);
+  cacheTx(transaction);
   demo.processedPaymentAttempts[journey.id] = transaction.id;
   merchantPaymentFeed.unshift({ merchantId: transaction.merchantId, displayAmount: transaction.displayAmount,
     source: acquisitionSource, date: date.date, time: date.time, itemName: transaction.itemName || null,
@@ -2293,6 +2510,20 @@ function setVouchDecision(demo, transaction, decision) {
   }
 }
 
+function getResearchDietaryTagLabel(merchant, profile) {
+  if (!merchant || profile.dietaryPreference === 'none') return null;
+  if (merchant.dietary && merchant.dietary.length) {
+    return getDietaryPreferenceLabel(merchant.dietary[merchant.dietary.length - 1]);
+  }
+  if (merchant.research) {
+    const verdict = merchant.research[profile.dietaryPreference];
+    if (verdict && verdict.status === RESEARCH_STATUS.SUITABLE) {
+      return getDietaryPreferenceLabel(profile.dietaryPreference);
+    }
+  }
+  return null;
+}
+
 function matchView(demo, recommendation) {
   return {
     recommendation: recommendation,
@@ -2302,8 +2533,11 @@ function matchView(demo, recommendation) {
     rejectionReasons: rejectionReasons, recommendationAccepted: demo.recommendationAccepted,
     dailyRewardEarned: recommendation ? hasEarnedNormalRewardToday(demo, recommendation.id) : false,
     vouchCount: recommendation ? countVouches(demo, recommendation.id) : 0,
-    dietaryTagLabel: recommendation && recommendation.dietary.length ?
-      getDietaryPreferenceLabel(recommendation.dietary[recommendation.dietary.length - 1]) : null,
+    dietaryTagLabel: recommendation ? getResearchDietaryTagLabel(recommendation, demo.profile) : null,
+    priceLevelLabel: recommendation && recommendation.priceLevel ? '$'.repeat(recommendation.priceLevel) : null,
+    bestEffortOnly: Boolean(demo.selectedMerchantBestEffort),
+    busynessLabel: recommendation ? getMerchantBusynessLabel(getSimulatedTransactionVelocity(recommendation.id)) : null,
+    txPerHour: recommendation ? getSimulatedTransactionVelocity(recommendation.id) : 0,
     aiReason: demo.selectedMerchantReason || null,
     profile: demo.profile,
     dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference),
@@ -2354,6 +2588,40 @@ app.use(function(req, res, next) {
 
 // Home and persistent Smart Match
 app.get('/', function(req, res) { res.redirect('/welcome'); });
+// Health check endpoint — called by Vercel Cron (vercel.json) every 15 minutes.
+// Returns 200 with status JSON so ops can verify the app is alive and key services respond.
+app.get('/health', async function(req, res) {
+  const checks = {
+    app: 'ok',
+    foursquare: 'unknown',
+    openai: process.env.OPENAI_API_KEY ? 'configured' : 'missing',
+    tavily: process.env.TAVILY_API_KEY ? 'configured' : 'missing',
+    foursquareKey: process.env.FOURSQUARE_API_KEY ? 'configured' : 'missing'
+  };
+  // Lightweight Foursquare ping — uses a known-good Singapore location.
+  if (process.env.FOURSQUARE_API_KEY) {
+    try {
+      const pingUrl = new URL('https://places-api.foursquare.com/places/search');
+      pingUrl.searchParams.set('ll', '1.3521,103.8198');
+      pingUrl.searchParams.set('radius', '100');
+      pingUrl.searchParams.set('limit', '1');
+      pingUrl.searchParams.set('fields', 'fsq_place_id');
+      const ctrl = new AbortController();
+      const t = setTimeout(function() { ctrl.abort(); }, 4000);
+      const r = await fetch(pingUrl, {
+        signal: ctrl.signal,
+        headers: { 'Authorization': 'Bearer ' + process.env.FOURSQUARE_API_KEY,
+          'X-Places-Api-Version': FOURSQUARE_API_VERSION }
+      });
+      clearTimeout(t);
+      checks.foursquare = r.ok ? 'ok' : 'error_' + r.status;
+    } catch (e) { checks.foursquare = 'timeout_or_error'; }
+  }
+  const allOk = checks.app === 'ok' && checks.foursquare !== 'timeout_or_error' &&
+    !String(checks.foursquare).startsWith('error_4');
+  res.status(allOk ? 200 : 503).json({ status: allOk ? 'ok' : 'degraded', checks: checks, ts: new Date().toISOString() });
+});
+
 app.get('/welcome', function(req, res) { res.render('welcome'); });
 app.get('/home', function(req, res) {
   const demo = req.session.demo;
@@ -2389,9 +2657,11 @@ app.post('/smart-match/location', function(req, res) {
   const demo = req.session.demo;
   if (req.body.status === 'fallback') {
     demo.discoveryLocation = null;
+    locationCache.delete(req.session.id);
     logDiscovery('Smart Match location source: demo fallback');
   } else if (validCoordinates(req.body.latitude, req.body.longitude)) {
     demo.discoveryLocation = { latitude: req.body.latitude, longitude: req.body.longitude };
+    locationCache.set(req.session.id, demo.discoveryLocation);
     logDiscovery('Smart Match location source: browser');
   } else {
     return res.sendStatus(400);
@@ -2410,12 +2680,24 @@ app.post('/smart-match/location', function(req, res) {
 app.get('/smart-match/result', async function(req, res) {
   try {
     const demo = req.session.demo;
+    // Coordinates in the URL take priority — this is how GPS works across cold-started
+    // Vercel instances where locationCache and session are empty.
+    const qLat = parseFloat(req.query.lat);
+    const qLng = parseFloat(req.query.lng);
+    if (validCoordinates(qLat, qLng)) {
+      demo.discoveryLocation = { latitude: qLat, longitude: qLng };
+      demo.locationAttempted = true;
+      locationCache.set(req.session.id, demo.discoveryLocation);
+    } else if (!demo.locationAttempted && locationCache.has(req.session.id)) {
+      demo.discoveryLocation = locationCache.get(req.session.id);
+      demo.locationAttempted = true;
+    }
     let recommendation = findMerchantForDemo(demo, demo.selectedMerchantId);
     let noVerifiedDietary = false;
     let researchUnavailable = false;
     if (!recommendation) {
       if (!demo.nearbyMerchants.length) {
-        const nearby = await getNearbyMerchants(demo.discoveryLocation, demo.user.id, demo.profile.craving);
+        const nearby = await getNearbyMerchants(demo.discoveryLocation, demo.user.id, demo.profile.craving, demo.profile.dietaryPreference);
         demo.nearbyMerchants = nearby.merchants;
         demo.nearbySource = nearby.source;
         logDiscovery('Smart Match merchant source: ' +
@@ -2442,6 +2724,7 @@ app.get('/smart-match/result', async function(req, res) {
       if (recommendation) {
         demo.selectedMerchantId = recommendation.id;
         demo.selectedMerchantReason = result.reason;
+        demo.selectedMerchantBestEffort = Boolean(result.bestEffortOnly);
         if (!demo.shownMerchantIds.includes(recommendation.id)) {
           demo.shownMerchantIds.push(recommendation.id);
           const c = findCampaign(demo, recommendation.id);
