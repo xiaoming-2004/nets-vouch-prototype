@@ -37,8 +37,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Configure session
 // Use Upstash Redis when env vars are present (Vercel multi-instance), fall back to MemoryStore locally.
 function buildSessionStore() {
-  const url   = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  // Strip UTF-8 BOM (﻿) that PowerShell echo can prepend when piping to vercel env add.
+  const url   = (process.env.UPSTASH_REDIS_REST_URL   || '').replace(/^﻿/, '').trim();
+  const token = (process.env.UPSTASH_REDIS_REST_TOKEN || '').replace(/^﻿/, '').trim();
   if (!url || !token) return new session.MemoryStore();
 
   const redis = new Redis({ url, token });
