@@ -194,3 +194,48 @@ test('a Shared Vouch-attributed completed payment appears in receiver Activity',
   assert.match(activity.html, new RegExp('/transactions/' + receiverTx.id));
   assert.ok(!activity.html.includes(senderTx.id));
 });
+
+test('a brand-new Jia session has no seeded history - Activity is empty', async function() {
+  const v = visitor();
+  await v.request('/home');
+  const state = (await v.state()).demo;
+  assert.deepEqual(state.transactions, []);
+  const activity = await v.request('/profile/activity');
+  assert.equal(rowCount(activity.html), 0);
+  assert.ok(!activity.html.includes('tx-seed'));
+  assert.equal((await v.request('/transactions/tx-seed-1')).status, 404);
+});
+
+test('two browser sessions as the same persona never share transactions', async function() {
+  // Both sessions are "jia", so a lookup keyed only by transaction ID + persona would leak.
+  const first = visitor();
+  const second = visitor();
+  await second.request('/home');
+  const tx = await pay(first, 'felicia-chicken-rice', '6.40');
+  // Opening it in the owning session must not make it reachable anywhere else.
+  assert.equal((await first.request('/transactions/' + tx.id)).status, 200);
+  assert.equal((await first.request('/payment-success/' + tx.id)).status, 200);
+  const activity = await second.request('/profile/activity');
+  assert.equal(rowCount(activity.html), 0);
+  assert.ok(!activity.html.includes('$6.40'));
+  assert.equal((await second.request('/transactions/' + tx.id)).status, 404);
+  assert.notEqual((await second.request('/payment-success/' + tx.id)).status, 200);
+  assert.equal(rowCount((await first.request('/profile/activity')).html), 1);
+});
+
+test('Reset Demo invalidates old transactions; repeated resets stay clean; a new payment appears alone', async function() {
+  const v = visitor();
+  const old = await pay(v, 'green-bowl', '7.00');
+  assert.equal(rowCount((await v.request('/profile/activity')).html), 1);
+  await v.request('/reset-demo', {});
+  await v.request('/reset-demo', {});
+  assert.equal(rowCount((await v.request('/profile/activity')).html), 0);
+  assert.equal((await v.request('/transactions/' + old.id)).status, 404);
+  assert.notEqual((await v.request('/payment-success/' + old.id)).status, 200);
+  const fresh = await pay(v, 'felicia-chicken-rice', '5.00');
+  const activity = await v.request('/profile/activity');
+  assert.equal(rowCount(activity.html), 1);
+  assert.match(activity.html, /\$5\.00/);
+  assert.ok(!activity.html.includes('$7.00'));
+  assert.equal((await v.request('/transactions/' + fresh.id)).status, 200);
+});

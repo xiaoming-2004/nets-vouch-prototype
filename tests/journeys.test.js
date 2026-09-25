@@ -158,12 +158,14 @@ test('Smart Match recommends a merchant, keeps feedback and hands off to Scan', 
   assert.equal((await v.request('/')).location, '/welcome');
   await v.request('/home');
   const first = await match(v);
-  assert.match(first.html, /felicia-chicken-rice/);
-  assert.match(first.html, /Try: Chicken Rice · \$5\.00/);
+  // Neutral ranking: the nearest affordable demo merchant, with its real item and price.
+  assert.match(first.html, /data-merchant-id="woodlands-noodle-bar"/);
+  assert.match(first.html, /Try: Mushroom Noodles · \$6\.80/);
   assert.match(first.html, /Choose this/);
   assert.ok(!first.html.includes('Go there'));
   assert.ok(!first.html.includes('after collection'));
   const feliciaId = (await v.state()).demo.selectedMerchantId;
+  assert.equal(feliciaId, 'woodlands-noodle-bar');
   await v.request('/recommendation/accept', { merchantId: feliciaId });
   let state = (await v.state()).demo;
   assert.equal(state.recommendationAccepted, true);
@@ -368,6 +370,9 @@ test('Normal Vouch Credit is earned once per user, merchant and Singapore day', 
   assert.equal(feliciaCampaign.redemptionsToday, 1);
   assert.equal(feliciaCampaign.rewardBudgetSpentToday, .5);
   await v.request('/vouch/' + state.transactions[0].id, { action: 'skip' });
+  // The card's earned state is checked for the merchant just paid. Ranking is neutral (no merchant
+  // is hardcoded to win), so the card is pointed at that merchant explicitly.
+  await v.change(function(demo) { demo.selectedMerchantId = 'felicia-chicken-rice'; });
   assert.match((await v.request('/smart-match/result')).html, /Today's Vouch Credit earned/);
 
   const second = await scan(v, 'felicia-chicken-rice');
@@ -569,10 +574,11 @@ test('Retired preorder routes are safe and active pages render', async function(
   assert.match(script.html, /t\.me\/share/);
 });
 
-test('Task 1 regression — Smart Match still recommends Felicia first by default', async function() {
+test('Task 1 regression — default Smart Match uses neutral ranking (nearest affordable merchant, no hidden favourite)', async function() {
   const v = visitor();
   const result = await match(v);
-  assert.match(result.html, /felicia-chicken-rice/);
+  assert.match(result.html, /data-merchant-id="woodlands-noodle-bar"/);
+  assert.ok(!result.html.includes('data-merchant-id="felicia-chicken-rice"'));
   assert.match(result.html, /Choose this/);
 });
 
@@ -581,7 +587,7 @@ test('Task 3 regression — Smart Match route resolves correctly after async ref
   await v.request('/home');
   const result = await v.request('/smart-match/result');
   assert.equal(result.status, 200);
-  assert.match(result.html, /felicia-chicken-rice/);
+  assert.match(result.html, /data-merchant-id="[^"]+"/);
   assert.match(result.html, /Why this match/);
 });
 
@@ -624,15 +630,16 @@ test('Task 7 — daily reward is per-user; campaign cap is shared globally acros
   assert.equal(jiaCappedTx.merchantRewardEarned, 0);
 });
 
-test('Task 6 — full Open House story: Jia Smart Match → Vouch → Darren pays → Felicia sees both conversions', async function() {
+test('Task 6 — full Open House story: Jia Smart Match → Vouch → Darren pays → merchant sees both conversions', async function() {
   const jia = visitor();
   const darren = visitor();
 
   // Jia: Smart Match → accept → scan → pay → vouch → share
   await jia.request('/home');
   const matchResult = await jia.request('/smart-match/result');
-  assert.match(matchResult.html, /felicia-chicken-rice/);
   const feliciaId = (await jia.state()).demo.selectedMerchantId;
+  assert.ok(feliciaId, 'Smart Match recommends a merchant');
+  assert.match(matchResult.html, new RegExp('data-merchant-id="' + feliciaId + '"'));
   await jia.request('/recommendation/accept', { merchantId: feliciaId });
   const jiaScan = await scan(jia, feliciaId);
   await jia.request('/scan/payment', { journeyId: jiaScan.id, amount: '5.00' });

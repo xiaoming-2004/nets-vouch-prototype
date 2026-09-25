@@ -157,11 +157,30 @@ function mockFoursquareByQuery(resultsByQuery, defaultResults) {
 // curated local demo merchants, unaffected by which discovery provider is active)
 // ---------------------------------------------------------------------------
 
+// Neutral ranking: no merchant has a hidden ID/name bonus. With default preferences the
+// deterministic fallback picks the nearest affordable demo merchant (Woodlands Noodle Bar, 4 min,
+// $6.80) over farther ones such as Felicia's Chicken Rice (8 min, $5.00).
+const NEAREST_DEMO_MERCHANT_ID = 'woodlands-noodle-bar';
+
 test('missing AI key uses participating local fallback', async function() {
   const demo = createInitialDemo('jia');
   const result = await getSmartRecommendation(demo.profile, await candidates(), [], [], demo);
-  assert.equal(result.merchant.id, 'felicia-chicken-rice');
+  assert.equal(result.merchant.id, NEAREST_DEMO_MERCHANT_ID);
   assert.equal(result.reason, null);
+});
+
+test('no merchant gets a hidden ranking bonus from its ID or name', async function() {
+  const demo = createInitialDemo('jia');
+  const base = (await candidates()).find(function(m) { return m.id === 'felicia-chicken-rice'; });
+  // Identical facts except identity; the Felicia-identity candidate is 3 minutes farther -
+  // a gap the removed +15 bonus would have overturned.
+  const felicia = Object.assign({}, base, { distanceMinutes: 7 });
+  const neutral = Object.assign({}, base, { id: 'green-bowl', merchantId: 'green-bowl',
+    merchantName: 'Neutral Stall', name: 'Neutral Stall', distanceMinutes: 4 });
+  for (const pool of [[felicia, neutral], [neutral, felicia]]) {
+    const result = await getSmartRecommendation(demo.profile, pool, [], [], demo);
+    assert.equal(result.merchant.id, 'green-bowl', 'the nearer merchant wins regardless of identity or order');
+  }
 });
 
 test('AI error and malformed or ineligible output use deterministic fallback', async function() {
@@ -169,11 +188,11 @@ test('AI error and malformed or ineligible output use deterministic fallback', a
   const demo = createInitialDemo('jia');
   const nearby = await candidates();
   global.fetch = async function() { throw new Error('provider unavailable'); };
-  assert.equal((await getSmartRecommendation(demo.profile, nearby, [], [], demo)).merchant.id, 'felicia-chicken-rice');
+  assert.equal((await getSmartRecommendation(demo.profile, nearby, [], [], demo)).merchant.id, NEAREST_DEMO_MERCHANT_ID);
   global.fetch = async function() { return aiResponse('not-participating', 'Nearby choice.'); };
-  assert.equal((await getSmartRecommendation(demo.profile, nearby, [], [], demo)).merchant.id, 'felicia-chicken-rice');
+  assert.equal((await getSmartRecommendation(demo.profile, nearby, [], [], demo)).merchant.id, NEAREST_DEMO_MERCHANT_ID);
   global.fetch = async function() { return aiResponse('green-bowl', '   '); };
-  assert.equal((await getSmartRecommendation(demo.profile, nearby, [], [], demo)).merchant.id, 'felicia-chicken-rice');
+  assert.equal((await getSmartRecommendation(demo.profile, nearby, [], [], demo)).merchant.id, NEAREST_DEMO_MERCHANT_ID);
 });
 
 test('AI timeout uses deterministic fallback', async function() {
@@ -185,7 +204,7 @@ test('AI timeout uses deterministic fallback', async function() {
       options.signal.addEventListener('abort', function() { reject(new Error('aborted')); });
     });
   };
-  assert.equal((await getSmartRecommendation(demo.profile, nearby, [], [], demo)).merchant.id, 'felicia-chicken-rice');
+  assert.equal((await getSmartRecommendation(demo.profile, nearby, [], [], demo)).merchant.id, NEAREST_DEMO_MERCHANT_ID);
 });
 
 test('valid AI choice is used only after dietary, budget, distance and campaign filters', async function() {
@@ -724,7 +743,7 @@ test('TEST V: Foursquare failure (missing key, error, timeout, malformed) keeps 
   await v.request('/smart-match/location', { status: 'fallback' });
   const match = await v.request('/smart-match/result');
   assert.equal(match.status, 200);
-  assert.match(match.html, /data-merchant-id="felicia-chicken-rice"/);
+  assert.match(match.html, new RegExp('data-merchant-id="' + NEAREST_DEMO_MERCHANT_ID + '"'));
   assert.match(match.html, /Using demo location/);
 });
 

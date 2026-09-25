@@ -434,23 +434,10 @@ function registerDemoMerchant(merchant) {
   }
 }
 
-// Module-level caches — survive between requests on the same Vercel instance and act as a
-// fallback when a cold-started instance gets a request whose session data lives elsewhere.
-const txCache = new Map();          // txId → transaction
-const userTxIndex = new Map();      // userId → Set<txId>
+// Module-level location fallback for a cold-started instance, keyed by session ID.
+// Transactions deliberately have NO module-level cache: the owning session is the only source of
+// truth, so ownership, isolation and Reset Demo invalidation cannot be bypassed.
 const locationCache = new Map();    // sessionId → {latitude, longitude}
-
-function cacheTx(transaction) {
-  txCache.set(transaction.id, transaction);
-  if (!userTxIndex.has(transaction.ownerUserId)) userTxIndex.set(transaction.ownerUserId, new Set());
-  userTxIndex.get(transaction.ownerUserId).add(transaction.id);
-  if (txCache.size > 500) {
-    const oldest = txCache.keys().next().value;
-    const oldTx = txCache.get(oldest);
-    if (oldTx && userTxIndex.has(oldTx.ownerUserId)) userTxIndex.get(oldTx.ownerUserId).delete(oldest);
-    txCache.delete(oldest);
-  }
-}
 
 // Cross-session payment feed with labelled illustrative examples and live payments.
 // Capped at 200 entries; newest live entries are unshifted to the front.
@@ -517,44 +504,10 @@ const seedPromotionalRedemptions = [
   { transactionId: 'tx-h4', merchantName: "Felicia's Chicken Rice", itemName: 'Chicken Rice', rewardAmount: 0.50, date: '2026-09-08', status: 'Redeemed' }
 ];
 
-function createSeedTransactions(identityId) {
-  if (identityId !== 'jia') return [];
-  const uid = demoIdentities.jia.id;
-  return [
-    { id: 'tx-seed-1', ownerUserId: uid, journeyId: 'j-seed-1', source: 'DIRECT_SCAN', journeySource: 'scan',
-      merchantId: 'felicia-chicken-rice', merchantName: "Felicia's Chicken Rice",
-      outlet: 'RP North Food Court · Stall 08', itemName: 'Chicken Rice',
-      purchaseAmount: 5.00, merchantCreditUsed: 0, cashbackUsed: 0, netsPaid: 5.00,
-      merchantRewardEarned: 0.50, cashbackAwarded: 0.50, promisedReward: 0.50,
-      rewardReleased: true, status: 'Successful', eligible: true, collected: true,
-      vouchDecision: 'created', vouchCreated: true, campaignId: 'felicia-chicken-rice-campaign',
-      date: '13 Sep 2026', time: '12:34 pm', createdAt: '2026-09-13T04:34:00.000Z',
-      displayAmount: '$5.00', paymentMethod: 'NETS' },
-    { id: 'tx-seed-2', ownerUserId: uid, journeyId: 'j-seed-2', source: 'SMART_MATCH', journeySource: 'smart-match',
-      merchantId: 'green-bowl', merchantName: 'Green Bowl',
-      outlet: 'Republic Polytechnic · North Food Court', itemName: 'Vegan Grain Bowl',
-      purchaseAmount: 9.20, merchantCreditUsed: 0, cashbackUsed: 0, netsPaid: 9.20,
-      merchantRewardEarned: 0.50, cashbackAwarded: 0.50, promisedReward: 0.50,
-      rewardReleased: true, status: 'Successful', eligible: true, collected: true,
-      vouchDecision: 'created', vouchCreated: true, campaignId: 'green-bowl-campaign',
-      date: '12 Sep 2026', time: '1:05 pm', createdAt: '2026-09-12T05:05:00.000Z',
-      displayAmount: '$9.20', paymentMethod: 'NETS' },
-    { id: 'tx-seed-3', ownerUserId: uid, journeyId: 'j-seed-3', source: 'DIRECT_SCAN', journeySource: 'scan',
-      merchantId: 'felicia-chicken-rice', merchantName: "Felicia's Chicken Rice",
-      outlet: 'RP North Food Court · Stall 08', itemName: null,
-      purchaseAmount: 7.50, merchantCreditUsed: 0.50, cashbackUsed: 0.50, netsPaid: 7.00,
-      merchantRewardEarned: 0, cashbackAwarded: 0, promisedReward: 0,
-      rewardReleased: true, status: 'Successful', eligible: false, collected: true,
-      vouchDecision: 'not-eligible', vouchCreated: false, campaignId: 'felicia-chicken-rice-campaign',
-      date: '10 Sep 2026', time: '12:11 pm', createdAt: '2026-09-10T04:11:00.000Z',
-      displayAmount: '$7.00', paymentMethod: 'NETS' }
-  ];
-}
-
 function createInitialDemo(userId) {
   const identityId = isValidDemoIdentity(userId) ? userId : 'jia';
   return {
-    version: 17,
+    version: 18,
     user: { ...demoIdentities[identityId] },
     profile: { dietaryPreference: 'none', moodCuisine: 'any', craving: '', budget: 10, maxDistanceMinutes: 10, notifications: true },
     hasSetPreferences: false,
@@ -564,7 +517,7 @@ function createInitialDemo(userId) {
     nearbyRefreshAttempted: false,
     recommendationFeedback: [], shownMerchantIds: [],
     currentScanPayment: null, activeVouchClaim: null,
-    transactions: createSeedTransactions(identityId), paymentVerifiedVouches: [], promotionalRedemptions: [],
+    transactions: [], paymentVerifiedVouches: [], promotionalRedemptions: [],
     nextScanNumber: 1, nextTransactionNumber: 1, nextVouchNumber: 1,
     processedPaymentAttempts: {}
   };
@@ -577,7 +530,7 @@ function initialiseDemoSession(req) {
     req.session.demoUserStates = {};
   }
   req.session.demoResetGeneration = demoResetGeneration;
-  if (!req.session.demo || req.session.demo.version !== 17) {
+  if (!req.session.demo || req.session.demo.version !== 18) {
     req.session.demo = createInitialDemo('jia');
     req.session.demoUserStates = {};
   }
@@ -635,11 +588,8 @@ function findTransactionById(transactions, transactionId) {
 }
 
 function getOwnedTransaction(demo, transactionId) {
-  const fromSession = findTransactionById(demo.transactions, transactionId);
-  if (fromSession && fromSession.ownerUserId === demo.user.id) return fromSession;
-  const cached = txCache.get(transactionId);
-  if (cached && cached.ownerUserId === demo.user.id) return cached;
-  return null;
+  const transaction = findTransactionById(demo.transactions, transactionId);
+  return transaction && transaction.ownerUserId === demo.user.id ? transaction : null;
 }
 
 function isCompletedActivityTransaction(transaction) {
@@ -650,19 +600,9 @@ function isCompletedActivityTransaction(transaction) {
 }
 
 function getActivityTransactions(demo) {
-  const sessionIds = new Set(demo.transactions.map(function(t) { return t.id; }));
-  const all = demo.transactions.filter(function(t) { return t && t.ownerUserId === demo.user.id; });
-  const cached = userTxIndex.get(demo.user.id);
-  if (cached) {
-    cached.forEach(function(id) {
-      if (!sessionIds.has(id)) {
-        const tx = txCache.get(id);
-        if (tx && tx.ownerUserId === demo.user.id) all.push(tx);
-      }
-    });
-  }
-  return all.filter(isCompletedActivityTransaction)
-    .sort(function(a, b) { return Date.parse(b.createdAt) - Date.parse(a.createdAt); });
+  return demo.transactions.filter(function(transaction) {
+    return transaction && transaction.ownerUserId === demo.user.id && isCompletedActivityTransaction(transaction);
+  }).sort(function(a, b) { return Date.parse(b.createdAt) - Date.parse(a.createdAt); });
 }
 
 function transactionNotFound(res) {
@@ -2576,7 +2516,6 @@ function recordPayment(demo, journey, amount, useCashback) {
     displayAmount: '$' + breakdown.netsPaid.toFixed(2), paymentMethod: 'NETS'
   };
   demo.transactions.unshift(transaction);
-  cacheTx(transaction);
   demo.processedPaymentAttempts[journey.id] = transaction.id;
   merchantPaymentFeed.unshift({ merchantId: transaction.merchantId, displayAmount: transaction.displayAmount,
     source: acquisitionSource, date: date.date, time: date.time, itemName: transaction.itemName || null,
