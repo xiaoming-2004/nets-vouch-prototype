@@ -484,7 +484,7 @@ test('WALK E/F: a dropped walking-time reason keeps the merchant and never trigg
   assert.match(prompt, /Never convert maxWalkingMinutes into a claimed travel time/);
 });
 
-test('SPEED: a hung Groq ranker falls back within the shared 1.5 s ranking budget', async function() {
+test('SPEED: a hung Groq ranker falls back within the shared 2.5 s ranking budget', async function() {
   const merchants = await discover(chickenPlaces, 'spicy crispy chicken');
   process.env.GROQ_API_KEY = 'test-groq';
   process.env.OPENAI_API_KEY = 'test-openai';
@@ -503,7 +503,7 @@ test('SPEED: a hung Groq ranker falls back within the shared 1.5 s ranking budge
   const started = Date.now();
   const result = await rank(merchants, 'spicy crispy chicken');
   const elapsed = Date.now() - started;
-  assert.ok(elapsed < 1900, 'ranking finished in ' + elapsed + ' ms');
+  assert.ok(elapsed < 2900, 'ranking finished in ' + elapsed + ' ms');
   assert.equal(calls.groq, 1);
   assert.equal(calls.openai, 0, 'Groq used the whole budget, so OpenAI is skipped for rules');
   assert.ok(result.merchant, 'deterministic rules still recommend a merchant');

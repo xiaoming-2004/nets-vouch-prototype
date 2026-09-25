@@ -1,6 +1,6 @@
 # NETS Vouch Prototype — Codex Handover
 
-_Last updated: 23 Sep 2026. Everything except AI Smart Matching is built and tested (195 tests passing). See **REMAINING ROADMAP**._
+_Last updated: 25 Sep 2026 (Smart Match sections). Earlier note — 23 Sep 2026: Everything except AI Smart Matching is built and tested (195 tests passing). See **REMAINING ROADMAP**._
 
 ## Project
 
@@ -126,76 +126,107 @@ The current implementation is documented in **SMART MATCH — CURRENT IMPLEMENTA
 
 # SMART MATCH — CURRENT IMPLEMENTATION
 
+_Updated 25 Sep 2026 (dietary matching / caching / deadline fix). The code is the source of truth._
+
 Core principle:
 
 ```text
 Rules decide what is eligible.
 AI only interprets and ranks eligible candidates.
 Server validates every AI output.
+Dietary suitability comes ONLY from validated, outlet-level evidence.
 ```
 
-## End-to-end flow
+## End-to-end flow (`GET /smart-match/result`)
 
 ```text
-browser GPS (navigator.geolocation, maximumAge 0) → POST /smart-match/location (session only)
-→ Foursquare Place Search (query = raw craving, or "food"; one broad "food" fallback if < 5 results)
-→ merge both responses, THEN container/parent-venue suppression
-→ deterministic rules: shown/rejected history, distance limit, "Too far" (strictly closer), campaign, known dietary NON_MATCH
-→ if a dietary restriction is set: merchant research (Tavily → Groq → OpenAI) = hard filter, SUITABLE only
-→ craving ranking AI (OpenAI chat completions, gpt-4o-mini) over the surviving candidates (max 20 in prompt)
-→ server validates AI pick + reason; otherwise rule-based fallback ranking
-→ ONE recommendation
+browser GPS → POST /smart-match/location (session only)
+→ ONE overall request deadline starts (request-budget.js, AsyncLocalStorage)
+→ discovery: Google Places (New) primary → Foursquare fallback → curated demo merchants
+     raw craving searched first and always kept; active dietary restriction adds ONE dietary search
+→ container suppression + meal eligibility (MEAL / NON_MEAL / UNCERTAIN)
+→ deterministic rules: shown/rejected, walking distance, "Too far" (strictly closer), budget, campaign
+→ dietary restriction set: fresh evidence (shared store) → otherwise bounded research waves
+     (Tavily → Groq → OpenAI) → only verified SUITABLE candidates continue
+→ final ranking: Groq → OpenAI (shared budget) → deterministic rules, over verified/eligible candidates only
+→ ONE recommendation, or an honest empty state
+→ card extras: Place photo + halal badge from EXISTING evidence only (no badge research)
 ```
 
-Key functions in `app.js`: `getNearbyMerchants`, `parseFoursquareNearbyPlaces`, `isContainerName`, `getSmartRecommendation`, `applyDeterministicRejectionConstraint`, `applyMerchantResearch`, `researchMerchants`, `analyseMerchantResearch`, `validateResearchAnalysis`, `getAIRanking`, `safeAIReason`, `getFallbackRecommendation`.
+Key files: `app.js` (discovery, research, ranking, routes), `request-budget.js` (deadline + safe trace),
+`research-store.js` (shared dietary evidence), `smart-match-result.js` (card photo / demo Vouches / Maps URL).
 
-## Container / stall discovery (done)
+## Discovery (Google primary, Foursquare fallback)
 
-- Craving search and "food" fallback are merged by `fsq_place_id` and parsed once, so a parent referenced in either response is suppressed.
-- Suppressed: places named as another place's `related_places.parent`; categories Food Court / Hawker Centre / Shopping Mall / Market; whole-phrase names (food court, food centre, hawker centre, kopitiam, coffeeshop, coffee shop).
-- A "Coffee Shop" **category** alone is NOT suppressed (standalone cafés stay valid).
-- Child stall keeps `parentVenueName` (from its own data or the parent place in the combined results).
+- `getNearbyMerchants(location, sessionLabel, craving, maxDistanceMinutes, dietaryPreference)`.
+- **No craving, no restriction:** 1 Google Nearby Search (distance-ranked, meal types, radius = walking limit).
+- **Craving, no restriction:** raw Text Search; if < 5 usable → ONE Groq search-intent expansion + ONE expanded Text Search (or the ONE Nearby fallback). Raw results are always kept.
+- **Restriction, no craving:** Text Search `"<diet> food"` (e.g. "halal food"); if < 5 usable → ONE Nearby Search merged in.
+- **Restriction + craving:** raw craving Text Search, then ONE `"<diet> <craving>"` search merged after it (skipped when the craving already names the diet). No expansion.
+- **Max per discovery:** 2 Google calls (+ at most 1 Groq intent call, only without a restriction). Foursquare fallback mirrors this: raw craving (or `"<diet> food"`) + at most ONE second query (dietary query, or broad `"food"` without a restriction) = max 2 calls.
+- Dietary search terms are retrieval only (`fromDietarySearch` flag) — never evidence.
+- Merged and de-duplicated by provider place ID. Discovery cache ~15 min per ~110 m bucket + mode + query/radius.
+- Nearby Search no longer excludes `coffee_shop`; `classifyMealEligibility` keeps coffee_shop + strong meal-service type (MEAL) and rejects drink-only coffee shops, cafés, bakeries, desserts and containers.
 
-## Craving (done)
+## Dietary verification (strict)
 
-- No craving dictionary. The raw craving is the Foursquare query; the craving AI interprets it semantically.
-- AI output: `{merchantId, relevance: high|medium|low, budgetFit: within|over|unknown, reason}`.
-- `low` relevance → fixed honest reason: "This is the closest available fit from the nearby options."
-- Reason text is dropped (falls back to rule-based "Why this match") if it claims unsupported dietary, price, menu or rating facts.
-- Fallback ranking uses distance/preferences plus a small bonus when the user's own words literally appear in the merchant name/category.
+- Options: none / halal / vegetarian / vegan. Places merchants start with `dietary: []`.
+- Only research-verified `SUITABLE` merchants satisfy an active restriction — never unverified ones, never search retrieval, names, cuisine, Google types, pork-free menus or AI memory.
+- **Outlet identity** (`sourceIdentifiesOutlet`): a cited source must contain the FULL brand name (not a prefix). For **halal** it must also contain an outlet signal when the merchant has one (its postal code, branch name after `@`/`-`/`|`/`(`, or parent venue) — another branch's certificate cannot verify this outlet. Vegetarian/vegan accept a chain's own menu for the brand.
+- Vegetarian ≠ vegan; vegetarian/vegan SUITABLE also needs ≥ 1 evidenced item.
 
-## Dietary (done — evidence-based)
+## Research (Tavily → Groq → OpenAI), bounded
 
-- Options: none / halal / vegetarian / vegan (single select).
-- No food-word dictionaries and no category shortcuts. Foursquare merchants start with `dietary: []`.
-- Suitability comes ONLY from validated merchant research (curated local demo merchants keep their own tags).
-- Active restriction → only research-verified `SUITABLE` merchants are recommended. None verified → "No verified <diet> matches found nearby." Research unavailable → "We couldn't check <diet> options right now."
-- Mixed menus are fine (meat + one real vegetarian/vegan option = SUITABLE). Vegetarian ≠ vegan. Halal needs explicit outlet-level evidence (MUIS / official statement / reliable source).
+- Research order: fresh cached VERIFIED candidate → used immediately, no research. Otherwise unchecked candidates: dietary-search results first, then nearest.
+- **Waves**: up to 2 batches × 3 merchants (`RESEARCH_CONCURRENCY`=2). Tavily evidence for a wave is gathered in parallel; analysis runs batch by batch (a Groq 429 blocks Groq for the rest of the request; OpenAI reuses the SAME evidence).
+- Stops at the FIRST verified merchant, at 12 merchants per request (`RESEARCH_MAX_MERCHANTS`), or when < 5 s remain.
+- No Tavily call at all when no Groq/OpenAI key is usable. (A Groq 429 discovered on the first analysis can cost one wave of Tavily searches.)
+- Tavily calls keep 2.5 s back for analysis + 1.5 s for ranking; page extraction only with ≥ 7 s left (else the strongest snippets are analysed, marked weak, same validator); advanced extract retry only with ≥ 12 s left.
+- Outcomes: `researchUnavailable` (no provider could produce any verdict) → "We couldn't check <diet> options right now."; `verificationIncomplete` (some candidates unchecked because of time / the per-request limit) → "Still checking <diet> options nearby…" + "Check more places" (the next request continues with unchecked ones); all checked and none verified → "No verified <diet> matches found nearby."
+- Dietary outcomes never trigger a discovery refresh (discovery already used dietary intent).
 
-## Merchant research layer (Tavily → Groq → OpenAI)
+## Research evidence store (`research-store.js`)
 
-- **Tavily Search** (1 per merchant, 5 results): query = name + parent venue + address + "Singapore" + diet intent (`vegetarian menu` / `vegan menu` / `halal MUIS`).
-- Results ranked by exact-merchant relevance, then generic source quality (gov/certification → official site → official social → delivery → listing → other → forums).
-- **Tavily Extract** (basic, batched per 3-merchant batch) on the best 2 URLs per merchant; one batched advanced retry only for strong sources that came back unusable. Page text cleaned and capped at ~1,500 chars per source. If all extraction fails → top 3 snippets, marked `evidenceStrength: "snippets"`.
-- **Analysis**: one request per batch asking ONE question per merchant for the active diet only. Groq (`openai/gpt-oss-20b`) primary; OpenAI (`gpt-4o-mini`) fallback with the SAME evidence. Groq 429 → Groq blocked for that request; no Tavily repeat for the fallback.
-- **One validator** (`validateResearchAnalysis`):
-  - whole response rejected (→ next provider): non-JSON, missing `results`, merchant ID outside batch/duplicate, any URL not from that merchant's supplied sources
-  - per merchant: malformed entry dropped alone (not cached, retried later)
-  - per field: bad status → UNKNOWN; bad item dropped; bad price → null
-  - SUITABLE/UNSUITABLE need evidence + a cited source that **names the merchant** (exact-outlet identity check); vegetarian/vegan SUITABLE also needs ≥ 1 matching item
-- **Limits**: batches of 3, stop at 2 verified, max 3 batches (9 merchants) per Smart Match, nearest first. No research at all when diet = none (cached research is still reused for ranking).
-- **Cache**: in-process `Map`, key `research-v6:<fsq_place_id>:<restriction>`, TTL 24 h, provider-independent (`researchProvider` stored for debugging). Failed calls never cached.
+- Layer 1 in-process `Map`; layer 2 the EXISTING Upstash Redis client (same client as sessions) when `UPSTASH_REDIS_REST_URL/TOKEN` are set. No other database.
+- Key: `research-v7:<provider>:<stable place id>:<restriction>`. Value: validated verdict + sources + `verifiedAt` + `expiresAt` + `version`. No user data.
+- TTL: SUITABLE/UNSUITABLE 7 days (`RESEARCH_VERIFIED_TTL_MS`); UNKNOWN 6 h (`RESEARCH_UNKNOWN_TTL_MS`); timeouts / HTTP / provider failures / deadline aborts are never stored.
+- `hydrateMerchantResearch` loads fresh evidence (memory → ONE shared MGET). A merchant keeps its own session copy only while it is fresh (current version, unexpired) — a store miss never erases fresh evidence, stale/old-format evidence is dropped.
+- Concurrency: in-process claim per key (other requests await the owner); with Upstash, a 25 s NX lock per key across instances (others poll the shared cache). Shared-store errors → logged once, memory-only for 60 s; matching continues.
 
-## Discovery cache
+## Time policy (configurable)
 
-Foursquare responses are cached ~15 min per ~110 m location bucket + query; distances are recalculated for each visitor's own coordinates.
+| Setting | Default | Meaning |
+|---|---|---|
+| `SMART_MATCH_DEADLINE_MS` | 6000 | whole request, no dietary restriction |
+| `SMART_MATCH_DIETARY_DEADLINE_MS` | 15000 | whole request with an active restriction |
+| `PLACES_REQUEST_TIMEOUT_MS` | 3000 | per Google/Foursquare call (capped by time left) |
+| `SEARCH_INTENT_TIMEOUT_MS` | 1500 | Groq craving expansion |
+| `SMART_MATCH_RANKING_MS` | 2500 | shared Groq → OpenAI ranking budget, then rules |
 
-## Live verification so far (honest status)
+Every provider call is sized from the time left and cancelled at the deadline (AbortSignal). Fallback when time runs short: next Places provider / demo; raw craving; "verification incomplete" (never an unverified match); rules ranking.
 
-- Live Tavily → Groq single merchant (Genesis Vegan Restaurant): verified vegan, 4.5 s.
-- Live RP Vegetarian run (41 merchants): Subway verified vegetarian from its foodpanda menu ("Falafel Sub"), ~23 s. That run also showed a false positive (Cafe Esplanade matched from a page about a different outlet); the exact-outlet identity check was added afterwards and is covered by tests but **not yet re-verified live**.
-- OpenAI fallback: mocks only (no local OpenAI key).
-- Gemini was evaluated and rejected (model retired / free-tier quota 429).
+## Result card (display only)
+
+- Halal badge reads existing fresh evidence only: green "Halal" / orange "Non-halal" (evidence) / grey "Halal not verified". No badge-only research.
+- Place photo (owner-uploaded only) within ≤ 500 ms of the remaining budget; the lookup is cancelled at the same limit (no work after the response).
+
+## Craving ranking
+
+- No craving dictionary; the raw craving goes to discovery and to the ranker. Ranker output `{merchantId, relevance, budgetFit, reason}`, validated; unsupported claims dropped; `low` relevance → fixed honest wording.
+
+## Diagnostics
+
+`logDiscovery` (non-production only) prints per request: discovery mode/queries and meal/non-meal counts, eligibility filter counts on empty results, research cache hits/misses, researched vs unchecked, provider call counts + timings, deadline notes, and the final selection or empty reason (`SMART MATCH REQUEST …`). Never keys or personal data.
+
+## Live verification (25 Sep 2026, RP demo location, Google + Tavily + Groq, memory cache only — no Upstash/OpenAI locally)
+
+| Request | Time | Result | Calls |
+|---|---|---|---|
+| Halal, no craving (cold) | 10.0 s | Red Ginger — verified halal | 1 Google text, 6 Tavily search, 2 Tavily extract, 3 Groq |
+| Halal + "chicken rice" | 0.95 s | Red Ginger (fresh verified evidence reused) | 2 Google text, 1 Groq |
+| Repeat of first, new session | 0.09 s | Red Ginger | 1 Groq (rate-limited → rules) |
+
+Before the analysis-time reserve was added, a cold run spent its budget on page extraction and returned "still checking" after 13.5 s. Cold dietary requests are several seconds by nature (Tavily search ~3–4 s, extract ~6–8 s); warm requests are sub-second.
 
 ---
 
@@ -224,7 +255,7 @@ Do not reintroduce immediate merchant repeats.
 
 # FOURSQUARE
 
-Foursquare is currently the merchant discovery provider.
+Foursquare is the automatic FALLBACK discovery provider (Google Places is primary; `PLACES_PROVIDER=foursquare` swaps them).
 
 Current endpoint:
 
@@ -260,13 +291,16 @@ Browser coordinates should drive searches through `ll=<lat>,<lon>`.
 All optional at startup; features degrade safely. Keys stay server-side and must never be logged or printed.
 
 ```text
-FOURSQUARE_API_KEY   nearby merchant discovery (missing → curated local demo merchants)
-TAVILY_API_KEY       live web/menu research (missing → no dietary verification, never AI memory)
-GROQ_API_KEY         primary research reasoning
-OPENAI_API_KEY       research fallback + craving ranking (missing → rule-based ranking)
+GOOGLE_PLACES_API_KEY    primary discovery + result photo (server-side only)
+FOURSQUARE_API_KEY       fallback discovery (neither key → curated local demo merchants)
+PLACES_PROVIDER          google (default) | foursquare
+TAVILY_API_KEY           live web/menu research (missing → no dietary verification, never AI memory)
+GROQ_API_KEY             primary research reasoning, search intent and final ranking
+OPENAI_API_KEY           research + ranking fallback (neither AI key → rule-based ranking)
+UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN   sessions + shared dietary evidence (missing → memory)
 ```
 
-Optional model overrides: `GROQ_RESEARCH_MODEL`, `OPENAI_RESEARCH_MODEL`.
+Optional model overrides: `GROQ_RESEARCH_MODEL`, `OPENAI_RESEARCH_MODEL`, `GROQ_RANKING_MODEL`, `OPENAI_RANKING_MODEL`, `GROQ_SEARCH_INTENT_MODEL`. Time policy: see SMART MATCH — Time policy.
 
 `.env` is not loaded automatically by `node app.js`; the deployment environment (e.g. Vercel) provides the keys. Locally, `GEMINI_API_KEY` / `GEOAPIFY_API_KEY` may exist in `.env` but are unused.
 
@@ -594,7 +628,7 @@ The prototype currently prioritises simplicity.
 
 Some runtime data may exist in process memory/session memory.
 
-Do NOT suddenly introduce MySQL, Redis, Firebase or another persistence system unless explicitly requested.
+Upstash Redis (optional) backs sessions and the shared dietary-evidence store (`research-store.js`); without it both fall back to process memory. Do NOT introduce MySQL, Firebase or another persistence system unless explicitly requested.
 
 For an Open House prototype, temporary process-memory persistence may be acceptable if reset/restart behaviour remains safe.
 

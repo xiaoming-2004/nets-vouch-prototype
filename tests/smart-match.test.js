@@ -1705,6 +1705,7 @@ test('PROVIDER: Tavily works but no Groq/OpenAI key -> friendly AI-analysis-unav
   assert.match(page.html, /We couldn(&#39;|')t check vegan options right now\./);
   assert.equal(merchantIdOf(page.html), null);
   assert.equal(flow.seen.research.calls, 0);
+  assert.equal(flow.seen.research.search, 0, 'no Tavily credits spent when nothing can analyse the evidence');
 });
 
 test('PROVIDER: Tavily finds nothing -> cached UNKNOWN without extract or LLM calls', async function() {
@@ -1861,7 +1862,7 @@ test('RETRIEVAL K: the model receives cleaned, size-limited extracted content, n
   assert.match(seen.researchPrompts[0], /^Dietary requirement: vegetarian/);
 });
 
-test('RETRIEVAL M: the same merchant + diet is served from cache for the next visitor; 24h TTL', async function() {
+test('RETRIEVAL M: the same merchant + diet is served from cache for the next visitor; verified evidence lives 7 days', async function() {
   const counter = newCounter();
   const opts = answerAll({ vegan: RESEARCH_STATUS.SUITABLE, items: [{ name: 'Vegan Fried Bee Hoon', price: 5.5 }] });
   await recommendDiet('vegan', [foodLeaf], opts, { counter: counter, craving: 'bread' });
@@ -1874,40 +1875,46 @@ test('RETRIEVAL M: the same merchant + diet is served from cache for the next vi
   try {
     Date.now = function() { return realNow() + 24 * 60 * 60 * 1000 + 1000; };
     await recommendDiet('vegan', [foodLeaf], opts, { counter: counter });
+    assert.equal(counter.calls, 1, 'verified evidence is still fresh after 24 hours');
+    Date.now = function() { return realNow() + 7 * 24 * 60 * 60 * 1000 + 1000; };
+    await recommendDiet('vegan', [foodLeaf], opts, { counter: counter });
   } finally {
     Date.now = realNow;
   }
-  assert.equal(counter.calls, 2, 'expired after 24 hours');
+  assert.equal(counter.calls, 2, 'expired after 7 days');
 });
 
-test('RETRIEVAL O: research stops once 2 suitable merchants are verified', async function() {
+test('RETRIEVAL O: research stops after the first wave that verifies a merchant - no waiting for a second', async function() {
   const research = function(ids) {
     return chatReply({ results: ids.map(function(id) {
-      return verdictFor(id, id === 'foursquare-p2' ? RESEARCH_STATUS.UNKNOWN : RESEARCH_STATUS.SUITABLE);
+      return verdictFor(id, id === 'foursquare-p1' ? RESEARCH_STATUS.SUITABLE : RESEARCH_STATUS.UNKNOWN);
     }) });
   };
-  const { seen } = await recommendDiet('vegetarian', numberedPlaces(9), research);
-  assert.equal(seen.research.groq, 1);
-  assert.equal(seen.research.search, 3);
+  const { seen, result } = await recommendDiet('vegetarian', numberedPlaces(12), research);
+  assert.equal(seen.research.groq, 2, 'one wave = 2 batches analysed');
+  assert.equal(seen.research.search, 6, 'the second wave is never started');
+  assert.equal(result.merchant.merchantName, 'Place 1');
 });
 
-test('RETRIEVAL P: research continues to batch 3 when the first 6 merchants verify nothing', async function() {
+test('RETRIEVAL P: research continues to a second wave when the first 6 merchants verify nothing', async function() {
   const research = function(ids) {
     return chatReply({ results: ids.map(function(id) {
       return verdictFor(id, id === 'foursquare-p7' ? RESEARCH_STATUS.SUITABLE : RESEARCH_STATUS.UNKNOWN);
     }) });
   };
   const { result, seen } = await recommendDiet('vegetarian', numberedPlaces(12), research);
-  assert.equal(seen.research.groq, 3);
+  assert.equal(seen.research.groq, 4);
   assert.equal(result.merchant.merchantName, 'Place 7');
 });
 
-test('RETRIEVAL Q: at most 9 merchants are researched per Smart Match, nearest first, 3 per batch', async function() {
+test('RETRIEVAL Q: at most 12 merchants are researched per request, nearest first, 3 per batch, 2 batches per wave', async function() {
   const { result, seen } = await recommendDiet('vegetarian', numberedPlaces(12), answerAll({}));
-  assert.equal(seen.research.search, 9);
+  assert.equal(seen.research.search, 12);
   assert.deepEqual(seen.researchBatches, [['foursquare-p0', 'foursquare-p1', 'foursquare-p2'],
-    ['foursquare-p3', 'foursquare-p4', 'foursquare-p5'], ['foursquare-p6', 'foursquare-p7', 'foursquare-p8']]);
-  assert.equal(result.noVerifiedDietary, true);
+    ['foursquare-p3', 'foursquare-p4', 'foursquare-p5'], ['foursquare-p6', 'foursquare-p7', 'foursquare-p8'],
+    ['foursquare-p9', 'foursquare-p10', 'foursquare-p11']]);
+  assert.equal(result.noVerifiedDietary, true, 'every candidate was checked and none verified');
+  assert.ok(!result.verificationIncomplete);
 });
 
 test('RETRIEVAL R: Groq 429 -> the same extracted evidence goes to OpenAI; no new Tavily calls; Groq not retried', async function() {
@@ -1926,9 +1933,11 @@ test('RETRIEVAL R: Groq 429 -> the same extracted evidence goes to OpenAI; no ne
 });
 
 test('RELIABILITY: Groq 429 without OpenAI stops research; earlier verified merchants are still used', async function() {
-  const none = await recommendDiet('vegetarian', numberedPlaces(6), { ok: false, status: 429 });
+  // Evidence for one wave (2 batches of 3) is gathered in parallel before the first 429 is known;
+  // after it, Groq is not retried and no further wave spends Tavily credits.
+  const none = await recommendDiet('vegetarian', numberedPlaces(12), { ok: false, status: 429 });
   assert.equal(none.seen.research.groq, 1);
-  assert.equal(none.seen.research.search, 3, 'no further Tavily credits spent on evidence nobody can analyse');
+  assert.equal(none.seen.research.search, 6, 'no further Tavily credits spent on evidence nobody can analyse');
   assert.equal(none.result.researchUnavailable, true);
   clearMerchantResearchCache();
   const known = fsqPlace('known', 'Known Veg Place', 'Restaurant', { distance: 500 });
@@ -2056,7 +2065,7 @@ test('RESEARCH: no metadata shortcuts - a Vegan category or a Non-Halal name is 
   assert.equal(nonHalal.result.merchant, null);
 });
 
-test('RESEARCH: zero verified -> clean dietary no-result state, 9 merchants max, no Foursquare re-query', async function() {
+test('RESEARCH: unchecked candidates remain -> "still checking" (not "none nearby"); the next request continues', async function() {
   setResearchKeys();
   const flow = mockDietFlow(numberedPlaces(20), answerAll({}));
   let foursquareCalls = 0;
@@ -2068,10 +2077,17 @@ test('RESEARCH: zero verified -> clean dietary no-result state, 9 merchants max,
   await v.request('/setup-preferences', { dietaryPreference: 'vegan', moodCuisine: 'any', craving: '' });
   await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
   const page = await v.request('/smart-match/result');
-  assert.match(page.html, /No verified vegan matches found nearby\./);
+  assert.ok(!/No verified vegan matches found nearby/.test(page.html), '12 of 20 checked is not "none nearby"');
+  assert.match(page.html, /Still checking vegan options nearby\./);
+  assert.match(page.html, /None of the 12 places checked so far/);
   assert.equal(merchantIdOf(page.html), null);
-  assert.equal(flow.seen.research.calls, 3);
-  assert.equal(flow.seen.research.search, 9);
+  assert.equal(flow.seen.research.calls, 4);
+  assert.equal(flow.seen.research.search, 12);
+  assert.equal(foursquareCalls, 1, 'one dietary-intent discovery call, no re-query');
+  // Trying again researches only the 8 still-unchecked candidates (cached verdicts are reused).
+  const again = await v.request('/smart-match/result');
+  assert.equal(flow.seen.research.search, 20);
+  assert.match(again.html, /No verified vegan matches found nearby\./, 'now every candidate has been checked');
   assert.equal(foursquareCalls, 1);
 });
 

@@ -348,31 +348,26 @@ test('HALAL: the tag is final when the card appears - no pending state, never gu
   assert.ok(!/halal/i.test(script), 'no client-side delayed halal fetch');
 });
 
-test('SPEED: slow halal research never holds the result longer than the 0.5 s extras cap', async function() {
+test('HALAL: a no-diet match never starts badge-only halal research', async function() {
   process.env.TAVILY_API_KEY = 'test-tavily';
   process.env.GROQ_API_KEY = 'test-groq';
-  const calls = mockGoogle({ photos: [] });
+  mockGoogle({ photos: [] });
   const googleFetch = global.fetch;
   let tavilyCalls = 0;
   global.fetch = function(url, init) {
-    if (new URL(String(url)).hostname === 'api.tavily.com') {
-      tavilyCalls += 1;
-      return new Promise(function() {}); // research hangs
-    }
+    if (new URL(String(url)).hostname === 'api.tavily.com') tavilyCalls += 1;
     return googleFetch(url, init);
   };
   const started = Date.now();
   const { html } = await matched();
-  const elapsed = Date.now() - started;
-  assert.equal(tavilyCalls, 1, 'halal research ran for the selected merchant during loading');
-  assert.ok(elapsed < 2000, 'photo + halal extras are capped at 0.5 s, took ' + elapsed + ' ms');
+  assert.equal(tavilyCalls, 0, 'the badge only reads existing evidence');
+  assert.ok(Date.now() - started < 2000);
   assert.match(html, /<span class="halal-tag halal-tag--unknown">Halal not verified<\/span>/);
-  assert.equal(calls.search >= 1, true);
 });
 
 test('HALAL: the tag is display-only and never read by ranking', function() {
   const source = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
-  assert.equal(source.split('resultHalalTag(').length - 1, 3, 'definition + display helper + loading-time check');
+  assert.equal(source.split('resultHalalTag(').length - 1, 2, 'definition + display helper only');
   const ranking = source.slice(source.indexOf('async function getSmartRecommendation'), source.indexOf('function getMatchReasons'));
   assert.ok(!/resultHalalTag|halal-tag/.test(ranking));
 });

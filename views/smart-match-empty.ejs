@@ -10,6 +10,11 @@
 <h2>We couldn't check <%= dietaryLabel.toLowerCase() %> options right now.</h2>
 <% if (locationNotice) { %><p>Using demo location</p><% } %>
 <p>Dietary suitability needs live menu research, which is unavailable at the moment. Please try again shortly.</p>
+<% } else if (typeof verificationIncomplete !== 'undefined' && verificationIncomplete) { %>
+<h2>Still checking <%= dietaryLabel.toLowerCase() %> options nearby.</h2>
+<% if (locationNotice) { %><p>Using demo location</p><% } %>
+<p>None of the <%= checkedCount ? checkedCount + ' ' : '' %>places checked so far could be verified as <%= dietaryLabel.toLowerCase() %>, and there are more to check. Try again to continue.</p>
+<a class="button" href="/home">Check more places</a>
 <% } else if (typeof noVerifiedDietary !== 'undefined' && noVerifiedDietary) { %>
 <h2>No verified <%= dietaryLabel.toLowerCase() %> matches found nearby.</h2>
 <% if (locationNotice) { %><p>Using demo location</p><% } %>

@@ -129,7 +129,7 @@ test('MEAL H/I: a restaurant stall inside a food court is kept; the food court i
   assert.deepEqual(ids, ['google-meng']);
 });
 
-test('MEAL nearby request: meal-oriented included types; cafes/bakeries are not requested', async function() {
+test('MEAL nearby request: meal-oriented included types; cafes/bakeries excluded; coffee_shop left to the classifier', async function() {
   const captured = [];
   process.env.GOOGLE_PLACES_API_KEY = 'test-google';
   global.fetch = async function(url, init) {
@@ -138,9 +138,11 @@ test('MEAL nearby request: meal-oriented included types; cafes/bakeries are not 
   };
   await getNearbyMerchants(ORIGIN, 'jia', '', 10);
   assert.deepEqual(captured[0].includedTypes, ['restaurant', 'fast_food_restaurant', 'meal_takeaway']);
-  for (const type of ['cafe', 'coffee_shop', 'bakery', 'food_court', 'shopping_mall']) {
+  for (const type of ['cafe', 'bakery', 'food_court', 'shopping_mall']) {
     assert.ok(captured[0].excludedPrimaryTypes.includes(type), type);
   }
+  assert.ok(!captured[0].excludedPrimaryTypes.includes('coffee_shop'),
+    'kopitiam stalls typed coffee_shop must reach classifyMealEligibility');
 });
 
 // --- Craving ----------------------------------------------------------------------------------------

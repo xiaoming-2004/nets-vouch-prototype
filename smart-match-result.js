@@ -137,14 +137,16 @@ function getCachedMerchantPhoto(merchant) {
 }
 
 // One Place Details request (field mask "photos" only) for the ONE selected merchant; cached per
-// place. Never throws: any failure simply means no photo (failures are not cached).
-async function ensureMerchantPhoto(merchant, apiKey) {
+// place. Never throws: any failure simply means no photo (failures are not cached). timeoutMs lets
+// the caller cancel it at the same moment it stops waiting, so no work outlives the response.
+async function ensureMerchantPhoto(merchant, apiKey, timeoutMs) {
   const placeId = googlePlaceIdOf(merchant);
   if (!placeId || !apiKey) return null;
   const cached = photoInfoCache.get(placeId);
   if (cached && cached.expiresAt > Date.now()) return cached.photo;
   const controller = new AbortController();
-  const timeout = setTimeout(function() { controller.abort(); }, PHOTO_LOOKUP_TIMEOUT_MS);
+  const timeout = setTimeout(function() { controller.abort(); },
+    Math.min(PHOTO_LOOKUP_TIMEOUT_MS, timeoutMs || PHOTO_LOOKUP_TIMEOUT_MS));
   try {
     const response = await fetch(PLACE_DETAILS_URL + encodeURIComponent(placeId), {
       signal: controller.signal,
