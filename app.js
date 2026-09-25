@@ -4,6 +4,8 @@ const session = require('express-session');
 const path = require('path');
 const { randomUUID } = require('node:crypto');
 const { Redis } = require('@upstash/redis');
+// Smart Match RESULT presentation only (photo, demo Vouch count, walking map) - no matching logic.
+const smartMatchResult = require('./smart-match-result');
 
 // Load local environment variables when a .env file exists (Node.js 22+).
 try {
@@ -15,8 +17,13 @@ try {
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MINIMUM_ELIGIBLE_PAYMENT = 1.00;
-const PLACES_REQUEST_TIMEOUT_MS = 5000;
-const AI_RANKING_TIMEOUT_MS = 8000;
+// Smart Match speed budget: a normal match (discovery + AI ranking + result card) should finish inside
+// the ~2 s loading screen and never take much more than 3 s. Anything slower falls back to the
+// existing fast path (next provider / rules / cached data) instead of making the user wait.
+const PLACES_REQUEST_TIMEOUT_MS = 1500;
+// One shared budget for final ranking: Groq first, OpenAI only with the time that is left, then rules.
+const AI_RANKING_TIMEOUT_MS = 1500;
+const AI_RANKING_MIN_ATTEMPT_MS = 300;
 // Foursquare's practical maximum results-per-request for Place Search.
 const FOURSQUARE_RESULT_LIMIT = 50;
 // Foursquare's dated Places API version header, matched to the manually-verified request.
@@ -1302,7 +1309,7 @@ function mergeByProviderPlaceId(first, second) {
 // (no location or user data); failures are never cached.
 // ---------------------------------------------------------------------------
 const SEARCH_INTENT_SYSTEM_MARKER = 'You turn a free-text food craving into ONE Google Maps search query';
-const SEARCH_INTENT_TIMEOUT_MS = 4000;
+const SEARCH_INTENT_TIMEOUT_MS = 800;
 const SEARCH_INTENT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const SEARCH_INTENT_CACHE_MAX_ENTRIES = 500;
 const SEARCH_INTENT_MAX_CHARS = 80;
@@ -2384,10 +2391,16 @@ function validateRankingResponse(content, candidates) {
 async function getAIRanking(profile, eligible, feedbackItems, demo) {
   const messages = buildRankingMessages(profile, eligible, feedbackItems, demo);
   const providers = availableRankingProviders();
+  const deadline = Date.now() + AI_RANKING_TIMEOUT_MS;
   for (let i = 0; i < providers.length; i++) {
     const provider = providers[i];
+    const remaining = deadline - Date.now();
+    if (remaining < AI_RANKING_MIN_ATTEMPT_MS) {
+      logDiscovery('Ranking time budget spent - skipping ' + provider.label);
+      break;
+    }
     try {
-      const content = await callResearchProvider(provider, messages, AI_RANKING_TIMEOUT_MS);
+      const content = await callResearchProvider(provider, messages, remaining);
       const ranking = validateRankingResponse(content, eligible);
       logDiscovery('Smart Match ranker: ' + provider.label);
       ranking.provider = provider.label;
@@ -2993,7 +3006,24 @@ function matchView(demo, recommendation) {
     dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference),
     dietaryPreferenceOptions: dietaryPreferenceOptions,
     moodCuisineLabel: getMoodCuisineLabel(demo.profile.moodCuisine || 'any'),
-    moodCuisineOptions: moodCuisineOptions
+    moodCuisineOptions: moodCuisineOptions,
+    resultDisplay: recommendation ? smartMatchResultDisplay(demo, recommendation) : null
+  };
+}
+
+// Display-only extras for the Smart Match result card; computed after the merchant is chosen and
+// never fed back into matching. demoVouches is SIMULATED sample social proof (stable per merchant)
+// plus the real Payment-Verified Vouches made in this demo.
+function smartMatchResultDisplay(demo, recommendation) {
+  const photo = smartMatchResult.getCachedMerchantPhoto(recommendation);
+  return {
+    halal: resultHalalTag(recommendation) || { tone: 'unknown', label: 'Halal not verified' },
+    demoVouches: smartMatchResult.demoVouchCount(recommendation.id) + countVouches(demo, recommendation.id),
+    photo: photo ? { src: '/smart-match/photo/' + encodeURIComponent(recommendation.id), attributions: photo.attributions } : null,
+    // Tapping the result map opens Google Maps walking directions. Origin is the visitor's real
+    // session location; with demo location/data Google Maps routes from the device instead.
+    walking: smartMatchResult.buildWalkingDirections(
+      !demo.discoveryLocation || demo.nearbyDemoFallback ? null : demo.discoveryLocation, recommendation)
   };
 }
 
@@ -3196,11 +3226,63 @@ app.get('/smart-match/result', async function(req, res) {
       dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference),
       locationNotice: !demo.discoveryLocation, noCloserMatch: false, noVerifiedDietary: noVerifiedDietary,
       researchUnavailable: researchUnavailable });
+    // Photo + halal verdict for the ONE selected merchant, settled within the speed budget (cached;
+    // anything not ready shows no photo / "Halal not verified" this time, and is instant next time).
+    await settleResultExtras(recommendation);
     res.render('smart-match-card', matchView(demo, recommendation));
   } catch (err) {
     console.error('smart-match/result error:', err);
     res.status(500).send('<p>Smart Match unavailable — <a href="/home">return home</a></p>');
   }
+});
+
+// Halal tag for the result card - display only, never used by ranking. It reads the EXISTING
+// evidence-based merchant research (Tavily + Groq/OpenAI, cached 24 h per place): green "Halal" only
+// with verified halal evidence, orange "Non-halal" only with evidence it is not, otherwise a neutral
+// "Halal not verified" - never guessed from the name, cuisine or a Google type. Curated demo
+// merchants use their own dietary records. Returns null while a Places merchant has no verdict yet.
+function resultHalalTag(merchant) {
+  if (isPlacesMerchant(merchant)) {
+    attachCachedResearch(merchant);
+    if (!merchant.research || !merchant.research.halal) return null;
+  }
+  const state = getDietaryMatchState(merchant, 'halal');
+  if (state === MATCH_STATE.MATCH) return { tone: 'halal', label: 'Halal' };
+  if (state === MATCH_STATE.NON_MATCH) return { tone: 'non-halal', label: 'Non-halal' };
+  return { tone: 'unknown', label: 'Halal not verified' };
+}
+
+// Runs the existing halal research for the ONE selected merchant while the loading screen is still
+// showing, so the card arrives with its final tag. Research that is still running when the result is
+// ready keeps going in the background and fills the 24 h cache, so the next showing is instant.
+async function ensureResultHalalVerdict(merchant) {
+  if (resultHalalTag(merchant)) return;
+  await applyMerchantResearch([merchant], 'halal').catch(function() { /* shown as not verified */ });
+}
+
+// The photo + halal extras may hold the result for at most this long (speed budget); anything slower
+// finishes in the background and is cached for the next showing.
+const RESULT_EXTRAS_WAIT_MS = 500;
+async function settleResultExtras(merchant) {
+  const extras = Promise.all([
+    smartMatchResult.ensureMerchantPhoto(merchant, process.env.GOOGLE_PLACES_API_KEY),
+    ensureResultHalalVerdict(merchant)
+  ]).catch(function() { /* display-only extras never break the result */ });
+  let timer;
+  await Promise.race([extras, new Promise(function(resolve) { timer = setTimeout(resolve, RESULT_EXTRAS_WAIT_MS); })]);
+  clearTimeout(timer);
+}
+
+// Serves the chosen photo of the visitor's CURRENTLY selected merchant only, fetched server-side
+// so GOOGLE_PLACES_API_KEY never reaches the browser. Any other merchant ID -> 404.
+app.get('/smart-match/photo/:merchantId', async function(req, res) {
+  const demo = req.session.demo;
+  const merchant = findMerchantForDemo(demo, demo.selectedMerchantId);
+  if (!merchant || merchant.id !== req.params.merchantId) return res.sendStatus(404);
+  const image = await smartMatchResult.fetchMerchantPhotoBytes(merchant, process.env.GOOGLE_PLACES_API_KEY);
+  if (!image) return res.sendStatus(404);
+  res.set({ 'Content-Type': image.type, 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
+  res.send(image.body);
 });
 
 // Plain HTML fallback for visitors with JavaScript disabled.

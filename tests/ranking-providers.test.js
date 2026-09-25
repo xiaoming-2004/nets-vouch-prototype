@@ -392,7 +392,7 @@ test('SERVER REASONS: useful factual fallback lines, never fabricated', function
     ['Best available match from the eligible nearby options']);
 });
 
-test('SERVER REASONS end-to-end: a dropped AI reason renders factual server reasons on the card', async function() {
+test('SERVER REASONS end-to-end: a dropped AI reason is never shown; the card renders the valid pick', async function() {
   const server = await new Promise(function(resolve) {
     const instance = app.listen(0, '127.0.0.1', function() { resolve(instance); });
   });
@@ -425,7 +425,7 @@ test('SERVER REASONS end-to-end: a dropped AI reason renders factual server reas
     await request('/smart-match/location', ORIGIN);
     const html = await request('/smart-match/result');
     assert.match(html, /data-merchant-id="google-chix"/);
-    assert.match(html, /Why this match\?<\/strong><p>Matches your current craving · Within your walking range<\/p>/);
+    assert.ok(!/Why this match/.test(html), 'the result card has no reason section');
     assert.ok(!/Famous|best spicy/.test(html));
     assert.ok(!html.includes('AI Matched'), 'no AI badge without a safe AI reason');
   } finally {
@@ -482,4 +482,30 @@ test('WALK E/F: a dropped walking-time reason keeps the merchant and never trigg
   const prompt = promptOf(calls.groq[0]);
   assert.match(prompt, /maxWalkingMinutes: 10 \(an eligibility limit only - NOT a travel time\)/);
   assert.match(prompt, /Never convert maxWalkingMinutes into a claimed travel time/);
+});
+
+test('SPEED: a hung Groq ranker falls back within the shared 1.5 s ranking budget', async function() {
+  const merchants = await discover(chickenPlaces, 'spicy crispy chicken');
+  process.env.GROQ_API_KEY = 'test-groq';
+  process.env.OPENAI_API_KEY = 'test-openai';
+  const calls = { groq: 0, openai: 0 };
+  global.fetch = function(url, init) {
+    const host = new URL(String(url)).hostname;
+    if (host === 'api.groq.com') {
+      calls.groq += 1;
+      return new Promise(function(resolve, reject) {
+        init.signal.addEventListener('abort', function() { reject(new Error('aborted')); });
+      });
+    }
+    if (host === 'api.openai.com') { calls.openai += 1; return Promise.resolve(chatReply(JSON.stringify(chixPick))); }
+    return Promise.resolve({ ok: false, status: 404 });
+  };
+  const started = Date.now();
+  const result = await rank(merchants, 'spicy crispy chicken');
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 1900, 'ranking finished in ' + elapsed + ' ms');
+  assert.equal(calls.groq, 1);
+  assert.equal(calls.openai, 0, 'Groq used the whole budget, so OpenAI is skipped for rules');
+  assert.ok(result.merchant, 'deterministic rules still recommend a merchant');
+  assert.equal(result.reason, null);
 });

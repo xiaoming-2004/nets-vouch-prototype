@@ -1,13 +1,27 @@
 <article class="match-card reveal" data-merchant-id="<%= recommendation.id %>">
 <div class="match-copy">
-<div class="match-head"><span class="match-monogram" aria-hidden="true"><%= recommendation.merchantName.charAt(0) %></span><div class="match-title"><% if (recommendationAccepted) { %><p class="eyebrow">Your pick</p><h2>Heading to <%= recommendation.merchantName %>?</h2><% } else { %><h2><%= recommendation.merchantName %></h2><% } %><% if (recommendation.parentVenueName) { %><p class="match-venue"><%= recommendation.parentVenueName %></p><% } %>
-<p class="match-meta"><span class="match-distance"><%= recommendation.distanceLabel || recommendation.distanceMinutes + ' min away' %></span><% if (!recommendation.itemName) { %><span class="match-category"><%= recommendation.categoryLabel || 'Food spot' %></span><% } %><% if (dietaryTagLabel) { %><span class="match-diet"><%= dietaryTagLabel %></span><% } %></p></div><% if (aiReason) { %><span class="ai-badge">AI Matched</span><% } %></div>
+<% var display = locals.resultDisplay || {}; %>
+<div class="result-head">
+<div class="result-photo<%= display.photo ? '' : ' is-empty' %>">
+<% if (display.photo) { %><img src="<%= display.photo.src %>" alt="<%= recommendation.merchantName %> (photo posted by the business)" width="76" height="76" decoding="async" onerror="this.parentNode.classList.add('is-empty');this.remove();"><% } %>
+<span class="result-photo-fallback" aria-hidden="true"><%= recommendation.merchantName.charAt(0) %></span>
+</div>
+<div class="result-info">
+<h2 title="<%= recommendation.merchantName %>"><%= recommendationAccepted ? 'Heading to ' + recommendation.merchantName + '?' : recommendation.merchantName %></h2>
+<% var metaLead = recommendation.parentVenueName || (recommendation.itemName ? '' : (recommendation.categoryLabel || 'Food spot')); %><p class="result-meta"><% if (metaLead) { %><span class="result-lead"><%= metaLead %></span><% } %><span class="result-distance"><%= recommendation.distanceLabel || recommendation.distanceMinutes + ' min away' %></span></p>
+<p class="result-tags"><% if (display.demoVouches) { %><span class="result-vouches" data-demo-sample="true"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m7.5 12.3 3 3 6-6.3"/></svg><%= display.demoVouches %> Vouches</span><% } %><% if (display.halal) { %><span class="halal-tag halal-tag--<%= display.halal.tone %>"><%= display.halal.label %></span><% } %><% if (dietaryTagLabel && dietaryTagLabel !== 'Halal') { %><span class="match-diet"><%= dietaryTagLabel %></span><% } %></p>
+</div>
+</div>
+<% if (display.photo && display.photo.attributions && display.photo.attributions.length) { %><p class="result-photo-credit">Photo: <% display.photo.attributions.forEach(function(a, i) { %><%= i ? ', ' : '' %><% if (a.uri) { %><a href="<%= a.uri %>" target="_blank" rel="noopener noreferrer"><%= a.name %></a><% } else { %><%= a.name %><% } %><% }); %></p><% } %>
 <% if (recommendation.itemName) { %><p class="item">Try: <%= recommendation.itemName %><%= recommendation.price !== null ? ' · $' + recommendation.price.toFixed(2) : '' %></p><% } %>
 <% if (locationNotice) { %><p class="eyebrow">Using demo location</p><% } %>
-<% if (recommendation.coordinates) { %><div class="match-map" data-lat="<%= recommendation.coordinates.latitude %>" data-lng="<%= recommendation.coordinates.longitude %>" data-name="<%= recommendation.merchantName %>" data-address="<%= recommendation.address || '' %>"></div><% } %>
+<% if (recommendation.coordinates) { %>
+<div class="match-map-wrap">
+<div class="match-map" data-lat="<%= recommendation.coordinates.latitude %>" data-lng="<%= recommendation.coordinates.longitude %>" data-name="<%= recommendation.merchantName %>" data-address="<%= recommendation.address || '' %>"></div>
+<% if (display.walking) { %><a class="match-map-open" href="<%= display.walking.mapsUrl %>" target="_blank" rel="noopener noreferrer"><span class="match-map-hint">Open in Google Maps<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg></span><span class="visually-hidden"> - walking directions to <%= recommendation.merchantName %></span></a><% } %>
+</div>
+<% } %>
 <% if (campaign && dailyRewardEarned) { %><p class="reward earned">Today's Vouch Credit earned ✓<small>You can still use your available <%= recommendation.merchantName %> Vouch Credit.</small></p><% } else if (campaign) { %><p class="reward">Earn $<%= campaign.rewardAmount.toFixed(2) %> <%= recommendation.merchantName %> Vouch Credit <small>Once daily · Spend $<%= campaign.minimumEligibleSpend.toFixed(2) %>+ and keep at least $1 paid with NETS.</small></p><% } else { %><p role="status">This offer has ended. Choose another spot.</p><% } %>
-<div class="why"><strong>Why this match?</strong><p><%= aiReason || matchReasons.join(' · ') %></p></div>
-<% if (vouchCount > 0) { %><p class="trust"><%= vouchCount %> Payment-Verified <%= vouchCount === 1 ? 'Vouch' : 'Vouches' %></p><% } %>
 <% if (campaign && !recommendationAccepted) { %><form method="POST" action="/recommendation/accept" data-single-submit><input type="hidden" name="merchantId" value="<%= recommendation.id %>"><button class="button" type="submit">Choose this</button></form><% } %>
 <% if (campaign && recommendationAccepted) { %><a class="button" href="/scan">Scan when you arrive</a><% } %>
 <% if (profile) { %>

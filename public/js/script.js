@@ -194,7 +194,7 @@ async function loadMatch(again) {
         if (!response.ok) throw new Error('Unable to load match');
         return response.text();
       }),
-      wait(1800)
+      wait(2000)
     ]);
     clearMatchingStages();
     matchRegion.innerHTML = results[0];

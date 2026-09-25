@@ -590,7 +590,7 @@ test('Task 3 regression — Smart Match route resolves correctly after async ref
   const result = await v.request('/smart-match/result');
   assert.equal(result.status, 200);
   assert.match(result.html, /data-merchant-id="[^"]+"/);
-  assert.match(result.html, /Why this match/);
+  assert.match(result.html, /Choose this/);
 });
 
 test('Task 7 — daily reward is per-user; campaign cap is shared globally across sessions', async function() {
@@ -687,13 +687,13 @@ test('Task 5 — merchant results tab shows Shared Vouch conversion rate', async
   assert.match(page.html, /Shared Vouch conversion/);
 });
 
-test('Task 4 — smart-match-card renders Why this match section with a non-empty reason', async function() {
+test('Task 4 — smart-match-card no longer shows a Why this match section (removed from the result design)', async function() {
   const v = visitor();
   await v.request('/home');
   const result = await v.request('/smart-match/result');
   assert.equal(result.status, 200);
-  // The why block must exist and contain some text after the heading
-  assert.match(result.html, /Why this match\?<\/strong><p>[^<]+<\/p>/);
+  assert.match(result.html, /data-merchant-id="[^"]+"/);
+  assert.ok(!/Why this match|class="why"/.test(result.html));
 });
 
 test('merchant results tab shows channel attribution chart', async function() {
