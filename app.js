@@ -1200,7 +1200,7 @@ function cachedFoursquareResults(entry, location) {
 
 // One Foursquare Place Search call with a given query string. Returns raw/food-filtered/
 // container-removed counts alongside the merchants so callers can log and merge safely.
-async function fetchFoursquarePlaces(searchLocation, query) {
+async function fetchFoursquarePlaces(searchLocation, query, radiusMetres) {
   const now = Date.now();
   removeExpiredDiscoveryEntries(now);
   const cacheKey = discoveryCacheKey(searchLocation, query);
@@ -1224,12 +1224,14 @@ async function fetchFoursquarePlaces(searchLocation, query) {
   const startedAt = Date.now();
   let callOk = false;
   try {
-    const url = new URL('https://places-api.foursquare.com/places/search');
+   const url = new URL('https://places-api.foursquare.com/places/search');
     url.searchParams.set('ll', searchLocation.latitude + ',' + searchLocation.longitude);
-    url.searchParams.set('radius', String(demoLocation.searchRadiusMetres));
+    url.searchParams.set('radius', String(radiusMetres || demoLocation.searchRadiusMetres));
     url.searchParams.set('query', query);
     url.searchParams.set('sort', 'DISTANCE');
     url.searchParams.set('limit', String(FOURSQUARE_RESULT_LIMIT));
+    url.searchParams.set('categories', '13000'); // Force Dining and Drinking category
+    url.searchParams.set('exclude_categories', '13035,13054'); // Exclude Coffee Shops & Food Courts
     url.searchParams.set('fields', 'fsq_place_id,name,geocodes,location,categories,distance,related_places');
     const response = await fetch(url, {
       signal: requestBudget.withBudgetSignal(controller.signal),
@@ -1592,7 +1594,7 @@ async function discoverWithGoogle(searchLocation, craving, maxMetres, restrictio
 // Foursquare discovery (fallback provider, or primary when PLACES_PROVIDER=foursquare). A specific
 // craving drives the query itself, with at most one broader query=food fallback if that produces
 // too few candidates. Returns null when Foursquare cannot supply any usable merchant.
-async function discoverWithFoursquare(searchLocation, craving, restriction) {
+async function discoverWithFoursquare(searchLocation, craving, restriction, maxMetres) {
   if (!process.env.FOURSQUARE_API_KEY) {
     logDiscovery('Foursquare unavailable: key missing');
     return null;
@@ -1603,7 +1605,7 @@ async function discoverWithFoursquare(searchLocation, craving, restriction) {
   // instead of the broad "food" fallback.
   const dietaryQuery = dietarySearchQuery(restriction, craving);
   const primaryQuery = specificCraving ? normaliseCravingQuery(craving) : (dietaryQuery || 'food');
-  const primary = await fetchFoursquarePlaces(searchLocation, primaryQuery);
+  const primary = await fetchFoursquarePlaces(searchLocation, primaryQuery, maxMetres);
   if (!primary.ok) {
     logDiscovery('Foursquare unavailable: ' + primary.note);
     return null;
@@ -1618,7 +1620,7 @@ async function discoverWithFoursquare(searchLocation, craving, restriction) {
   let dietaryResultIds = primaryQuery === dietaryQuery
     ? new Set(primary.results.map(function(place) { return place && place.fsq_place_id; })) : new Set();
   if (secondQuery) {
-    const fallback = await fetchFoursquarePlaces(searchLocation, secondQuery);
+    const fallback = await fetchFoursquarePlaces(searchLocation, secondQuery, maxMetres);
     if (fallback.ok && secondQuery === dietaryQuery) {
       dietaryResultIds = new Set(fallback.results.map(function(place) { return place && place.fsq_place_id; }));
     }
@@ -1688,13 +1690,14 @@ async function getNearbyMerchants(location, sessionLabel, craving, maxDistanceMi
   for (let i = 0; i < providers.length; i++) {
     const apiMerchants = providers[i] === 'google'
       ? await discoverWithGoogle(searchLocation, craving, maxMetres, dietaryPreference)
-      : await discoverWithFoursquare(searchLocation, craving, dietaryPreference);
+      : await discoverWithFoursquare(searchLocation, craving, dietaryPreference, maxMetres);
     if (!apiMerchants) continue;
     apiMerchants.forEach(registerDemoMerchant);
     logDiscovery('Smart Match merchant source: ' + providers[i].toUpperCase());
     return {
-      merchants: usingDemoLocation ? combineMerchantLists(fallbackMerchants, apiMerchants) : apiMerchants,
-      source: providers[i], demoFallback: false
+      // ONLY use the real API merchants if they exist. Prevent fake Woodlands merchants from hijacking the AI.
+      merchants: apiMerchants.length > 0 ? apiMerchants : copyObjects(fallbackMerchants),
+      source: providers[i], demoFallback: usingDemoLocation && apiMerchants.length === 0
     };
   }
   logDiscovery('Smart Match merchant source: DEMO' +
