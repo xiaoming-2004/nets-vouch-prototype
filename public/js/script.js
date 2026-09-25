@@ -127,6 +127,8 @@ async function prepareDiscoveryLocation() {
       body: JSON.stringify(location)
     });
     smartMatchDebug('location request status: ' + response.status);
+    // The location only counts as stored once the server accepted it.
+    if (!response.ok) return false;
   } catch (error) { return false; }
   matchRegion.dataset.locationReady = 'true';
   return true;
@@ -168,11 +170,12 @@ function startMatchingStages() {
 // it is never chosen automatically on the user's behalf.
 async function useDemoLocation() {
   try {
-    await fetch('/smart-match/location', {
+    const response = await fetch('/smart-match/location', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'fallback' })
     });
-  } catch (error) { /* loadMatch's own error state covers a failed request here. */ }
+    if (!response.ok) { renderLocationNeeded(); return; }
+  } catch (error) { renderLocationNeeded(); return; }
   matchRegion.dataset.locationReady = 'true';
   loadMatch(false);
 }

@@ -3,6 +3,20 @@ const assert = require('node:assert/strict');
 const { app, demoStore, getMerchantCampaigns,
   resetMerchantCampaigns, resetReferralCooldowns } = require('../app');
 
+// Discovery must never reach the real Google Places API from tests, even when .env configures a
+// key: Google is the default primary provider, so each test starts without it (tests that need
+// Google set a fake key and mock fetch).
+const originalGooglePlacesKey = process.env.GOOGLE_PLACES_API_KEY;
+const originalPlacesProvider = process.env.PLACES_PROVIDER;
+test.beforeEach(function() {
+  delete process.env.GOOGLE_PLACES_API_KEY;
+  delete process.env.PLACES_PROVIDER;
+});
+test.after(function() {
+  if (originalGooglePlacesKey !== undefined) process.env.GOOGLE_PLACES_API_KEY = originalGooglePlacesKey;
+  if (originalPlacesProvider !== undefined) process.env.PLACES_PROVIDER = originalPlacesProvider;
+});
+
 const originalKey = process.env.FOURSQUARE_API_KEY;
 let server;
 let base;

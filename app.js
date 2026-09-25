@@ -15,15 +15,22 @@ try {
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MINIMUM_ELIGIBLE_PAYMENT = 1.00;
-// Set to false to run Smart Match on demo merchants only (no Foursquare API calls).
-// Re-enable once Foursquare billing credits are topped up.
-const USE_FOURSQUARE = false;
 const PLACES_REQUEST_TIMEOUT_MS = 5000;
 const AI_RANKING_TIMEOUT_MS = 8000;
 // Foursquare's practical maximum results-per-request for Place Search.
 const FOURSQUARE_RESULT_LIMIT = 50;
 // Foursquare's dated Places API version header, matched to the manually-verified request.
 const FOURSQUARE_API_VERSION = '2025-06-17';
+// Google Places API (New). Minimal field mask: identity, name, types, address and location only -
+// no ratings, reviews, photos, hours or price, so billing stays predictable.
+const GOOGLE_NEARBY_SEARCH_URL = 'https://places.googleapis.com/v1/places:searchNearby';
+const GOOGLE_TEXT_SEARCH_URL = 'https://places.googleapis.com/v1/places:searchText';
+const GOOGLE_FIELD_MASK = 'places.id,places.displayName,places.primaryType,places.types,places.formattedAddress,places.location';
+// Google's per-request maximum for both Nearby Search and Text Search.
+const GOOGLE_RESULT_LIMIT = 20;
+const GOOGLE_NEARBY_FOOD_TYPES = ['restaurant', 'cafe', 'fast_food_restaurant', 'meal_takeaway', 'bakery'];
+const GOOGLE_TEXT_SEARCH_BIAS_METRES = 1000;
+const WALKING_METRES_PER_MINUTE = 80;
 const CLAIM_EXPIRY_MS = 20 * 60 * 1000;
 const REFERRAL_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -553,7 +560,8 @@ function createInitialDemo(userId) {
     hasSetPreferences: false,
     vouchCredits: {}, dailyMerchantRewards: {},
     nearbyMerchants: [], selectedMerchantId: null, selectedMerchantReason: null, recommendationAccepted: false, rejectedMerchantIds: [],
-    discoveryLocation: null, locationAttempted: false, nearbySource: null, nearbyRefreshAttempted: false,
+    discoveryLocation: null, locationAttempted: false, nearbySource: null, nearbyDemoFallback: false,
+    nearbyRefreshAttempted: false,
     recommendationFeedback: [], shownMerchantIds: [],
     currentScanPayment: null, activeVouchClaim: null,
     transactions: createSeedTransactions(identityId), paymentVerifiedVouches: [], promotionalRedemptions: [],
@@ -724,20 +732,13 @@ function sanitizeCraving(value) {
   return value.replace(/[<>]/g, '').trim().slice(0, 100);
 }
 
-// Foursquare price level 1-4 → conservative minimum SGD spend per person.
-// Only levels 3+ are excluded when they clearly exceed the user's budget; 1-2 are always allowed.
-const PRICE_LEVEL_MIN_SGD = { 1: 0, 2: 0, 3: 20, 4: 40 };
-function priceLevelExceedsBudget(merchant, budget) {
-  if (merchant.price !== null) return merchant.price > budget;
-  if (!merchant.priceLevel) return false; // unknown → never exclude
-  return (PRICE_LEVEL_MIN_SGD[merchant.priceLevel] || 0) > budget;
-}
-
+// Budget only uses a factual price. Provider price tiers (Foursquare Premium `price`, Google
+// `priceLevel`) are not requested, so an unknown price never excludes a merchant.
 function merchantMatchesProfile(merchant, profile) {
-  if (priceLevelExceedsBudget(merchant, profile.budget)) return false;
-  // Foursquare merchants carry real distanceMetres; use it for precise filtering.
+  if (merchant.price !== null && merchant.price > profile.budget) return false;
+  // Places API merchants carry real distanceMetres; use it for precise filtering.
   // Local demo merchants only have distanceMinutes, so fall back to the coarser check.
-  const maxMetres = profile.maxDistanceMinutes * 80;
+  const maxMetres = profile.maxDistanceMinutes * WALKING_METRES_PER_MINUTE;
   if (Number.isFinite(merchant.distanceMetres)) {
     if (merchant.distanceMetres > maxMetres) return false;
   } else if (merchant.distanceMinutes > profile.maxDistanceMinutes) {
@@ -807,7 +808,9 @@ function isContainerCategory(categories) {
 // CATEGORY alone is deliberately not enough - many standalone cafés carry it.
 // Includes major Singapore food court operators (Food Republic, Koufu, Foodfare) that would not
 // be caught by the generic "food court" keyword since they use branded names.
-const containerNamePattern = /\b(food court|food centre|food center|hawker centre|hawker center|kopitiam|coffeeshop|coffee shop|food republic|koufu|foodfare)\b/i;
+// "food mall" / "foodcourt" are generic container phrases (e.g. a Google result typed only as
+// `restaurant` whose name shows the place itself is a food mall).
+const containerNamePattern = /\b(food court|foodcourt|food centre|food center|food mall|hawker centre|hawker center|kopitiam|coffeeshop|coffee shop|food republic|koufu|foodfare)\b/i;
 
 function isContainerName(name) {
   return typeof name === 'string' && containerNamePattern.test(name);
@@ -884,13 +887,14 @@ function parseFoursquareNearbyPlaces(results, origin) {
       id: merchantId,
       merchantId: merchantId,
       externalPlaceId: place.fsq_place_id,
+      providerPlaceId: place.fsq_place_id,
       merchantName: name,
       name: name,
       itemName: null,
       price: null,
       category: 'foursquare.place',
       categoryLabel: categoryLabel,
-      website: typeof place.website === 'string' && place.website.trim() ? place.website.trim() : null,
+      website: null,
       categoryNames: Array.isArray(place.categories) ? place.categories.map(function(c) {
         return c && typeof c.name === 'string' ? c.name.trim() : '';
       }).filter(Boolean) : [],
@@ -898,8 +902,8 @@ function parseFoursquareNearbyPlaces(results, origin) {
       // Dietary suitability is never read from Foursquare words - only from merchant research.
       dietary: [],
       cuisineTags: parseFoursquareCuisineTags(place.categories),
-      // Foursquare integer price scale 1 ($) – 4 ($$$$). Null when not returned.
-      priceLevel: typeof place.price === 'number' && place.price >= 1 && place.price <= 4 ? place.price : null,
+      // Premium `price` is not requested - budget uses researched factual prices only.
+      priceLevel: null,
       // Used only for the existing distance filter; the UI displays metres, never walking time.
       distanceMinutes: Math.max(1, Math.round(distanceMetres / 80)),
       distanceMetres: distanceMetres,
@@ -919,6 +923,104 @@ function parseFoursquareNearbyPlaces(results, origin) {
   // No early cap here - craving relevance and seen-history filtering need the full useful pool
   // (Sprint 1.10: "Do not cap too early"). Capping only happens later, for the AI prompt itself.
   return { merchants: merchants, containersRemoved: suppressed.length };
+}
+
+// Google types that mean the place itself IS a container venue. `coffee_shop` is deliberately
+// absent: many coffee shops are real single merchants. Only the place's own type/name is used -
+// an address that mentions a mall or food court never makes the merchant a container.
+const googleContainerTypes = ['food_court', 'shopping_mall', 'market'];
+const googleGenericTypes = ['food', 'point_of_interest', 'establishment'];
+
+function isGoogleContainerPlace(place) {
+  if (googleContainerTypes.indexOf(place.primaryType) !== -1) return true;
+  // Without a primary type, fall back to the place's own type list.
+  if (!place.primaryType && Array.isArray(place.types) &&
+      place.types.some(function(type) { return googleContainerTypes.indexOf(type) !== -1; })) return true;
+  return isContainerName(place.displayName && place.displayName.text);
+}
+
+// Text Search can surface non-food places for an unusual craving; Google's own `food` marker or a
+// restaurant/café type is the factual signal, never the place name.
+function isGoogleFoodPlace(place) {
+  const types = Array.isArray(place.types) ? place.types.slice() : [];
+  if (typeof place.primaryType === 'string') types.push(place.primaryType);
+  return types.some(function(type) {
+    return type === 'food' || type === 'restaurant' || type === 'cafe' || type === 'bakery' ||
+      type === 'meal_takeaway' || /_restaurant$/.test(type);
+  });
+}
+
+function humaniseGoogleType(type) {
+  return type.split('_').map(function(word) { return word.charAt(0).toUpperCase() + word.slice(1); }).join(' ');
+}
+
+// Normalises Google Places (New) results into the same merchant shape as Foursquare. Distance is
+// calculated locally from the visitor's coordinates. Google has no parent-venue relationship, so
+// parentVenueName stays null rather than being guessed from the address. Types are discovery
+// hints only - dietary suitability still comes exclusively from merchant research.
+function parseGooglePlaces(places, origin) {
+  const merchants = [];
+  const suppressed = [];
+  if (!Array.isArray(places)) return { merchants: merchants, containersRemoved: 0 };
+  places.forEach(function(place) {
+    const name = place && place.displayName && typeof place.displayName.text === 'string'
+      ? place.displayName.text.trim() : '';
+    if (!place || typeof place.id !== 'string' || !place.id.trim() || !name) return;
+    if (!isGoogleFoodPlace(place)) return;
+    if (isGoogleContainerPlace(place)) {
+      suppressed.push({ name: name, reason: 'container type/name' });
+      return;
+    }
+    const latitude = place.location && Number(place.location.latitude);
+    const longitude = place.location && Number(place.location.longitude);
+    if (!validCoordinates(latitude, longitude)) return;
+    const distanceMetres = calculateDistanceMetres(latitude, longitude, origin);
+    const types = Array.isArray(place.types) ? place.types.filter(function(type) {
+      return typeof type === 'string' && googleGenericTypes.indexOf(type) === -1;
+    }) : [];
+    const primaryType = typeof place.primaryType === 'string' && place.primaryType ? place.primaryType : null;
+    const categoryNames = types.map(humaniseGoogleType);
+    const merchantId = 'google-' + place.id;
+    merchants.push({
+      id: merchantId,
+      merchantId: merchantId,
+      externalPlaceId: place.id,
+      providerPlaceId: place.id,
+      merchantName: name,
+      name: name,
+      itemName: null,
+      price: null,
+      category: 'google.place',
+      categoryLabel: primaryType ? humaniseGoogleType(primaryType) : (categoryNames[0] || 'Food & drink'),
+      website: null,
+      categoryNames: categoryNames,
+      primaryType: primaryType,
+      address: typeof place.formattedAddress === 'string' && place.formattedAddress.trim()
+        ? place.formattedAddress.trim() : 'Address unavailable',
+      dietary: [],
+      cuisineTags: parseFoursquareCuisineTags(categoryNames.map(function(n) { return { name: n }; })),
+      priceLevel: null,
+      distanceMinutes: Math.max(1, Math.round(distanceMetres / WALKING_METRES_PER_MINUTE)),
+      distanceMetres: distanceMetres,
+      distanceLabel: distanceMetres < 1000 ? distanceMetres + ' m away' :
+        (distanceMetres / 1000).toFixed(1) + ' km away',
+      coordinates: { latitude: latitude, longitude: longitude },
+      source: 'GOOGLE', participationMode: 'DEMO_SIMULATED',
+      rating: null,
+      available: true,
+      parentVenueName: null
+    });
+  });
+  if (suppressed.length) {
+    logDiscovery('Container venues suppressed: ' + suppressed.length + '\n' +
+      suppressed.map(function(s) { return '- ' + s.name + ' (' + s.reason + ')'; }).join('\n'));
+  }
+  return { merchants: merchants, containersRemoved: suppressed.length };
+}
+
+// Both Places providers feed the same research, dietary and ranking pipeline.
+function isPlacesMerchant(merchant) {
+  return merchant.source === 'GOOGLE' || merchant.source === 'FOURSQUARE';
 }
 
 // Two entries are the same real place only when both the normalised name matches AND the
@@ -1036,7 +1138,7 @@ async function fetchFoursquarePlaces(searchLocation, query) {
     url.searchParams.set('query', query);
     url.searchParams.set('sort', 'DISTANCE');
     url.searchParams.set('limit', String(FOURSQUARE_RESULT_LIMIT));
-    url.searchParams.set('fields', 'fsq_place_id,name,geocodes,location,categories,distance,price,related_places,website');
+    url.searchParams.set('fields', 'fsq_place_id,name,geocodes,location,categories,distance,related_places');
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
@@ -1069,44 +1171,146 @@ async function fetchFoursquarePlaces(searchLocation, query) {
   }
 }
 
-// Sprint 1.8: Foursquare is now the sole broad Smart Match discovery provider - Geoapify no
-// longer participates (see NETS_Vouch_Claude_Code_Handover_Clean.md sprint history). When the
-// key is missing or the live call fails for any reason, the curated local demo merchants keep
-// the Open House prototype working, exactly as the old Geoapify fallback used to.
-// Sprint 1.10 (Issue 1): a specific craving drives the Foursquare query itself, with at most one
-// broader query=food fallback if that produces too few useful candidates.
-async function getNearbyMerchants(location, sessionLabel, craving, dietaryPreference) {
-  const searchLocation = location && validCoordinates(location.latitude, location.longitude)
-    ? location : demoLocation;
-  const usingDemoLocation = searchLocation === demoLocation;
-  const specificCraving = isSpecificCraving(craving);
-  const normalizedCraving = normaliseCravingQuery(craving);
-  // Prepend the dietary preference to the query (e.g. "halal chicken rice", "vegetarian food")
-  // so Foursquare biases discovery toward places that mention that diet in their listing.
-  // The research system still does ground-truth verification afterwards - this is just a hint.
-  const dietaryHint = dietaryPreference && dietaryPreference !== 'none' ? dietaryPreference + ' ' : '';
-  const primaryQuery = specificCraving ? dietaryHint + normalizedCraving : dietaryHint + 'food';
-  logDiscovery('SMART MATCH LOCATION\nsession: ' + (sessionLabel || 'unknown') +
-    '\nlatitude: ' + searchLocation.latitude + '\nlongitude: ' + searchLocation.longitude +
-    '\nsource: ' + (usingDemoLocation ? 'demo fallback (no real browser coordinates)' : 'browser') +
-    '\nCraving: ' + (specificCraving ? normalizedCraving : 'none') +
-    '\nDietary: ' + (dietaryHint || 'none') + '\nForeground query: ' + primaryQuery);
-  if (!USE_FOURSQUARE || !process.env.FOURSQUARE_API_KEY) {
-    logDiscovery('Foursquare fallback: ' + (!USE_FOURSQUARE ? 'disabled' : 'key missing'));
-    return { merchants: copyObjects(fallbackMerchants), source: 'local-fallback' };
-  }
+function googleDiscoveryCacheKey(mode, location, detail) {
+  return 'google:' + mode + ':' + location.latitude.toFixed(3) + ',' + location.longitude.toFixed(3) + ':' + detail;
+}
 
+// One Google Places (New) request: mode 'nearby' (detail = radius in metres, distance-ranked food
+// types) or 'text' (detail = the user's raw craving, relevance-ranked with a location bias).
+// Raw places are cached ~15 min per location bucket + mode + radius/craving; distances are always
+// recalculated locally for the current visitor, so cached entries never carry another user's data.
+async function fetchGooglePlaces(mode, searchLocation, detail) {
+  const now = Date.now();
+  removeExpiredDiscoveryEntries(now);
+  const cacheKey = googleDiscoveryCacheKey(mode, searchLocation,
+    mode === 'text' ? normaliseCravingQuery(detail) : String(detail));
+  const cached = discoveryCache.get(cacheKey);
+  if (cached) {
+    logDiscovery('GOOGLE CACHE HIT\nkey: ' + cacheKey + '\nage: ' + Math.floor((now - cached.createdAt) / 1000) + 's');
+    const parsed = parseGooglePlaces(structuredClone(cached.results), searchLocation);
+    return { ok: true, rawCount: cached.results.length, merchants: parsed.merchants,
+      containersRemoved: parsed.containersRemoved };
+  }
+  logDiscovery('GOOGLE CACHE MISS\nkey: ' + cacheKey);
+  const center = { latitude: searchLocation.latitude, longitude: searchLocation.longitude };
+  const body = mode === 'text' ? {
+    textQuery: detail, pageSize: GOOGLE_RESULT_LIMIT, rankPreference: 'RELEVANCE',
+    locationBias: { circle: { center: center, radius: GOOGLE_TEXT_SEARCH_BIAS_METRES } }
+  } : {
+    includedTypes: GOOGLE_NEARBY_FOOD_TYPES, excludedPrimaryTypes: ['food_court', 'shopping_mall'],
+    maxResultCount: GOOGLE_RESULT_LIMIT, rankPreference: 'DISTANCE',
+    locationRestriction: { circle: { center: center, radius: detail } }
+  };
+  const controller = new AbortController();
+  const timeout = setTimeout(function() { controller.abort(); }, PLACES_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(mode === 'text' ? GOOGLE_TEXT_SEARCH_URL : GOOGLE_NEARBY_SEARCH_URL, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': process.env.GOOGLE_PLACES_API_KEY,
+        'X-Goog-FieldMask': GOOGLE_FIELD_MASK
+      },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) return { ok: false, merchants: [], note: 'HTTP ' + response.status };
+    const data = await response.json();
+    // Google omits `places` entirely when nothing matches - that is an empty result, not malformed.
+    if (!data || typeof data !== 'object' || (data.places !== undefined && !Array.isArray(data.places))) {
+      return { ok: false, merchants: [], note: 'malformed response' };
+    }
+    const places = data.places || [];
+    removeExpiredDiscoveryEntries(Date.now());
+    if (discoveryCache.size >= DISCOVERY_CACHE_MAX_ENTRIES) {
+      discoveryCache.delete(discoveryCache.keys().next().value);
+    }
+    const createdAt = Date.now();
+    discoveryCache.set(cacheKey, { createdAt: createdAt, expiresAt: createdAt + DISCOVERY_CACHE_TTL_MS,
+      results: structuredClone(places) });
+    const parsed = parseGooglePlaces(places, searchLocation);
+    return { ok: true, rawCount: places.length, merchants: parsed.merchants, containersRemoved: parsed.containersRemoved };
+  } catch (error) {
+    return { ok: false, merchants: [], note: controller.signal.aborted ? 'timeout' : error.message };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function mergeByProviderPlaceId(first, second) {
+  const seen = new Set(first.map(function(m) { return m.providerPlaceId; }));
+  return first.concat(second.filter(function(m) { return !seen.has(m.providerPlaceId); }));
+}
+
+// Google discovery. No craving -> one distance-ranked Nearby Search sized to the user's walking
+// limit. Craving -> one Text Search with the RAW craving (no dictionary); only if that leaves fewer
+// than MIN_CRAVING_POOL_SIZE usable (container-free, within walking limit) merchants, ONE broad
+// Nearby Search is merged in by place ID. Max 2 Google requests. Returns null when Google cannot
+// supply any usable merchant, so the caller falls back to the next provider.
+async function discoverWithGoogle(searchLocation, craving, maxMetres) {
+  if (!process.env.GOOGLE_PLACES_API_KEY) {
+    logDiscovery('Google Places unavailable: key missing');
+    return null;
+  }
+  const nearbyRadius = Math.min(demoLocation.searchRadiusMetres, maxMetres || demoLocation.searchRadiusMetres);
+  const countUsable = function(pool) {
+    return pool.filter(function(m) { return maxMetres === null || m.distanceMetres <= maxMetres; }).length;
+  };
+  let pool;
+  let nearbyFallbackUsed = false;
+  if (!isSpecificCraving(craving)) {
+    const nearby = await fetchGooglePlaces('nearby', searchLocation, nearbyRadius);
+    if (!nearby.ok) {
+      logDiscovery('Google Places unavailable: ' + nearby.note);
+      return null;
+    }
+    pool = nearby.merchants;
+  } else {
+    const text = await fetchGooglePlaces('text', searchLocation, craving.trim());
+    if (!text.ok) {
+      logDiscovery('Google Places unavailable: ' + text.note);
+      return null;
+    }
+    pool = text.merchants;
+    if (countUsable(pool) < MIN_CRAVING_POOL_SIZE) {
+      nearbyFallbackUsed = true;
+      const nearby = await fetchGooglePlaces('nearby', searchLocation, nearbyRadius);
+      if (nearby.ok) pool = mergeByProviderPlaceId(pool, nearby.merchants);
+      else logDiscovery('Google Nearby fallback failed: ' + nearby.note);
+    }
+  }
+  pool = dedupeMerchantPool(pool);
+  logDiscovery('GOOGLE DISCOVERY\nMode: ' + (isSpecificCraving(craving) ? 'text' : 'nearby') +
+    '\nNearby fallback used: ' + (nearbyFallbackUsed ? 'yes' : 'no') +
+    '\nMerchant pool: ' + pool.length + '\nUsable within walking limit: ' + countUsable(pool));
+  if (countUsable(pool) === 0) {
+    logDiscovery('Google Places unavailable: zero usable food merchants');
+    return null;
+  }
+  return pool;
+}
+
+// Foursquare discovery (fallback provider, or primary when PLACES_PROVIDER=foursquare). A specific
+// craving drives the query itself, with at most one broader query=food fallback if that produces
+// too few candidates. Returns null when Foursquare cannot supply any usable merchant.
+async function discoverWithFoursquare(searchLocation, craving) {
+  if (!process.env.FOURSQUARE_API_KEY) {
+    logDiscovery('Foursquare unavailable: key missing');
+    return null;
+  }
+  const specificCraving = isSpecificCraving(craving);
+  const primaryQuery = specificCraving ? normaliseCravingQuery(craving) : 'food';
   const primary = await fetchFoursquarePlaces(searchLocation, primaryQuery);
   if (!primary.ok) {
-    logDiscovery('Foursquare fallback: ' + primary.note);
-    return { merchants: copyObjects(fallbackMerchants), source: 'local-fallback' };
+    logDiscovery('Foursquare unavailable: ' + primary.note);
+    return null;
   }
 
   let apiMerchants = dedupeMerchantPool(primary.merchants);
   let fallbackUsed = false;
   let fallbackRawCount = 0;
   let containersRemoved = primary.containersRemoved;
-  if ((specificCraving || dietaryHint) && apiMerchants.length < MIN_CRAVING_POOL_SIZE) {
+  if (specificCraving && apiMerchants.length < MIN_CRAVING_POOL_SIZE) {
     const fallback = await fetchFoursquarePlaces(searchLocation, 'food');
     fallbackUsed = true;
     if (fallback.ok) {
@@ -1127,25 +1331,63 @@ async function getNearbyMerchants(location, sessionLabel, craving, dietaryPrefer
     }
   }
 
-  logDiscovery('FOURSQUARE DISCOVERY\nPrimary raw results: ' + primary.rawCount +
+  logDiscovery('FOURSQUARE DISCOVERY\nQuery: ' + primaryQuery + '\nPrimary raw results: ' + primary.rawCount +
     '\nFallback food query used: ' + (fallbackUsed ? 'yes (' + fallbackRawCount + ' raw)' : 'no') +
     '\ncontainer venues removed: ' + containersRemoved +
     '\nMerchant pool: ' + apiMerchants.length);
   if (apiMerchants.length === 0) {
-    logDiscovery('Foursquare fallback: zero usable food merchants');
-    return { merchants: copyObjects(fallbackMerchants), source: 'local-fallback' };
+    logDiscovery('Foursquare unavailable: zero usable food merchants');
+    return null;
   }
-  apiMerchants.forEach(registerDemoMerchant);
-  return {
-    merchants: usingDemoLocation ? combineMerchantLists(fallbackMerchants, apiMerchants) : apiMerchants,
-    source: 'foursquare'
-  };
+  return apiMerchants;
+}
+
+// PLACES_PROVIDER picks the primary provider (default google); the other provider is the
+// automatic fallback. A provider without a key is skipped, so neither key is required.
+function discoveryProviderOrder() {
+  const configured = String(process.env.PLACES_PROVIDER || '').trim().toLowerCase();
+  return configured === 'foursquare' ? ['foursquare', 'google'] : ['google', 'foursquare'];
+}
+
+// Smart Match merchant discovery: primary Places provider -> other Places provider -> curated demo
+// merchants. `source` is 'google', 'foursquare' or 'local-fallback'; `demoFallback` makes it
+// explicit when a real browser location only produced the fixed Woodlands demo merchants.
+// maxDistanceMinutes (the user's walking limit) sizes Google's search; the hard distance rule is
+// still applied later by getEligibleMerchants, never by the provider or the AI.
+async function getNearbyMerchants(location, sessionLabel, craving, maxDistanceMinutes) {
+  const searchLocation = location && validCoordinates(location.latitude, location.longitude)
+    ? location : demoLocation;
+  const usingDemoLocation = searchLocation === demoLocation;
+  const maxMetres = Number.isFinite(maxDistanceMinutes) && maxDistanceMinutes > 0
+    ? maxDistanceMinutes * WALKING_METRES_PER_MINUTE : null;
+  const providers = discoveryProviderOrder();
+  logDiscovery('SMART MATCH LOCATION\nsession: ' + (sessionLabel || 'unknown') +
+    '\nlatitude: ' + searchLocation.latitude + '\nlongitude: ' + searchLocation.longitude +
+    '\nsource: ' + (usingDemoLocation ? 'demo fallback (no real browser coordinates)' : 'browser') +
+    '\nCraving: ' + (isSpecificCraving(craving) ? normaliseCravingQuery(craving) : 'none') +
+    '\nProvider order: ' + providers.join(' -> ') + ' -> demo');
+  for (let i = 0; i < providers.length; i++) {
+    const apiMerchants = providers[i] === 'google'
+      ? await discoverWithGoogle(searchLocation, craving, maxMetres)
+      : await discoverWithFoursquare(searchLocation, craving);
+    if (!apiMerchants) continue;
+    apiMerchants.forEach(registerDemoMerchant);
+    logDiscovery('Smart Match merchant source: ' + providers[i].toUpperCase());
+    return {
+      merchants: usingDemoLocation ? combineMerchantLists(fallbackMerchants, apiMerchants) : apiMerchants,
+      source: providers[i], demoFallback: false
+    };
+  }
+  logDiscovery('Smart Match merchant source: DEMO' +
+    (usingDemoLocation ? '' : ' (live discovery failed at the real browser location)'));
+  return { merchants: copyObjects(fallbackMerchants), source: 'local-fallback', demoFallback: true };
 }
 
 // Called at most once per recommendation cycle when the current nearby batch is exhausted.
 // Returns true only if the fresh discovery produced merchants not already in the current batch.
 async function refreshNearbyBatch(demo) {
-  const nearby = await getNearbyMerchants(demo.discoveryLocation, demo.user.id, demo.profile.craving, demo.profile.dietaryPreference);
+  const nearby = await getNearbyMerchants(demo.discoveryLocation, demo.user.id, demo.profile.craving,
+    demo.profile.maxDistanceMinutes);
   const newMerchants = nearby.merchants.filter(function(merchant) {
     return !findMerchantById(demo.nearbyMerchants, merchant.id);
   });
@@ -1746,10 +1988,10 @@ async function researchMerchants(batch, restriction, state) {
 // research-verified SUITABLE merchants are returned (original order); researchUnavailable flags
 // that research was needed but produced nothing at all, as opposed to "nothing verified".
 async function applyMerchantResearch(candidates, restriction) {
-  candidates.forEach(function(m) { if (m.source === 'FOURSQUARE') attachCachedResearch(m); });
+  candidates.forEach(function(m) { if (isPlacesMerchant(m)) attachCachedResearch(m); });
   if (!restriction || restriction === 'none') return { candidates: candidates, researchUnavailable: false };
   const isVerified = function(m) { return getDietaryMatchState(m, restriction) === MATCH_STATE.MATCH; };
-  const pending = candidates.filter(function(m) { return m.source === 'FOURSQUARE' && !m.research[restriction]; })
+  const pending = candidates.filter(function(m) { return isPlacesMerchant(m) && !m.research[restriction]; })
     .sort(function(a, b) { return merchantDistanceMetres(a) - merchantDistanceMetres(b); });
   const state = { blocked: {} };
   let researchCalls = 0;
@@ -1773,21 +2015,7 @@ async function applyMerchantResearch(candidates, restriction) {
   const verified = candidates.filter(isVerified);
   logDiscovery(getDietaryPreferenceLabel(restriction) + ' verified: ' + verified.length + ' of ' + candidates.length +
     ' (' + researchCalls + ' research batch(es))');
-  const researchUnavailable = verified.length === 0 && attempted > 0 && obtained === 0;
-  if (verified.length > 0) return { candidates: verified, researchUnavailable: false, bestEffortOnly: false };
-  // Halal is a strict religious requirement — never show unverified halal candidates.
-  // For vegetarian/vegan, fall back to the nearest non-unsuitable candidates so the user gets
-  // a result rather than an empty state; the card clearly marks suitability as unverified.
-  if (restriction !== 'halal') {
-    const bestEffort = candidates.filter(function(m) {
-      return getDietaryMatchState(m, restriction) !== MATCH_STATE.NON_MATCH;
-    });
-    if (bestEffort.length > 0) {
-      logDiscovery('No verified ' + restriction + ' match — showing ' + bestEffort.length + ' best-effort candidate(s) with unverified warning');
-      return { candidates: bestEffort, researchUnavailable: researchUnavailable, bestEffortOnly: true };
-    }
-  }
-  return { candidates: verified, researchUnavailable: researchUnavailable, bestEffortOnly: false };
+  return { candidates: verified, researchUnavailable: verified.length === 0 && attempted > 0 && obtained === 0 };
 }
 
 async function getAIRanking(profile, eligible, feedbackItems, demo) {
@@ -1799,7 +2027,6 @@ async function getAIRanking(profile, eligible, feedbackItems, demo) {
       parentVenue: m.parentVenueName || null,
       dish: m.itemName || null,
       price: m.price !== null ? '$' + m.price.toFixed(2) : 'unknown',
-      priceLevel: m.priceLevel ? '$'.repeat(m.priceLevel) : null,
       distance: m.distanceLabel || m.distanceMinutes + ' min walk (demo estimate)',
       distanceMetres: Number.isFinite(m.distanceMetres) ? m.distanceMetres : null,
       cuisine: merchantCuisineTags(m).length ? merchantCuisineTags(m).join(', ') : 'unknown',
@@ -1809,9 +2036,7 @@ async function getAIRanking(profile, eligible, feedbackItems, demo) {
       // Menu items evidenced by validated web research (cached per merchant + diet), when available.
       research: researchSummaryForRanking(m, profile.dietaryPreference),
       matchesCurrentMood: merchantMatchesMood(m, profile.moodCuisine),
-      location: m.address || '',
-      currentTxPerHour: getSimulatedTransactionVelocity(m.id),
-      busynessLabel: getMerchantBusynessLabel(getSimulatedTransactionVelocity(m.id))
+      location: m.address || ''
     };
   });
 
@@ -1839,9 +2064,8 @@ async function getAIRanking(profile, eligible, feedbackItems, demo) {
     'For a vague craving or none, pick a good nearby option using mood and distance.',
     'When relevance is similar, prefer the nearer merchant (distanceMetres). A generic category such as "Restaurant" is uncertain, not a fit.',
     'matchesCurrentMood being false is neutral, not a confirmed mismatch.',
-    'BUDGET: budgetFit "within" only when prices in price or research.menu, OR priceLevel is "$" or "$$" (casual/mid-range), show options at or under the user\'s budget; "over" only when price explicitly exceeds it or priceLevel is "$$$"/"$$$$" above budget; otherwise "unknown". Never invent prices; unknown price is not a reason to reject.',
+    'BUDGET: budgetFit "within" only when prices in price or research.menu show relevant items at or under the user\'s budget, "over" only when they are all above it, otherwise "unknown". Never invent prices; an unknown price is not a reason to reject.',
     'DIETARY: the server has already applied the user\'s dietary restriction - never judge dietary suitability yourself. dietaryStatus "verified" means factual evidence exists; "unknown" means suitability is NOT verified, so never call that merchant halal, vegetarian, vegan or suitable for the user\'s diet.',
-    'BUSYNESS: currentTxPerHour is the live NETS payment velocity at that merchant right now (transactions/hour). busynessLabel is "quiet" (<8), "moderate" (8-16), or "busy" (>16). When craving relevance is similar between candidates, prefer the quieter one — the user gets served without waiting and the merchant benefits from the extra footfall during a slow period. Mention busyness in the reason only when it is the deciding factor (e.g. "Quiet right now — no queue" or "Fewer customers here now so you will be served quickly"). Never fabricate queue lengths or wait times in minutes.',
     'When parentVenue is set, the candidate is a specific stall inside that venue - recommend the stall, not the venue.',
     '',
     'REASON: one short sentence (max 20 words) citing only supplied facts, e.g. "Its Fried Chicken Restaurant category is a close fit for your crispy chicken craving."',
@@ -1967,7 +2191,7 @@ function getMoodMatchState(merchant, moodCuisine) {
 // Curated local demo merchants (the offline/no-key Open House fallback) carry complete records.
 function getDietaryMatchState(merchant, dietaryPreference) {
   if (!dietaryPreference || dietaryPreference === 'none') return MATCH_STATE.UNKNOWN;
-  if (merchant.source === 'FOURSQUARE') {
+  if (isPlacesMerchant(merchant)) {
     const verdict = merchant.research && merchant.research[dietaryPreference];
     if (verdict && verdict.status === RESEARCH_STATUS.SUITABLE) return MATCH_STATE.MATCH;
     if (verdict && verdict.status === RESEARCH_STATUS.UNSUITABLE) return MATCH_STATE.NON_MATCH;
@@ -2033,9 +2257,6 @@ function getFallbackRecommendation(candidates, feedbackItems, profile) {
         lastFeedback.price !== null) {
       score += Math.max(0, 20 - merchant.price);
     }
-    // Busyness: quieter merchants score higher — customer waits less, merchant fills slow period.
-    const txNow = getSimulatedTransactionVelocity(merchant.id);
-    score += Math.max(0, 20 - txNow); // max +20 for a completely quiet merchant
     if (lastFeedback && (lastFeedback.reason === 'not-in-mood' || lastFeedback.reason === 'ate-recently')) {
       // Foursquare's generic internal category ('foursquare.place') is not cuisine-specific, so a
       // category match there is meaningless - only a specific local-demo category (e.g.
@@ -2152,7 +2373,7 @@ async function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchant
         // A budget verdict needs a real price behind it.
         const budgetFit = aiMerchant.price === null && !hasResearchedPrices(aiMerchant) ? 'unknown' : ranking.budgetFit;
         return { merchant: aiMerchant, reason: safeAIReason(ranking, aiMerchant, profile), budgetFit: budgetFit,
-          noCloserMatch: false, bestEffortOnly: research.bestEffortOnly };
+          noCloserMatch: false };
       }
     } catch (error) {
       console.log('AI ranking unavailable, using rule-based fallback:', error.message);
@@ -2162,7 +2383,7 @@ async function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchant
   // Step 15: fallback ranks the identical constrained subset - never a superset AI would have seen.
   const fallbackMerchant = getFallbackRecommendation(candidates, feedbackItems, profile);
   logDiscovery('Selection source: FALLBACK -> ' + (fallbackMerchant ? fallbackMerchant.merchantName : 'none'));
-  return { merchant: fallbackMerchant, reason: null, noCloserMatch: false, bestEffortOnly: research.bestEffortOnly };
+  return { merchant: fallbackMerchant, reason: null, noCloserMatch: false };
 }
 
 function getMatchReasons(profile, merchant, feedbackItems) {
@@ -2170,8 +2391,6 @@ function getMatchReasons(profile, merchant, feedbackItems) {
   const lastFeedback = getLastFeedback(feedbackItems);
   if (merchant.price !== null && merchant.price <= profile.budget) {
     reasons.push('Within your budget');
-  } else if (merchant.price === null && merchant.priceLevel !== null && merchant.priceLevel <= 2) {
-    reasons.push('Budget-friendly');
   }
   if (profile.dietaryPreference !== 'none') {
     reasons.push(isDietaryUnverified(merchant, profile) ? DIETARY_UNVERIFIED_NOTE : 'Matches your dietary preference');
@@ -2190,10 +2409,6 @@ function getMatchReasons(profile, merchant, feedbackItems) {
       merchant.price !== null && lastFeedback.price !== null &&
       merchant.price < lastFeedback.price) {
     reasons.push('Costs less than your last match');
-  }
-  const txNow = getSimulatedTransactionVelocity(merchant.id);
-  if (getMerchantBusynessLabel(txNow) === 'quiet') {
-    reasons.push('Quiet now · walk right in');
   }
   if (reasons.length === 0) reasons.push('A nearby option that fits your settings');
   return reasons.slice(0, 3);
@@ -2242,48 +2457,6 @@ function getSingaporeMinutesNow() {
   }
   if (hours === 24) hours = 0;
   return hours * 60 + minutes;
-}
-
-// Simulates real-time NETS payment velocity per merchant. In a live NETS deployment this would
-// call an internal API returning actual transactions/hour per merchant terminal. Here we derive
-// a deterministic figure from time-of-day patterns + a per-merchant hash so the numbers are
-// stable within a 15-min window but vary naturally across meal periods and merchants.
-const TX_BASE_BY_HOUR = [
-  1, 1, 1, 1, 1, 2,    // 12-5am: closed / very late
-  4, 7, 10, 5, 4, 12,  // 6-11am: early opening, breakfast, pre-lunch build
-  22, 25, 18, 8, 5, 6, // 12pm-5pm: lunch peak, afternoon quiet
-  10, 16, 20, 18, 10, 5 // 6-11pm: dinner build, peak, wind-down
-];
-
-function hashMerchantId(id) {
-  let h = 5381;
-  for (let i = 0; i < id.length; i++) h = ((h << 5) + h + id.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
-
-function getSimulatedTransactionVelocity(merchantId, nowMs) {
-  const now = new Date(nowMs || Date.now());
-  const parts = new Intl.DateTimeFormat('en-SG', {
-    hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Singapore'
-  }).formatToParts(now);
-  let sgHour = 0, sgMinute = 0;
-  parts.forEach(function(p) {
-    if (p.type === 'hour') sgHour = parseInt(p.value, 10);
-    if (p.type === 'minute') sgMinute = parseInt(p.value, 10);
-  });
-  if (sgHour === 24) sgHour = 0;
-  const base = TX_BASE_BY_HOUR[sgHour] || 1;
-  const hash = hashMerchantId(merchantId || 'default');
-  const merchantSpread = (hash % 7) - 3;      // per-merchant offset: -3 to +3
-  const bucket = Math.floor(sgMinute / 15);    // 0-3 within the hour
-  const bucketBoost = (bucket === 1 || bucket === 2) ? 2 : 0; // mid-hour slightly busier
-  return Math.max(0, base + merchantSpread + bucketBoost);
-}
-
-function getMerchantBusynessLabel(txPerHour) {
-  if (txPerHour < 8) return 'quiet';
-  if (txPerHour < 17) return 'moderate';
-  return 'busy';
 }
 
 function getCampaignAvailability(campaign, alreadyRedeemed) {
@@ -2528,17 +2701,15 @@ function getResearchDietaryTagLabel(merchant, profile) {
 function matchView(demo, recommendation) {
   return {
     recommendation: recommendation,
-    locationNotice: !demo.discoveryLocation,
+    // The existing "Using demo location" notice also covers a real location whose live discovery
+    // failed, so curated Woodlands merchants never pass as live results elsewhere.
+    locationNotice: !demo.discoveryLocation || Boolean(demo.nearbyDemoFallback),
     campaign: recommendation ? findCampaignForMerchant(recommendation, demo) : null,
     matchReasons: recommendation ? getMatchReasons(demo.profile, recommendation, demo.recommendationFeedback) : [],
     rejectionReasons: rejectionReasons, recommendationAccepted: demo.recommendationAccepted,
     dailyRewardEarned: recommendation ? hasEarnedNormalRewardToday(demo, recommendation.id) : false,
     vouchCount: recommendation ? countVouches(demo, recommendation.id) : 0,
     dietaryTagLabel: recommendation ? getResearchDietaryTagLabel(recommendation, demo.profile) : null,
-    priceLevelLabel: recommendation && recommendation.priceLevel ? '$'.repeat(recommendation.priceLevel) : null,
-    bestEffortOnly: Boolean(demo.selectedMerchantBestEffort),
-    busynessLabel: recommendation ? getMerchantBusynessLabel(getSimulatedTransactionVelocity(recommendation.id)) : null,
-    txPerHour: recommendation ? getSimulatedTransactionVelocity(recommendation.id) : 0,
     aiReason: demo.selectedMerchantReason || null,
     profile: demo.profile,
     dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference),
@@ -2670,6 +2841,7 @@ app.post('/smart-match/location', function(req, res) {
   demo.locationAttempted = true;
   demo.nearbyMerchants = [];
   demo.nearbySource = null;
+  demo.nearbyDemoFallback = false;
   demo.nearbyRefreshAttempted = false;
   if (!demo.recommendationAccepted) {
     demo.selectedMerchantId = null;
@@ -2698,11 +2870,12 @@ app.get('/smart-match/result', async function(req, res) {
     let researchUnavailable = false;
     if (!recommendation) {
       if (!demo.nearbyMerchants.length) {
-        const nearby = await getNearbyMerchants(demo.discoveryLocation, demo.user.id, demo.profile.craving, demo.profile.dietaryPreference);
+        const nearby = await getNearbyMerchants(demo.discoveryLocation, demo.user.id, demo.profile.craving,
+          demo.profile.maxDistanceMinutes);
         demo.nearbyMerchants = nearby.merchants;
         demo.nearbySource = nearby.source;
-        logDiscovery('Smart Match merchant source: ' +
-          (nearby.source === 'foursquare' ? 'FOURSQUARE' : 'LOCAL_FALLBACK'));
+        // Explicit server state: a real browser location that only produced curated demo merchants.
+        demo.nearbyDemoFallback = Boolean(nearby.demoFallback && demo.discoveryLocation);
       }
       let result = await getSmartRecommendation(demo.profile, demo.nearbyMerchants,
         demo.rejectedMerchantIds, demo.recommendationFeedback, demo, demo.shownMerchantIds);
@@ -2725,7 +2898,6 @@ app.get('/smart-match/result', async function(req, res) {
       if (recommendation) {
         demo.selectedMerchantId = recommendation.id;
         demo.selectedMerchantReason = result.reason;
-        demo.selectedMerchantBestEffort = Boolean(result.bestEffortOnly);
         if (!demo.shownMerchantIds.includes(recommendation.id)) {
           demo.shownMerchantIds.push(recommendation.id);
           const c = findCampaign(demo, recommendation.id);
@@ -2757,6 +2929,7 @@ app.get('/smart-match/static', async function(req, res) {
   if (!demo.selectedMerchantId) {
     demo.nearbyMerchants = copyObjects(fallbackMerchants);
     demo.nearbySource = 'local-fallback';
+    demo.nearbyDemoFallback = Boolean(demo.discoveryLocation);
     const result = await getSmartRecommendation(demo.profile, demo.nearbyMerchants,
       demo.rejectedMerchantIds, demo.recommendationFeedback, demo, demo.shownMerchantIds);
     const merchant = result.merchant;
@@ -2846,7 +3019,7 @@ app.get('/scan', function(req, res) {
   const activeMerchantId = activeClaim && activeClaim.status === 'CLAIMED'
     ? activeClaim.merchantId
     : demo.recommendationAccepted && demo.selectedMerchantId ? demo.selectedMerchantId : null;
-  const scanMerchants = demo.discoveryLocation && demo.nearbySource === 'foursquare'
+  const scanMerchants = demo.discoveryLocation && (demo.nearbySource === 'google' || demo.nearbySource === 'foursquare')
     ? demo.nearbyMerchants.slice() : fallbackMerchants.slice();
   const activeMerchant = findMerchantForDemo(demo, activeMerchantId);
   if (activeMerchant && !findMerchantById(scanMerchants, activeMerchant.id)) scanMerchants.unshift(activeMerchant);
