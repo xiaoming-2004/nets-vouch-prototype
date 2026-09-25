@@ -2,18 +2,20 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { app, demoStore, getMerchantCampaigns, resetMerchantCampaigns, resetReferralCooldowns } = require('../app');
 
-// Discovery must never reach the real Google Places API from tests, even when .env configures a
-// key: Google is the default primary provider, so each test starts without it (tests that need
-// Google set a fake key and mock fetch).
-const originalGooglePlacesKey = process.env.GOOGLE_PLACES_API_KEY;
-const originalPlacesProvider = process.env.PLACES_PROVIDER;
+// Tests must never reach real providers, even when .env configures keys: Google is the default
+// discovery provider and Groq the default ranker, so each test starts without those (and the other
+// AI/research) keys. Tests that need a provider set a fake key and mock fetch.
+const isolatedProviderEnv = ['GOOGLE_PLACES_API_KEY', 'PLACES_PROVIDER', 'GROQ_API_KEY', 'OPENAI_API_KEY', 'TAVILY_API_KEY'];
+const originalProviderEnv = {};
+isolatedProviderEnv.forEach(function(key) { originalProviderEnv[key] = process.env[key]; });
 test.beforeEach(function() {
-  delete process.env.GOOGLE_PLACES_API_KEY;
-  delete process.env.PLACES_PROVIDER;
+  isolatedProviderEnv.forEach(function(key) { delete process.env[key]; });
 });
 test.after(function() {
-  if (originalGooglePlacesKey !== undefined) process.env.GOOGLE_PLACES_API_KEY = originalGooglePlacesKey;
-  if (originalPlacesProvider !== undefined) process.env.PLACES_PROVIDER = originalPlacesProvider;
+  isolatedProviderEnv.forEach(function(key) {
+    if (originalProviderEnv[key] === undefined) delete process.env[key];
+    else process.env[key] = originalProviderEnv[key];
+  });
 });
 let server;
 let base;

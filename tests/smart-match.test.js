@@ -5,18 +5,20 @@ const { app, createInitialDemo, getNearbyMerchants, getEligibleMerchants,
   getMoodMatchState, getDietaryMatchState, merchantMentionsCraving, MATCH_STATE,
   clearDiscoveryCache, clearMerchantResearchCache, RESEARCH_STATUS } = require('../app');
 
-// Discovery must never reach the real Google Places API from tests, even when .env configures a
-// key: Google is the default primary provider, so each test starts without it (tests that need
-// Google set a fake key and mock fetch).
-const originalGooglePlacesKey = process.env.GOOGLE_PLACES_API_KEY;
-const originalPlacesProvider = process.env.PLACES_PROVIDER;
+// Tests must never reach real providers, even when .env configures keys: Google is the default
+// discovery provider and Groq the default ranker, so each test starts without those (and the other
+// AI/research) keys. Tests that need a provider set a fake key and mock fetch.
+const isolatedProviderEnv = ['GOOGLE_PLACES_API_KEY', 'PLACES_PROVIDER', 'GROQ_API_KEY', 'OPENAI_API_KEY', 'TAVILY_API_KEY'];
+const originalProviderEnv = {};
+isolatedProviderEnv.forEach(function(key) { originalProviderEnv[key] = process.env[key]; });
 test.beforeEach(function() {
-  delete process.env.GOOGLE_PLACES_API_KEY;
-  delete process.env.PLACES_PROVIDER;
+  isolatedProviderEnv.forEach(function(key) { delete process.env[key]; });
 });
 test.after(function() {
-  if (originalGooglePlacesKey !== undefined) process.env.GOOGLE_PLACES_API_KEY = originalGooglePlacesKey;
-  if (originalPlacesProvider !== undefined) process.env.PLACES_PROVIDER = originalPlacesProvider;
+  isolatedProviderEnv.forEach(function(key) {
+    if (originalProviderEnv[key] === undefined) delete process.env[key];
+    else process.env[key] = originalProviderEnv[key];
+  });
 });
 
 const originalFetch = global.fetch;
@@ -1026,17 +1028,18 @@ test('TEST C: a specific craving with too few results triggers at most one broad
 
 test('TEST D: without AI, the fallback nudges a merchant that literally names the craving', async function() {
   process.env.FOURSQUARE_API_KEY = 'test-key';
-  const mock = mockFoursquareByQuery({ bakery: [
-    fsqPlace('bakery', 'Corner Bakery', 'Bakery', { distance: 300 }),
+  // Meal merchants only (a bakery is no longer a Smart Match meal candidate at all).
+  const mock = mockFoursquareByQuery({ laksa: [
+    fsqPlace('laksa', 'Corner Laksa House', 'Asian Restaurant', { distance: 300 }),
     fsqPlace('generic', 'Generic Restaurant', 'Restaurant', { distance: 100 })
   ] });
   global.fetch = mock.fetchFn;
   const demo = createInitialDemo('jia');
-  demo.profile.craving = 'bakery';
+  demo.profile.craving = 'laksa';
   demo.profile.maxDistanceMinutes = 30;
-  const nearby = await getNearbyMerchants({ latitude: 1.45, longitude: 103.82 }, 'jia', 'bakery');
+  const nearby = await getNearbyMerchants({ latitude: 1.45, longitude: 103.82 }, 'jia', 'laksa');
   const result = await getSmartRecommendation(demo.profile, nearby.merchants, [], [], demo);
-  assert.equal(result.merchant.merchantName, 'Corner Bakery',
+  assert.equal(result.merchant.merchantName, 'Corner Laksa House',
     'the user\'s own words appearing in factual data must outrank a nearer generic restaurant');
 });
 
@@ -1139,18 +1142,18 @@ test('TEST L: changing craving preserves history - a merchant already shown stay
   process.env.FOURSQUARE_API_KEY = 'test-key';
   const mock = mockFoursquareByQuery({
     food: [fsqPlace('a', 'Merchant A', 'Restaurant')],
-    bread: [fsqPlace('a', 'Merchant A', 'Restaurant'), fsqPlace('bakery', 'Corner Bakery', 'Bakery')]
+    noodles: [fsqPlace('a', 'Merchant A', 'Restaurant'), fsqPlace('noodle', 'Corner Noodle House', 'Noodle Restaurant')]
   });
   global.fetch = mock.fetchFn;
   const v = visitor();
   await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
   const first = merchantIdOf((await v.request('/smart-match/result')).html);
   assert.equal(first, 'foursquare-a');
-  await v.request('/profile', { dietaryPreference: 'none', budget: '10', maxDistanceMinutes: '30', craving: 'bread' });
+  await v.request('/profile', { dietaryPreference: 'none', budget: '10', maxDistanceMinutes: '30', craving: 'noodles' });
   await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
   const afterCravingChange = merchantIdOf((await v.request('/smart-match/result')).html);
-  assert.equal(afterCravingChange, 'foursquare-bakery',
-    'Merchant A was already shown, so the unseen Corner Bakery should be preferred');
+  assert.equal(afterCravingChange, 'foursquare-noodle',
+    'Merchant A was already shown, so the unseen Corner Noodle House should be preferred');
 });
 
 test('TEST M: shown history does not leak across sessions', async function() {
@@ -1378,8 +1381,8 @@ test('CRAVING A: arbitrary craving - AI semantically picks the fried chicken mer
     aiResponse('foursquare-chicken', reason, 'high'));
   assert.equal(result.merchant.merchantName, 'Seoul Bites');
   assert.equal(result.reason, reason);
-  assert.deepEqual(seen.ids.sort(), ['foursquare-bakery', 'foursquare-chicken', 'foursquare-generic'],
-    'the AI ranks every rule-approved candidate; no craving pre-gating');
+  assert.deepEqual(seen.ids.sort(), ['foursquare-chicken', 'foursquare-generic'],
+    'the AI ranks every rule-approved candidate; no craving pre-gating (the Bakery is excluded by merchant TYPE, not by the craving)');
   assert.match(seen.prompt, /Fried Chicken Joint/, 'all factual Foursquare category names are supplied');
 });
 
@@ -1445,8 +1448,8 @@ test('CRAVING I: one broad food fallback still runs, and the merged pool is rank
 });
 
 test('CRAVING J: a reason citing a supplied category is kept', async function() {
-  const reason = 'Categorised as a Bakery, a good fit for something sweet.';
-  const { result } = await recommendFor('something sweet', crispyPlaces, aiResponse('foursquare-bakery', reason, 'medium'));
+  const reason = 'Categorised as a Fried Chicken Joint, a good fit for something crunchy.';
+  const { result } = await recommendFor('something crunchy', crispyPlaces, aiResponse('foursquare-chicken', reason, 'medium'));
   assert.equal(result.reason, reason);
 });
 
@@ -1465,9 +1468,9 @@ test('CRAVING L: a craving that appears nowhere in the source still produces an 
   const source = require('fs').readFileSync(require('path').join(__dirname, '..', 'app.js'), 'utf8');
   assert.ok(!source.includes('glimmerberry'));
   const { result, requests } = await recommendFor(craving, crispyPlaces,
-    aiResponse('foursquare-bakery', 'Corner Bakery is the closest fit on offer.', 'low'));
+    aiResponse('foursquare-generic', 'Food Leaf is the closest fit on offer.', 'low'));
   assert.equal(requests[0].query, craving);
-  assert.equal(result.merchant.merchantName, 'Corner Bakery');
+  assert.equal(result.merchant.merchantName, 'Food Leaf');
 });
 
 // ---------------------------------------------------------------------------
@@ -1562,9 +1565,16 @@ function mockDietFlow(places, research, rankReply, counter, options) {
       return respond(options.extract === undefined ? extractPages() : options.extract, body.urls, body.extract_depth);
     }
     if (u.hostname === 'api.groq.com') {
+      const body = JSON.parse(String(options2.body));
+      if (!(body.messages && String(body.messages[0].content).indexOf(RESEARCH_SYSTEM_MARKER) === 0)) {
+        // Groq is also the primary FINAL ranker. These research tests exercise research, so the
+        // Groq ranking call fails by default (options.groqRankReply overrides) and ranking falls
+        // through to the OpenAI rankReply / rules exactly as before. Not counted as research.
+        seen.groqRankCalls = (seen.groqRankCalls || 0) + 1;
+        return options.groqRankReply || { ok: false, status: 500 };
+      }
       seen.research.groq += 1;
       seen.research.calls += 1;
-      const body = JSON.parse(String(options2.body));
       assert.equal(body.model, 'openai/gpt-oss-20b');
       assert.deepEqual(body.response_format, { type: 'json_object' });
       assert.ok(!body.tools, 'Groq never searches the web itself');
@@ -2066,7 +2076,9 @@ test('RESEARCH: zero verified -> clean dietary no-result state, 9 merchants max,
 });
 
 test('RETRIEVAL identity: a page about a DIFFERENT nearby outlet can never verify this merchant', async function() {
-  const cafe = fsqPlace('cafe', 'Cafe Esplanade @ RP', 'Café');
+  // Deli is Foursquare's live category for this outlet; a Café primary category would now be excluded
+  // as a non-meal merchant before research ever runs.
+  const cafe = fsqPlace('cafe', 'Cafe Esplanade @ RP', 'Deli');
   const otherOutlet = 'https://www.happycow.net/reviews/the-crowded-bowl';
   const search = tavilyReply([{ title: 'The Crowded Bowl - Republic Polytechnic', url: otherOutlet, content: 'Vegetarian salad bowls.' }]);
   const extract = extractPages(function() { return 'The Crowded Bowl serves vegetarian salad bowls at RP. ' + 'Menu. '.repeat(40); });
