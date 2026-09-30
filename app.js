@@ -432,17 +432,213 @@ const campaignSeedMetrics = {
     directScanPayments: 89, directScanSales: 534.00,
     scans: 134, payments: 119, rewardCost: 18.00, platformFeeAccrued: 3.00,
     dailyPayments: [7, 8, 9, 9, 10, 11, 12]
+  },
+  'woodlands-noodle-bar': {
+    smartMatchShown: 95, smartMatchAccepted: 74, smartMatchPayments: 61, smartMatchSales: 414.80,
+    sharedVouchClaims: 42, sharedVouchPayments: 31, sharedVouchSales: 210.80,
+    directScanPayments: 128, directScanSales: 870.40,
+    scans: 192, payments: 220, rewardCost: 55.00, platformFeeAccrued: 9.20,
+    dailyPayments: [18, 20, 19, 22, 24, 23, 26]
+  },
+  'northside-wraps': {
+    smartMatchShown: 76, smartMatchAccepted: 58, smartMatchPayments: 48, smartMatchSales: 422.40,
+    sharedVouchClaims: 35, sharedVouchPayments: 27, sharedVouchSales: 237.60,
+    directScanPayments: 109, directScanSales: 959.20,
+    scans: 163, payments: 184, rewardCost: 42.00, platformFeeAccrued: 7.50,
+    dailyPayments: [14, 16, 15, 18, 20, 22, 19]
+  },
+  'spice-lane': {
+    smartMatchShown: 112, smartMatchAccepted: 88, smartMatchPayments: 74, smartMatchSales: 629.00,
+    sharedVouchClaims: 53, sharedVouchPayments: 41, sharedVouchSales: 348.50,
+    directScanPayments: 162, directScanSales: 1377.00,
+    scans: 244, payments: 277, rewardCost: 69.00, platformFeeAccrued: 11.50,
+    dailyPayments: [24, 26, 28, 32, 36, 38, 35]
   }
 };
 
 // Each fictional participating merchant owns its own campaign.
 // Metrics start at zero so live increments remain testable.
+// Per-merchant reward configs — each stall offers something different so the card feels varied.
+// Discovered merchants (Foursquare/Google Places) get a deterministic pick from the pool below.
+const MERCHANT_REWARD_CONFIGS = {
+  'felicia-chicken-rice': { rewardAmount: 0.80, rewardLabel: 'Free side dish', minimumEligibleSpend: 5.00 },
+  'green-bowl':           { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 9.00 },
+  'woodlands-noodle-bar': { rewardAmount: 0.80, rewardLabel: 'Free soup add-on', minimumEligibleSpend: 6.00 },
+  'northside-wraps':      { rewardAmount: 0.50, rewardLabel: '$0.50 off', minimumEligibleSpend: 8.00 },
+  'spice-lane':           { rewardAmount: 0.70, rewardLabel: 'Free upsize', minimumEligibleSpend: 7.50 }
+};
+const CATEGORY_REWARD_MAPS = [
+  { keywords: ['bubble tea', 'boba', 'milk tea', 'teh tarik', 'juice', 'smoothie', 'beverage', 'drinks'],
+    rewards: [
+      { rewardAmount: 0.70, rewardLabel: 'Free upsize', minimumEligibleSpend: 5.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Free topping', minimumEligibleSpend: 5.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Free pearl add-on', minimumEligibleSpend: 4.50 },
+      { rewardAmount: 0.50, rewardLabel: 'Free sugar upgrade', minimumEligibleSpend: 4.00 },
+    ]
+  },
+  { keywords: ['coffee', 'cafe', 'café', 'espresso', 'kopi', 'kopitiam'],
+    rewards: [
+      { rewardAmount: 0.80, rewardLabel: 'Free extra shot', minimumEligibleSpend: 5.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Free upsize', minimumEligibleSpend: 5.00 },
+      { rewardAmount: 1.00, rewardLabel: 'Free pastry with any coffee', minimumEligibleSpend: 7.00 },
+      { rewardAmount: 0.50, rewardLabel: '$0.50 off any drink', minimumEligibleSpend: 4.00 },
+    ]
+  },
+  { keywords: ['bakery', 'bread', 'cake', 'pastry', 'dessert', 'waffle', 'crepe', 'gelato', 'ice cream'],
+    rewards: [
+      { rewardAmount: 0.80, rewardLabel: 'Free mini cake slice', minimumEligibleSpend: 8.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Free bread roll', minimumEligibleSpend: 6.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Free scoop upgrade', minimumEligibleSpend: 7.00 },
+      { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 10.00 },
+    ]
+  },
+  { keywords: ['noodle', 'ramen', 'laksa', 'mee', 'pho', 'ban mian', 'wonton', 'udon'],
+    rewards: [
+      { rewardAmount: 0.80, rewardLabel: 'Free soup add-on', minimumEligibleSpend: 6.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Free extra noodles', minimumEligibleSpend: 6.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Free soft-boiled egg', minimumEligibleSpend: 5.50 },
+      { rewardAmount: 0.50, rewardLabel: 'Free fishball add-on', minimumEligibleSpend: 5.00 },
+    ]
+  },
+  { keywords: ['rice', 'nasi', 'cai png', 'economic rice', 'biryani', 'briyani', 'donburi'],
+    rewards: [
+      { rewardAmount: 0.80, rewardLabel: 'Free side dish', minimumEligibleSpend: 5.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Free extra rice', minimumEligibleSpend: 4.50 },
+      { rewardAmount: 0.70, rewardLabel: 'Free soup', minimumEligibleSpend: 5.00 },
+      { rewardAmount: 0.50, rewardLabel: 'Free egg add-on', minimumEligibleSpend: 4.50 },
+    ]
+  },
+  { keywords: ['indian', 'curry', 'prata', 'thosai', 'dosa', 'masala', 'tandoori'],
+    rewards: [
+      { rewardAmount: 0.70, rewardLabel: 'Free upsize', minimumEligibleSpend: 7.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Free papadom', minimumEligibleSpend: 7.00 },
+      { rewardAmount: 0.90, rewardLabel: 'Free raita', minimumEligibleSpend: 8.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Free chutney set', minimumEligibleSpend: 6.00 },
+    ]
+  },
+  { keywords: ['sushi', 'japanese', 'tempura', 'bento', 'yakitori', 'teppanyaki', 'tonkatsu'],
+    rewards: [
+      { rewardAmount: 0.80, rewardLabel: 'Free miso soup', minimumEligibleSpend: 12.00 },
+      { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 15.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Free edamame', minimumEligibleSpend: 12.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Free gyoza (2 pcs)', minimumEligibleSpend: 10.00 },
+    ]
+  },
+  { keywords: ['korean', 'bbq', 'hotpot', 'bibimbap', 'topokki', 'bulgogi', 'kimchi'],
+    rewards: [
+      { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 15.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Free banchan set', minimumEligibleSpend: 12.00 },
+      { rewardAmount: 0.90, rewardLabel: 'Free extra rice', minimumEligibleSpend: 12.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Free kimchi refill', minimumEligibleSpend: 10.00 },
+    ]
+  },
+  { keywords: ['burger', 'fries', 'fried chicken', 'wings', 'nuggets', 'hot dog'],
+    rewards: [
+      { rewardAmount: 0.70, rewardLabel: 'Free upsize combo', minimumEligibleSpend: 8.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Free extra fries', minimumEligibleSpend: 9.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Free dipping sauce', minimumEligibleSpend: 7.00 },
+      { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 12.00 },
+    ]
+  },
+  { keywords: ['pizza', 'pasta', 'italian', 'risotto', 'lasagna', 'carbonara'],
+    rewards: [
+      { rewardAmount: 0.80, rewardLabel: 'Free garlic bread', minimumEligibleSpend: 12.00 },
+      { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 15.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Free soft drink', minimumEligibleSpend: 12.00 },
+      { rewardAmount: 0.90, rewardLabel: 'Free caesar salad (small)', minimumEligibleSpend: 14.00 },
+    ]
+  },
+  { keywords: ['wrap', 'sandwich', 'toast', 'pita', 'burrito', 'sub', 'bagel'],
+    rewards: [
+      { rewardAmount: 0.60, rewardLabel: 'Free side salad', minimumEligibleSpend: 8.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Free upsize drink', minimumEligibleSpend: 7.00 },
+      { rewardAmount: 0.50, rewardLabel: '$0.50 off any set meal', minimumEligibleSpend: 7.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Free cookie', minimumEligibleSpend: 9.00 },
+    ]
+  },
+  { keywords: ['malay', 'nasi lemak', 'satay', 'rendang', 'mee rebus', 'mee goreng', 'murtabak'],
+    rewards: [
+      { rewardAmount: 0.80, rewardLabel: 'Free extra sambal', minimumEligibleSpend: 6.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Free upsize', minimumEligibleSpend: 6.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Free additional satay stick', minimumEligibleSpend: 8.00 },
+      { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 10.00 },
+    ]
+  },
+  { keywords: ['chinese', 'dim sum', 'char siew', 'roast', 'congee', 'porridge', 'claypot'],
+    rewards: [
+      { rewardAmount: 0.80, rewardLabel: 'Free soup of the day', minimumEligibleSpend: 8.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Free extra dim sum', minimumEligibleSpend: 10.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Free egg tart', minimumEligibleSpend: 8.00 },
+      { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 12.00 },
+    ]
+  },
+  { keywords: ['thai', 'pad thai', 'tom yum', 'green curry', 'mango sticky'],
+    rewards: [
+      { rewardAmount: 0.80, rewardLabel: 'Free spring roll', minimumEligibleSpend: 9.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Free thai tea upgrade', minimumEligibleSpend: 8.00 },
+      { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 12.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Free prawn cracker', minimumEligibleSpend: 7.00 },
+    ]
+  },
+  { keywords: ['salad', 'healthy', 'grain bowl', 'poke', 'quinoa', 'acai'],
+    rewards: [
+      { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 12.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Free protein add-on', minimumEligibleSpend: 10.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Free dressing upgrade', minimumEligibleSpend: 9.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Free topping', minimumEligibleSpend: 8.00 },
+    ]
+  },
+];
+const GENERIC_REWARD_POOL = [
+  { rewardAmount: 0.50, rewardLabel: '$0.50 Vouch Credit', minimumEligibleSpend: 5.00 },
+  { rewardAmount: 0.80, rewardLabel: 'Free side dish', minimumEligibleSpend: 8.00 },
+  { rewardAmount: 0.70, rewardLabel: 'Free upsize', minimumEligibleSpend: 7.00 },
+  { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 10.00 },
+  { rewardAmount: 0.80, rewardLabel: 'Free add-on', minimumEligibleSpend: 6.00 },
+  { rewardAmount: 0.60, rewardLabel: 'Free drink', minimumEligibleSpend: 8.00 },
+  { rewardAmount: 0.90, rewardLabel: 'Free surprise item', minimumEligibleSpend: 9.00 },
+];
+const discoveredRewardConfigs = new Map();
+function getCategoryRewardConfig(merchant) {
+  const text = [
+    merchant.merchantName || '',
+    merchant.categoryLabel || '',
+    merchant.category || '',
+    ...(merchant.categoryNames || [])
+  ].join(' ').toLowerCase();
+  for (let i = 0; i < CATEGORY_REWARD_MAPS.length; i++) {
+    const map = CATEGORY_REWARD_MAPS[i];
+    if (map.keywords.some(function(k) { return text.includes(k); })) {
+      let hash = 0;
+      const id = merchant.id || '';
+      for (let j = 0; j < id.length; j++) hash = (hash * 31 + id.charCodeAt(j)) | 0;
+      return map.rewards[Math.abs(hash) % map.rewards.length];
+    }
+  }
+  let hash = 0;
+  const id = merchant.id || '';
+  for (let j = 0; j < id.length; j++) hash = (hash * 31 + id.charCodeAt(j)) | 0;
+  return GENERIC_REWARD_POOL[Math.abs(hash) % GENERIC_REWARD_POOL.length];
+}
+function getRewardConfig(merchantId) {
+  if (Object.prototype.hasOwnProperty.call(MERCHANT_REWARD_CONFIGS, merchantId)) {
+    return MERCHANT_REWARD_CONFIGS[merchantId];
+  }
+  if (discoveredRewardConfigs.has(merchantId)) {
+    return discoveredRewardConfigs.get(merchantId);
+  }
+  let hash = 0;
+  for (let i = 0; i < merchantId.length; i++) hash = (hash * 31 + merchantId.charCodeAt(i)) | 0;
+  return GENERIC_REWARD_POOL[Math.abs(hash) % GENERIC_REWARD_POOL.length];
+}
+
 // The illustrative baseline is displayed separately; live metrics start at zero.
 function createDemoCampaign(merchantId, participationMode) {
+  const reward = getRewardConfig(merchantId);
   return {
       id: merchantId + '-campaign', merchantId: merchantId,
       participationMode: participationMode,
-      rewardAmount: 0.50, minimumEligibleSpend: 5.00,
+      rewardAmount: reward.rewardAmount, rewardLabel: reward.rewardLabel, minimumEligibleSpend: reward.minimumEligibleSpend,
       maxRewardedPaymentsPerDay: 20, maxRewardBudgetPerDay: 10.00,
       startTime: '00:00', endTime: '23:59',
       senderReferralReward: 0.20, platformFeePerAttributedPayment: 0.10,
@@ -468,6 +664,9 @@ let merchantCampaignStore = createCampaigns();
 const discoveredMerchants = new Map();
 function registerDemoMerchant(merchant) {
   discoveredMerchants.set(merchant.id, merchant);
+  if (!discoveredRewardConfigs.has(merchant.id)) {
+    discoveredRewardConfigs.set(merchant.id, getCategoryRewardConfig(merchant));
+  }
   if (!merchantCampaignStore.some(function(campaign) { return campaign.merchantId === merchant.id; })) {
     merchantCampaignStore.push(createDemoCampaign(merchant.id, 'DEMO_SIMULATED'));
   }
@@ -477,6 +676,127 @@ function registerDemoMerchant(merchant) {
 // Transactions deliberately have NO module-level cache: the owning session is the only source of
 // truth, so ownership, isolation and Reset Demo invalidation cannot be bypassed.
 const locationCache = new Map();    // sessionId → {latitude, longitude}
+
+// Per-merchant hourly transaction weights (hours 0-23, relative values, normalised at render time).
+const MERCHANT_HOURLY_PROFILES = {
+  'felicia-chicken-rice': [0,0,0,0,0,0,1,2,3,4,8,10,9,7,4,3,2,2,3,2,1,0,0,0],
+  'green-bowl':           [0,0,0,0,0,0,0,1,3,5,8,10,8,6,5,4,3,2,2,1,1,0,0,0],
+  'woodlands-noodle-bar': [0,0,0,0,0,0,0,1,2,3,7,10,8,6,3,2,2,2,3,3,2,1,0,0],
+  'northside-wraps':      [0,0,0,0,0,0,0,1,3,5,7,9,10,8,6,4,3,3,4,3,2,1,0,0],
+  'spice-lane':           [0,0,0,0,0,0,0,0,1,2,4,7,10,8,4,3,3,4,6,8,7,5,2,0],
+};
+const DEFAULT_HOURLY_PROFILE =  [0,0,0,0,0,0,0,1,2,3,6,10,8,5,4,3,3,4,5,4,2,1,0,0];
+const HEATMAP_DAY_WEIGHTS = [0.70, 0.62, 0.76, 0.82, 1.00, 0.92, 0.50];
+
+function getMerchantHourlyProfile(merchantId) {
+  return MERCHANT_HOURLY_PROFILES[merchantId] || DEFAULT_HOURLY_PROFILE;
+}
+
+function generateMerchantInsights(merchant, campaign, seedMetrics, profile, weeklyData, acquisitionData) {
+  const insights = [];
+  const profileMax = Math.max.apply(null, profile) || 1;
+  const peakIdx = profile.indexOf(profileMax);
+  const morningAvg = (profile[6] + profile[7] + profile[8] + profile[9]) / 4;
+  const eveningAvg = (profile[20] + profile[21] + profile[22]) / 3;
+  const afternoonTotal = profile[14] + profile[15] + profile[16];
+  const lunchTotal = profile[11] + profile[12] + profile[13] || 1;
+  // 1. Opening hours opportunity
+  if (morningAvg < 1.5 && peakIdx >= 11) {
+    insights.push({
+      icon: '🕙',
+      headline: 'Opening earlier has minimal upside',
+      detail: 'Morning traffic before 10 AM is very low. Maintaining your current opening time avoids prep cost with no meaningful revenue loss — and lets your team focus on quality at peak.',
+      confidence: 'High'
+    });
+  } else if (eveningAvg < 1 && peakIdx < 18) {
+    insights.push({
+      icon: '🕗',
+      headline: 'Consider closing 30 min earlier',
+      detail: 'Transactions after 8 PM drop close to zero. Closing earlier can reduce staffing and utility cost with minimal revenue impact.',
+      confidence: 'High'
+    });
+  }
+  // 2. Afternoon dead zone
+  if (afternoonTotal / lunchTotal < 0.35) {
+    insights.push({
+      icon: '📉',
+      headline: '2–5 PM is your quietest window',
+      detail: 'Afternoon traffic is about ' + Math.round(100 * afternoonTotal / lunchTotal) + '% of your lunch volume. A limited-time Smart Match deal during this slot historically lifts slow-period sales by 15–25%.',
+      confidence: 'High'
+    });
+  }
+  // 3. Weakest day of week
+  if (weeklyData && weeklyData.length >= 7) {
+    const vals = weeklyData.map(function(d) { return d.payments; });
+    const minV = Math.min.apply(null, vals);
+    const maxV = Math.max.apply(null, vals);
+    const weakDay = weeklyData.find(function(d) { return d.payments === minV; });
+    const strongDay = weeklyData.find(function(d) { return d.payments === maxV; });
+    if (weakDay && strongDay && weakDay.label !== strongDay.label) {
+      insights.push({
+        icon: '📅',
+        headline: weakDay.label + 's need a push',
+        detail: weakDay.label + ' averages ' + minV + ' payments vs ' + maxV + ' on ' + strongDay.label + 's. Smart Match promotions targeted on ' + weakDay.label + 's could close that gap over 4–6 weeks.',
+        confidence: 'Medium'
+      });
+    }
+  }
+  // 4. Reward type effectiveness
+  const rl = (campaign && campaign.rewardLabel) ? campaign.rewardLabel : '';
+  if (rl.toLowerCase().includes('free')) {
+    insights.push({
+      icon: '⭐',
+      headline: '"' + rl + '" drives strong return visits',
+      detail: 'Tangible free-item rewards show a 30–40% higher next-visit rate vs flat cashback at comparable stalls. Your current offer is well-positioned for repeat custom.',
+      confidence: 'Medium'
+    });
+  } else {
+    insights.push({
+      icon: '💡',
+      headline: 'A free item reward could outperform credits',
+      detail: 'Switching from credits to a free side or upsize typically increases perceived value 2–3× at the same cost. Worth testing for a month to see if return-visit rate improves.',
+      confidence: 'Medium'
+    });
+  }
+  // 5. Smart Match growth opportunity
+  if (acquisitionData && acquisitionData.smartMatch.pct < 30) {
+    insights.push({
+      icon: '🎯',
+      headline: 'Smart Match still has room to grow',
+      detail: 'Only ' + acquisitionData.smartMatch.pct + '% of Vouch payments are AI-attributed. Increasing your daily reward budget on quieter days can boost Smart Match visibility and drive new-customer discovery.',
+      confidence: 'Medium'
+    });
+  }
+  return insights.slice(0, 4);
+}
+
+function getRewardOptionsForMerchant(merchant) {
+  const text = [
+    merchant.merchantName || '',
+    merchant.categoryLabel || '',
+    merchant.category || '',
+    ...(merchant.categoryNames || [])
+  ].join(' ').toLowerCase();
+  for (let i = 0; i < CATEGORY_REWARD_MAPS.length; i++) {
+    const map = CATEGORY_REWARD_MAPS[i];
+    if (map.keywords.some(function(k) { return text.includes(k); })) {
+      return map.rewards.map(function(r) { return r.rewardLabel; });
+    }
+  }
+  return GENERIC_REWARD_POOL.slice(0, 6).map(function(r) { return r.rewardLabel; });
+}
+
+function getMerchantLiveFeedPool(merchant) {
+  const price = (merchant.price || 6.00);
+  return [
+    { source: 'SMART_MATCH',  item: merchant.itemName || 'Signature item',    amount: '$' + price.toFixed(2) },
+    { source: 'DIRECT_SCAN',  item: null,                                      amount: '$' + price.toFixed(2) },
+    { source: 'SHARED_VOUCH', item: merchant.itemName || null,                 amount: '$' + price.toFixed(2) },
+    { source: 'DIRECT_SCAN',  item: null,                                      amount: '$' + (price * 2).toFixed(2) },
+    { source: 'SMART_MATCH',  item: merchant.itemName || null,                 amount: '$' + price.toFixed(2) },
+    { source: 'DIRECT_SCAN',  item: null,                                      amount: '$' + (price * 1.5).toFixed(2) },
+  ];
+}
 
 // Cross-session payment feed with labelled illustrative examples and live payments.
 // Capped at 200 entries; newest live entries are unshifted to the front.
@@ -3185,7 +3505,8 @@ function recordPayment(demo, journey, amount, useCashback) {
     collected: false, vouchDecision: eligible ? 'pending' : 'not-eligible', vouchCreated: false,
     campaignId: campaign ? campaign.id : null,
     date: date.date, time: date.time, createdAt: date.iso,
-    displayAmount: '$' + breakdown.netsPaid.toFixed(2), paymentMethod: 'NETS'
+    displayAmount: '$' + breakdown.netsPaid.toFixed(2), paymentMethod: 'NETS',
+    rewardLabel: campaign ? campaign.rewardLabel : null
   };
   demo.transactions.unshift(transaction);
   demo.processedPaymentAttempts[journey.id] = transaction.id;
@@ -4018,9 +4339,102 @@ app.get('/merchant', function(req, res) {
     error: req.query.error === 'invalid',
     recentPayments: merchantPaymentFeed.filter(function(p) {
       return p.merchantId === merchant.id && !p.illustrative;
-    }).slice(0, 12)
+    }).slice(0, 12),
+    liveFeedPool: JSON.stringify(getMerchantLiveFeedPool(merchant)),
+    rewardOptions: getRewardOptionsForMerchant(merchant)
   });
 });
+
+app.get('/merchant/report', function(req, res) {
+  const demo = req.session.demo;
+  const merchantList = fallbackMerchants.concat(Array.from(discoveredMerchants.values()));
+  const merchant = findMerchantById(merchantList, req.query.merchantId || fallbackMerchants[0].id);
+  if (!merchant) return res.redirect('/merchant/report?merchantId=' + encodeURIComponent(fallbackMerchants[0].id));
+  const campaign = findCampaign(demo, merchant.id);
+  const seedMetrics = campaignSeedMetrics[merchant.id] || null;
+
+  const profile = getMerchantHourlyProfile(merchant.id);
+  const profileMax = Math.max.apply(null, profile) || 1;
+  const profileSum = profile.reduce(function(s, v) { return s + v; }, 0) || 1;
+  const dailyAvgPayments = seedMetrics ? Math.round(seedMetrics.payments / 7) : 20;
+
+  // Hourly chart: hours 8am–9pm (indices 8–21)
+  const chartHours = profile.slice(8, 22).map(function(weight, i) {
+    const h = i + 8;
+    return {
+      label: h < 12 ? h + 'am' : h === 12 ? '12pm' : (h - 12) + 'pm',
+      count: Math.round(dailyAvgPayments * weight / profileSum),
+      height: Math.round(100 * weight / profileMax)
+    };
+  });
+
+  // Weekly trend
+  const weekLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const rawDaily = seedMetrics ? seedMetrics.dailyPayments : [15, 14, 16, 18, 20, 22, 12];
+  const maxDaily = Math.max.apply(null, rawDaily) || 1;
+  const weeklyData = rawDaily.map(function(v, i) {
+    return { label: weekLabels[i % 7], payments: v, height: Math.round(100 * v / maxDaily) };
+  });
+
+  // KPIs
+  const peakIdx = profile.indexOf(profileMax);
+  const peakLabel = peakIdx < 12 ? peakIdx + 'am' : peakIdx === 12 ? '12pm' : (peakIdx - 12) + 'pm';
+  const peakEndLabel = (peakIdx + 1) < 12 ? (peakIdx + 1) + 'am' : (peakIdx + 1) === 12 ? '12pm' : (peakIdx - 11) + 'pm';
+  const lm = campaign.metrics;
+  const seedPay = seedMetrics ? seedMetrics.payments : 0;
+  const seedSales = seedMetrics ? (seedMetrics.smartMatchSales + seedMetrics.sharedVouchSales + seedMetrics.directScanSales) : 0;
+  const liveSales = lm.smartMatchSales + lm.sharedVouchSales + lm.directScanSales;
+  const totalPay = Math.max(seedPay + lm.payments, 1);
+  const avgBasket = ((seedSales + liveSales) / totalPay).toFixed(2);
+  const todayPay = dailyAvgPayments + lm.payments;
+
+  // Acquisition mix (seed + live)
+  const smN = (seedMetrics ? seedMetrics.smartMatchPayments : 0) + lm.smartMatchPayments;
+  const svN = (seedMetrics ? seedMetrics.sharedVouchPayments : 0) + lm.sharedVouchPayments;
+  const dsN = (seedMetrics ? seedMetrics.directScanPayments : 0) + lm.directScanPayments;
+  const acqN = smN + svN + dsN || 1;
+  const acquisitionData = {
+    smartMatch:  { count: smN, pct: Math.round(100 * smN / acqN) },
+    sharedVouch: { count: svN, pct: Math.round(100 * svN / acqN) },
+    directScan:  { count: dsN, pct: Math.round(100 * dsN / acqN) }
+  };
+
+  // Heatmap: Mon–Sun × 9am–8pm (12 cols)
+  const heatmapHourLabels = ['9am','10am','11am','12pm','1pm','2pm','3pm','4pm','5pm','6pm','7pm','8pm'];
+  const heatMax = profileMax * Math.max.apply(null, HEATMAP_DAY_WEIGHTS);
+  const heatmapData = weekLabels.map(function(day, d) {
+    return {
+      day: day,
+      cells: heatmapHourLabels.map(function(hlabel, hi) {
+        const h = hi + 9;
+        const raw = profile[h] * HEATMAP_DAY_WEIGHTS[d];
+        const intensity = Math.round(100 * raw / heatMax);
+        return {
+          hourLabel: hlabel,
+          intensity: intensity,
+          cls: intensity < 15 ? 'heat-0' : intensity < 35 ? 'heat-1' : intensity < 55 ? 'heat-2' : intensity < 75 ? 'heat-3' : 'heat-4'
+        };
+      })
+    };
+  });
+
+  const insights = generateMerchantInsights(merchant, campaign, seedMetrics, profile, weeklyData, acquisitionData);
+
+  res.render('merchant-report', {
+    merchants: merchantList, merchant: merchant, campaign: campaign,
+    tab: 'report',
+    kpis: { todayRevenue: (todayPay * parseFloat(avgBasket)).toFixed(2), todayTransactions: todayPay, avgBasketSize: avgBasket, peakHour: peakLabel + '–' + peakEndLabel },
+    chartHours: chartHours,
+    weeklyData: weeklyData,
+    heatmapData: heatmapData,
+    heatmapHourLabels: heatmapHourLabels,
+    acquisitionData: acquisitionData,
+    insights: insights,
+    liveFeedPool: JSON.stringify(getMerchantLiveFeedPool(merchant)),
+    recentPayments: merchantPaymentFeed.filter(function(p) { return p.merchantId === merchant.id; }).slice(0, 8)
+  });
+});
+
 app.post('/merchant/start-preparing', function(req, res) { res.redirect('/merchant'); });
 app.post('/merchant/mark-ready', function(req, res) { res.redirect('/merchant'); });
 app.post('/merchant/offer', function(req, res) {
@@ -4044,6 +4458,10 @@ app.post('/merchant/offer', function(req, res) {
   campaign.startTime = req.body.startTime;
   campaign.endTime = req.body.endTime;
   campaign.status = req.body.status === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE';
+  const rawLabel = req.body.rewardLabel === '__custom__'
+    ? String(req.body.rewardLabelCustom || '').trim()
+    : String(req.body.rewardLabel || '').trim();
+  if (rawLabel.length > 0 && rawLabel.length <= 50) campaign.rewardLabel = rawLabel;
   res.redirect(destination);
 });
 app.post('/reset-demo', function(req, res) {

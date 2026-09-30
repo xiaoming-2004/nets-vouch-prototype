@@ -15,7 +15,7 @@
 </dl>
 <% } %>
 <% if (transaction.merchantRewardEarned > 0) { %>
-<div class="receipt-reward"><svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg><div><strong>+$<%= transaction.merchantRewardEarned.toFixed(2) %> Vouch Credit earned</strong><small>Added to your <%= transaction.merchantName %> balance</small></div></div>
+<div class="receipt-reward"><svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg><div><strong><%= transaction.rewardLabel || ('+$' + transaction.merchantRewardEarned.toFixed(2) + ' Vouch Credit') %> earned</strong><small>Added to your <%= transaction.merchantName %> balance</small></div></div>
 <% } %>
 <% if (canVouch && transaction.vouchDecision === 'pending') { %><%- include('partials/vouch-prompt', { transaction: transaction, vouchTags: vouchTags }) %>
 <% } else { %><form method="POST" action="/transactions/<%= transaction.id %>/done"><button class="button" type="submit">Done</button></form><% } %>

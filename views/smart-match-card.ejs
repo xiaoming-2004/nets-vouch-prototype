@@ -21,7 +21,7 @@
 <% if (display.walking) { %><a class="match-map-open" href="<%= display.walking.mapsUrl %>" target="_blank" rel="noopener noreferrer"><span class="match-map-hint">Open in Google Maps<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg></span><span class="visually-hidden"> - walking directions to <%= recommendation.merchantName %></span></a><% } %>
 </div>
 <% } %>
-<% if (campaign && dailyRewardEarned) { %><p class="reward earned">Today's Vouch Credit earned ✓<small>You can still use your available <%= recommendation.merchantName %> Vouch Credit.</small></p><% } else if (campaign) { %><p class="reward">Earn $<%= campaign.rewardAmount.toFixed(2) %> <%= recommendation.merchantName %> Vouch Credit <small>Once daily · Spend $<%= campaign.minimumEligibleSpend.toFixed(2) %>+ and keep at least $1 paid with NETS.</small></p><% } else { %><p role="status">This offer has ended. Choose another spot.</p><% } %>
+<% if (campaign && dailyRewardEarned) { %><p class="reward earned"><%= campaign.rewardLabel %> — earned today ✓<small>You can still use your available <%= recommendation.merchantName %> Vouch Credit.</small></p><% } else if (campaign) { %><p class="reward"><%= campaign.rewardLabel %> <small>Once daily · Spend $<%= campaign.minimumEligibleSpend.toFixed(2) %>+ · Pay with NETS.</small></p><% } else { %><p role="status">This offer has ended. Choose another spot.</p><% } %>
 <% if (campaign && !recommendationAccepted) { %><form method="POST" action="/recommendation/accept" data-single-submit><input type="hidden" name="merchantId" value="<%= recommendation.id %>"><button class="button" type="submit">Choose this</button></form><% } %>
 <% if (campaign && recommendationAccepted) { %><a class="button" href="/scan">Scan when you arrive</a><% } %>
 <% if (profile) { %>
@@ -30,8 +30,8 @@
 <div class="refine-sheet">
 <form method="POST" action="/profile" class="form-stack">
 <label class="field">Craving<input name="craving" type="text" placeholder="e.g. chicken rice, something light…" maxlength="100" autocomplete="off" value="<%= profile.craving || '' %>"></label>
-<label class="field">Dietary<select name="dietaryPreference"><% dietaryPreferenceOptions.forEach(function(opt) { %><option value="<%= opt.value %>" <%= opt.value === profile.dietaryPreference ? 'selected' : '' %>><%= opt.label %></option><% }); %></select></label>
-<label class="field">Mood today<select name="moodCuisine"><% moodCuisineOptions.forEach(function(opt) { %><option value="<%= opt.value %>" <%= opt.value === (profile.moodCuisine || 'any') ? 'selected' : '' %>><%= opt.label %></option><% }); %></select></label>
+<div class="field"><span class="field-label">Dietary</span><div class="mood-grid mood-grid--2"><% dietaryPreferenceOptions.forEach(function(opt) { %><label class="mood-chip"><input type="radio" name="dietaryPreference" value="<%= opt.value %>" <%= opt.value === profile.dietaryPreference ? 'checked' : '' %>><span><%= opt.label %></span></label><% }); %></div></div>
+<div class="field"><span class="field-label">Mood today</span><div class="mood-grid"><% moodCuisineOptions.forEach(function(opt) { %><label class="mood-chip"><input type="radio" name="moodCuisine" value="<%= opt.value %>" <%= opt.value === (profile.moodCuisine || 'any') ? 'checked' : '' %>><span><%= opt.label %></span></label><% }); %></div></div>
 <label class="field">Budget (max $)<input name="budget" type="number" min="1" max="100" step="1" value="<%= profile.budget %>"></label>
 <label class="field">Walking distance (max min)<input name="maxDistanceMinutes" type="number" min="1" max="60" step="1" value="<%= profile.maxDistanceMinutes %>"></label>
 <input type="hidden" name="notifications" value="<%= profile.notifications ? 'on' : '' %>">
