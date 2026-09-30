@@ -1,0 +1,135 @@
+<%- include('partials/start', { title: merchant.merchantName + ' · Business Report', mode: 'merchant' }) %>
+<p class="eyebrow">Business Report</p>
+<h1><%= merchant.merchantName %></h1>
+<form method="GET" action="/merchant/report" class="merchant-picker">
+  <label class="field">Merchant<select name="merchantId"><% merchants.forEach(function(item) { %><option value="<%= item.id %>" <%= item.id === merchant.id ? 'selected' : '' %>><%= item.merchantName %></option><% }); %></select></label>
+  <button class="text-button" type="submit">Switch</button>
+</form>
+<section class="card kpi-card">
+  <p class="eyebrow">Today at a Glance</p>
+  <div class="roi-summary">
+    <div class="roi-stat"><small>Revenue today</small><b>$<%= kpis.todayRevenue %></b></div>
+    <div class="roi-stat"><small>Transactions</small><b><%= kpis.todayTransactions %></b></div>
+    <div class="roi-stat"><small>Avg basket</small><b>$<%= kpis.avgBasketSize %></b></div>
+    <div class="roi-stat"><small>Peak hour</small><b><%= kpis.peakHour %></b></div>
+  </div>
+</section>
+<section class="card">
+  <p class="eyebrow">Live transactions <span class="live-dot" aria-hidden="true"></span></p>
+  <div class="payment-feed" id="report-live-feed">
+    <% if (recentPayments.length) { recentPayments.forEach(function(p) { %>
+    <div class="feed-row">
+      <span class="feed-source feed-source--<%= p.source.toLowerCase().replace('_','-') %>"><%= p.source === 'SMART_MATCH' ? 'Smart Match' : p.source === 'SHARED_VOUCH' ? 'Shared Vouch' : 'Direct Scan' %></span>
+      <span class="feed-item"><%= p.itemName || 'In-store purchase' %></span>
+      <span class="feed-meta"><%= p.date %> · <%= p.time %></span>
+      <b><%= p.displayAmount %></b>
+    </div>
+    <% }); } else { %>
+    <div class="feed-row feed-placeholder"><span class="feed-item">Waiting for live transactions…</span></div>
+    <% } %>
+  </div>
+</section>
+<section class="card trend-chart-card">
+  <p class="eyebrow">Transactions by hour · typical day</p>
+  <div class="trend-chart trend-chart--hourly">
+    <% chartHours.forEach(function(h) { %>
+    <div class="trend-col">
+      <span class="trend-count"><%= h.count || '' %></span>
+      <div class="trend-bar" style="height:<%= h.height %>%"></div>
+      <span class="trend-date"><%= h.label %></span>
+    </div>
+    <% }); %>
+  </div>
+</section>
+<section class="card trend-chart-card">
+  <p class="eyebrow">Daily payments · last 7 days</p>
+  <div class="trend-chart">
+    <% weeklyData.forEach(function(d) { %>
+    <div class="trend-col">
+      <div class="trend-bar" style="height:<%= d.height %>%"></div>
+      <span class="trend-date"><%= d.label %></span>
+    </div>
+    <% }); %>
+  </div>
+</section>
+<% var _rMax = Math.max(acquisitionData.smartMatch.count, acquisitionData.sharedVouch.count, acquisitionData.directScan.count, 1); %>
+<section class="card channel-chart">
+  <p class="eyebrow">Payments by channel · all time</p>
+  <div class="chart-bars">
+    <div class="chart-row"><div class="chart-label-row"><b>Smart Match</b><small><%= acquisitionData.smartMatch.count %> payments · <%= acquisitionData.smartMatch.pct %>%</small></div><div class="chart-track"><div class="chart-fill chart-fill--smart" style="width:<%= Math.round(100 * acquisitionData.smartMatch.count / _rMax) %>%"></div></div></div>
+    <div class="chart-row"><div class="chart-label-row"><b>Shared Vouch</b><small><%= acquisitionData.sharedVouch.count %> payments · <%= acquisitionData.sharedVouch.pct %>%</small></div><div class="chart-track"><div class="chart-fill chart-fill--vouch" style="width:<%= Math.round(100 * acquisitionData.sharedVouch.count / _rMax) %>%"></div></div></div>
+    <div class="chart-row"><div class="chart-label-row"><b>Direct Scan</b><small><%= acquisitionData.directScan.count %> payments · <%= acquisitionData.directScan.pct %>%</small></div><div class="chart-track"><div class="chart-fill chart-fill--direct" style="width:<%= Math.round(100 * acquisitionData.directScan.count / _rMax) %>%"></div></div></div>
+  </div>
+</section>
+<section class="card">
+  <p class="eyebrow">Busiest periods · last 4 weeks</p>
+  <div class="heatmap-wrap">
+    <div class="heatmap-header">
+      <span class="heatmap-day-spacer"></span>
+      <div class="heatmap-hour-labels"><% heatmapHourLabels.forEach(function(h) { %><span><%= h %></span><% }); %></div>
+    </div>
+    <div class="heatmap-grid">
+      <% heatmapData.forEach(function(row) { %>
+      <div class="heatmap-row">
+        <span class="heatmap-day"><%= row.day %></span>
+        <% row.cells.forEach(function(cell) { %>
+        <div class="heatmap-cell <%= cell.cls %>" title="<%= row.day %> <%= cell.hourLabel %>: <%= cell.intensity < 20 ? 'Quiet' : cell.intensity < 45 ? 'Moderate' : cell.intensity < 70 ? 'Busy' : 'Peak' %>"></div>
+        <% }); %>
+      </div>
+      <% }); %>
+    </div>
+    <div class="heatmap-legend">
+      <span>Quiet</span>
+      <div class="heat-legend-swatch heat-0"></div>
+      <div class="heat-legend-swatch heat-1"></div>
+      <div class="heat-legend-swatch heat-2"></div>
+      <div class="heat-legend-swatch heat-3"></div>
+      <div class="heat-legend-swatch heat-4"></div>
+      <span>Peak</span>
+    </div>
+  </div>
+</section>
+<p class="report-section-heading">AI Insights</p>
+<div class="insights-list">
+  <% insights.forEach(function(ins) { %>
+  <section class="card insight-card">
+    <div class="insight-head">
+      <span class="insight-icon" aria-hidden="true"><%= ins.icon %></span>
+      <div>
+        <p class="insight-headline"><%= ins.headline %></p>
+        <span class="insight-badge insight-badge--<%= ins.confidence.toLowerCase() %>"><%= ins.confidence %> confidence</span>
+      </div>
+    </div>
+    <p class="insight-detail"><%= ins.detail %></p>
+  </section>
+  <% }); %>
+</div>
+<a class="text-button" href="/merchant?merchantId=<%= encodeURIComponent(merchant.id) %>&tab=results">← Back to Dashboard</a>
+<script>
+(function() {
+  var pool = <%- liveFeedPool %>;
+  var feed = document.getElementById('report-live-feed');
+  if (!feed || !pool.length) return;
+  var srcLabel = { SMART_MATCH: 'Smart Match', SHARED_VOUCH: 'Shared Vouch', DIRECT_SCAN: 'Direct Scan' };
+  var srcCls   = { SMART_MATCH: 'smart-match', SHARED_VOUCH: 'shared-vouch', DIRECT_SCAN: 'direct-scan' };
+  function now() {
+    var d = new Date(), h = d.getHours(), m = d.getMinutes();
+    return (h % 12 || 12) + ':' + (m < 10 ? '0' + m : m) + (h < 12 ? ' am' : ' pm');
+  }
+  function addRow() {
+    var tx = pool[Math.floor(Math.random() * pool.length)];
+    var row = document.createElement('div');
+    row.className = 'feed-row feed-new';
+    row.innerHTML = '<span class="feed-source feed-source--' + (srcCls[tx.source] || 'direct-scan') + '">' + (srcLabel[tx.source] || tx.source) + '</span><span class="feed-item">' + (tx.item || 'In-store purchase') + '</span><span class="feed-meta">' + now() + '</span><b>' + tx.amount + '</b>';
+    var ph = feed.querySelector('.feed-placeholder');
+    if (ph) ph.remove();
+    feed.insertBefore(row, feed.firstChild);
+    var rows = feed.querySelectorAll('.feed-row');
+    if (rows.length > 10) rows[rows.length - 1].remove();
+    setTimeout(function() { row.classList.remove('feed-new'); }, 400);
+  }
+  setTimeout(addRow, 2500);
+  setInterval(addRow, 9000 + Math.floor(Math.random() * 6000));
+})();
+</script>
+<%- include('partials/end', { active: 'report', merchantNav: { merchantId: merchant.id } }) %>
