@@ -31,7 +31,7 @@
 </section>
 <section class="card trend-chart-card">
   <p class="eyebrow">Transactions by hour · typical day</p>
-  <div class="trend-chart trend-chart--hourly">
+  <div class="trend-chart--hourly-wrap"><div class="trend-chart trend-chart--hourly">
     <% chartHours.forEach(function(h) { %>
     <div class="trend-col">
       <span class="trend-count"><%= h.count || '' %></span>
@@ -39,7 +39,7 @@
       <span class="trend-date"><%= h.label %></span>
     </div>
     <% }); %>
-  </div>
+  </div></div>
 </section>
 <section class="card trend-chart-card">
   <p class="eyebrow">Daily payments · last 7 days</p>

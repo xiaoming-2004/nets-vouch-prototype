@@ -640,8 +640,9 @@ button:disabled { opacity:.55; cursor:wait; }
 .feed-placeholder { color:var(--text-3); font-style:italic; }
 
 /* Hourly breakdown chart: taller + count label */
-.trend-chart--hourly { height:110px; gap:2px; overflow-x:hidden; }
-.trend-chart--hourly .trend-col:nth-child(even) .trend-date { visibility:hidden; }
+.trend-chart--hourly-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; margin:0 -2px; padding:0 2px 4px; }
+.trend-chart--hourly { height:110px; gap:4px; min-width:max-content; }
+.trend-chart--hourly .trend-col { min-width:20px; flex:none; }
 .trend-count { font-size:9px; color:var(--text-3); line-height:1; min-height:11px; }
 
 /* Heatmap */
