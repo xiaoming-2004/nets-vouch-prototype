@@ -77,6 +77,17 @@ function campaign(id) {
   return getMerchantCampaigns().find(function(item) { return item.merchantId === id; });
 }
 
+// Reward amounts and minimum spends are per-merchant campaign configuration a merchant can edit, so
+// a test that asserts literal dollar figures pins the campaign it depends on instead of inheriting
+// whatever the merchant catalogue currently ships.
+function pinCampaign(merchantId, rewardAmount, minimumEligibleSpend) {
+  const c = campaign(merchantId);
+  assert.ok(c, 'no campaign for ' + merchantId);
+  c.rewardAmount = rewardAmount;
+  c.minimumEligibleSpend = minimumEligibleSpend;
+  return c;
+}
+
 async function startScan(v, merchantId) {
   const response = await v.request('/scan', { merchantId: merchantId });
   assert.match(response.location, /^\/scan\/payment/);
@@ -127,8 +138,7 @@ test('scan and payment need a valid merchant and current attempt; no implicit me
 });
 
 test('minimum spend and $1 NETS floor use exact cents', async function() {
-  const c = campaign('felicia-chicken-rice');
-  c.minimumEligibleSpend = 10;
+  const c = pinCampaign('felicia-chicken-rice', 0.50, 10);
   for (const [amount, rewarded] of [['9.99', false], ['10.00', true], ['10.01', true]]) {
     const v = visitor();
     const paid = await pay(v, 'felicia-chicken-rice', amount, false);
@@ -147,8 +157,7 @@ test('minimum spend and $1 NETS floor use exact cents', async function() {
 });
 
 test('exact NETS-paid eligibility boundary is $0.99 / $1.00 / $1.01', async function() {
-  const c = campaign('green-bowl');
-  c.minimumEligibleSpend = 0;
+  const c = pinCampaign('green-bowl', 0.50, 0);
   for (const [amount, rewarded] of [['0.99', false], ['1.00', true], ['1.01', true]]) {
     const v = visitor();
     const tx = (await pay(v, 'green-bowl', amount)).transaction;
@@ -160,7 +169,7 @@ test('exact NETS-paid eligibility boundary is $0.99 / $1.00 / $1.01', async func
 });
 
 test('exhausted budget and rewarded-payment cap block rewards, not successful payments', async function() {
-  const c = campaign('green-bowl');
+  const c = pinCampaign('green-bowl', 0.50, 5.00);
   c.maxRewardBudgetPerDay = 0.50;
   const a = visitor();
   const first = await pay(a, 'green-bowl', '6.00');
@@ -183,6 +192,8 @@ test('exhausted budget and rewarded-payment cap block rewards, not successful pa
 });
 
 test('same-day normal reward is once per merchant, but credit remains usable', async function() {
+  pinCampaign('green-bowl', 0.50, 5.00);
+  pinCampaign('felicia-chicken-rice', 0.50, 5.00);
   const v = visitor();
   const first = await pay(v, 'green-bowl', '5.00');
   assert.equal(first.transaction.merchantRewardEarned, 0.50);
@@ -200,6 +211,8 @@ test('same-day normal reward is once per merchant, but credit remains usable', a
 });
 
 test('payment and Vouch replay are idempotent; skip is final', async function() {
+  pinCampaign('green-bowl', 0.50, 5.00);
+  pinCampaign('felicia-chicken-rice', 0.50, 5.00);
   const v = visitor();
   const scan = await startScan(v, 'green-bowl');
   const form = { journeyId: scan.id, amount: '6.00' };
@@ -266,6 +279,7 @@ test('Singapore midnight resets earning eligibility without deleting accumulated
     static now() { return clock; }
   };
   try {
+    pinCampaign('green-bowl', 0.50, 5.00);
     const v = visitor();
     const first = await pay(v, 'green-bowl', '5.00');
     assert.equal(first.transaction.merchantRewardEarned, 0.50);

@@ -1,0 +1,160 @@
+<%- include('partials/start', { title: merchant.merchantName + ' · Business Report', mode: 'merchant' }) %>
+<p class="eyebrow">Business Report</p>
+<h1><%= merchant.merchantName %></h1>
+<form method="GET" action="/merchant/report" class="merchant-picker">
+  <label class="field">Merchant<select name="merchantId"><% merchants.forEach(function(item) { %><option value="<%= item.id %>" <%= item.id === merchant.id ? 'selected' : '' %>><%= item.merchantName %></option><% }); %></select></label>
+  <button class="text-button" type="submit">Switch</button>
+</form>
+
+<p class="report-note">This report separates two kinds of figure. <strong>Live demo</strong> figures come only from payments this prototype actually recorded since the last Reset Demo. <strong>Illustrative baseline</strong> figures are fixed sample data shipped with the prototype so the charts have shape during a demonstration — they did not happen today and are not measurements.</p>
+
+<section class="card kpi-card">
+  <p class="eyebrow">Live demo activity · since last Reset Demo</p>
+  <div class="roi-summary">
+    <div class="roi-stat"><small>Payments recorded</small><b><%= liveKpis.payments %></b></div>
+    <div class="roi-stat"><small>Gross sales</small><b>$<%= liveKpis.sales %></b></div>
+    <div class="roi-stat"><small>Avg basket</small><b><%= liveKpis.avgBasket ? '$' + liveKpis.avgBasket : '—' %></b></div>
+    <div class="roi-stat"><small>Merchant reward spend</small><b>$<%= liveKpis.rewardCost %></b></div>
+  </div>
+  <% if (liveKpis.payments === 0) { %>
+  <p class="report-empty">No payments have been recorded through this prototype yet. Complete a payment in the customer app and these figures will fill in.</p>
+  <% } else { %>
+  <p class="report-caption">Illustrative success fees accrued: $<%= liveKpis.successFees %>. Fees are simulated, not billed.</p>
+  <% } %>
+</section>
+
+<section class="card">
+  <p class="eyebrow">Live demo payments</p>
+  <div class="payment-feed" id="report-live-feed">
+    <% if (recentPayments.length) { recentPayments.forEach(function(p) { %>
+    <div class="feed-row">
+      <span class="feed-source feed-source--<%= p.source.toLowerCase().replace('_','-') %>"><%= p.source === 'SMART_MATCH' ? 'Smart Match' : p.source === 'SHARED_VOUCH' ? 'Shared Vouch' : 'Direct Scan' %></span>
+      <span class="feed-item"><%= p.itemName || 'In-store purchase' %></span>
+      <span class="feed-meta"><%= p.date %> · <%= p.time %></span>
+      <b><%= p.displayAmount %></b>
+    </div>
+    <% }); } else { %>
+    <div class="feed-row feed-placeholder"><span class="feed-item">No payments recorded yet — a completed payment will appear here.</span></div>
+    <% } %>
+  </div>
+  <p class="report-caption">Amounts shown are the NETS-paid portion of each recorded payment. Only payments made through this prototype appear here.</p>
+</section>
+
+<% var _lMax = Math.max(liveAcquisition.smartMatch.count, liveAcquisition.sharedVouch.count, liveAcquisition.directScan.count, 1); %>
+<section class="card channel-chart">
+  <p class="eyebrow">Live demo payments by channel</p>
+  <% if (liveAcquisition.total === 0) { %>
+  <p class="report-empty">No payments recorded yet, so there is no live channel mix to show.</p>
+  <% } else { %>
+  <div class="chart-bars">
+    <div class="chart-row"><div class="chart-label-row"><b>Smart Match</b><small><%= liveAcquisition.smartMatch.count %> payments · <%= liveAcquisition.smartMatch.pct %>%</small></div><div class="chart-track"><div class="chart-fill chart-fill--smart" style="width:<%= Math.round(100 * liveAcquisition.smartMatch.count / _lMax) %>%"></div></div></div>
+    <div class="chart-row"><div class="chart-label-row"><b>Shared Vouch</b><small><%= liveAcquisition.sharedVouch.count %> payments · <%= liveAcquisition.sharedVouch.pct %>%</small></div><div class="chart-track"><div class="chart-fill chart-fill--vouch" style="width:<%= Math.round(100 * liveAcquisition.sharedVouch.count / _lMax) %>%"></div></div></div>
+    <div class="chart-row"><div class="chart-label-row"><b>Direct Scan</b><small><%= liveAcquisition.directScan.count %> payments · <%= liveAcquisition.directScan.pct %>%</small></div><div class="chart-track"><div class="chart-fill chart-fill--direct" style="width:<%= Math.round(100 * liveAcquisition.directScan.count / _lMax) %>%"></div></div></div>
+  </div>
+  <% } %>
+</section>
+
+<p class="report-section-heading">Illustrative baseline</p>
+<p class="report-note report-note--demo">Everything below is fixed sample data for demonstration only. It is not derived from any payment and does not describe today.</p>
+
+<% if (baselineKpis) { %>
+<section class="card kpi-card is-illustrative">
+  <p class="eyebrow">Illustrative baseline · sample totals</p>
+  <div class="roi-summary">
+    <div class="roi-stat"><small>Sample payments</small><b><%= baselineKpis.payments %></b></div>
+    <div class="roi-stat"><small>Sample gross sales</small><b>$<%= baselineKpis.sales %></b></div>
+    <div class="roi-stat"><small>Sample avg basket</small><b><%= baselineKpis.avgBasket ? '$' + baselineKpis.avgBasket : '—' %></b></div>
+    <div class="roi-stat"><small>Sample busiest hour</small><b><%= baselineKpis.peakHour %></b></div>
+  </div>
+  <p class="report-caption">Sample data · not a measurement of this outlet.</p>
+</section>
+<% } %>
+
+<section class="card trend-chart-card is-illustrative">
+  <p class="eyebrow">Illustrative baseline · transactions by hour on a typical day</p>
+  <div class="trend-chart--hourly-wrap"><div class="trend-chart trend-chart--hourly">
+    <% chartHours.forEach(function(h) { %>
+    <div class="trend-col">
+      <span class="trend-count"><%= h.count || '' %></span>
+      <div class="trend-bar" style="height:<%= h.height %>%"></div>
+      <span class="trend-date"><%= h.label %></span>
+    </div>
+    <% }); %>
+  </div></div>
+  <p class="report-caption">Sample distribution of an illustrative daily average<% if (baselineKpis) { %> (<%= baselineKpis.dailyAverage %> payments/day)<% } %>. The prototype keeps no per-hour history, so this is not recorded activity.</p>
+</section>
+
+<section class="card trend-chart-card is-illustrative">
+  <p class="eyebrow">Illustrative baseline · payments across seven sample days</p>
+  <div class="trend-chart">
+    <% weeklyData.forEach(function(d) { %>
+    <div class="trend-col">
+      <div class="trend-bar" style="height:<%= d.height %>%"></div>
+      <span class="trend-date"><%= d.label %></span>
+    </div>
+    <% }); %>
+  </div>
+  <p class="report-caption">Sample series with no dates attached. The prototype keeps no dated history, so these are not the last seven days.</p>
+</section>
+
+<% if (baselineAcquisition) { %>
+<% var _bMax = Math.max(baselineAcquisition.smartMatch.count, baselineAcquisition.sharedVouch.count, baselineAcquisition.directScan.count, 1); %>
+<section class="card channel-chart is-illustrative">
+  <p class="eyebrow">Illustrative baseline · sample payments by channel</p>
+  <div class="chart-bars">
+    <div class="chart-row"><div class="chart-label-row"><b>Smart Match</b><small><%= baselineAcquisition.smartMatch.count %> payments · <%= baselineAcquisition.smartMatch.pct %>%</small></div><div class="chart-track"><div class="chart-fill chart-fill--smart" style="width:<%= Math.round(100 * baselineAcquisition.smartMatch.count / _bMax) %>%"></div></div></div>
+    <div class="chart-row"><div class="chart-label-row"><b>Shared Vouch</b><small><%= baselineAcquisition.sharedVouch.count %> payments · <%= baselineAcquisition.sharedVouch.pct %>%</small></div><div class="chart-track"><div class="chart-fill chart-fill--vouch" style="width:<%= Math.round(100 * baselineAcquisition.sharedVouch.count / _bMax) %>%"></div></div></div>
+    <div class="chart-row"><div class="chart-label-row"><b>Direct Scan</b><small><%= baselineAcquisition.directScan.count %> payments · <%= baselineAcquisition.directScan.pct %>%</small></div><div class="chart-track"><div class="chart-fill chart-fill--direct" style="width:<%= Math.round(100 * baselineAcquisition.directScan.count / _bMax) %>%"></div></div></div>
+  </div>
+  <p class="report-caption">Sample data · kept separate from the live channel mix above and never added to it.</p>
+</section>
+<% } %>
+
+<section class="card is-illustrative">
+  <p class="eyebrow">Illustrative baseline · busiest periods on a typical week</p>
+  <div class="heatmap-wrap">
+    <div class="heatmap-header">
+      <span class="heatmap-day-spacer"></span>
+      <div class="heatmap-hour-labels"><% heatmapHourLabels.forEach(function(h) { %><span><%= h %></span><% }); %></div>
+    </div>
+    <div class="heatmap-grid">
+      <% heatmapData.forEach(function(row) { %>
+      <div class="heatmap-row">
+        <span class="heatmap-day"><%= row.day %></span>
+        <% row.cells.forEach(function(cell) { %>
+        <div class="heatmap-cell <%= cell.cls %>" title="<%= row.day %> <%= cell.hourLabel %>: <%= cell.intensity < 20 ? 'Quiet' : cell.intensity < 45 ? 'Moderate' : cell.intensity < 70 ? 'Busy' : 'Peak' %> (sample)"></div>
+        <% }); %>
+      </div>
+      <% }); %>
+    </div>
+    <div class="heatmap-legend">
+      <span>Quiet</span>
+      <div class="heat-legend-swatch heat-0"></div>
+      <div class="heat-legend-swatch heat-1"></div>
+      <div class="heat-legend-swatch heat-2"></div>
+      <div class="heat-legend-swatch heat-3"></div>
+      <div class="heat-legend-swatch heat-4"></div>
+      <span>Peak</span>
+    </div>
+  </div>
+  <p class="report-caption">Sample weekday shape, not four weeks of measured activity. The prototype keeps no weekday history.</p>
+</section>
+
+<p class="report-section-heading">Demo observations · rule-based</p>
+<p class="report-note">These are fixed if/else rules in the prototype reading the figures already shown above. They are not model output and not predictions.</p>
+<div class="insights-list">
+  <% insights.forEach(function(ins) { %>
+  <section class="card insight-card">
+    <div class="insight-head">
+      <span class="insight-icon" aria-hidden="true"><%= ins.icon %></span>
+      <div>
+        <p class="insight-headline"><%= ins.headline %></p>
+        <span class="insight-badge insight-badge--basis"><%= ins.basis %></span>
+      </div>
+    </div>
+    <p class="insight-detail"><%= ins.detail %></p>
+  </section>
+  <% }); %>
+</div>
+<a class="text-button" href="/merchant?merchantId=<%= encodeURIComponent(merchant.id) %>&tab=results">← Back to Dashboard</a>
+<%- include('partials/end', { active: 'report', merchantNav: { merchantId: merchant.id } }) %>

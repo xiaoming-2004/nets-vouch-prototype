@@ -3,17 +3,44 @@
 <form method="GET" action="/merchant" class="merchant-picker"><input type="hidden" name="tab" value="<%= tab %>"><label class="field">Merchant<select name="merchantId"><% merchants.forEach(function(item) { %><option value="<%= item.id %>" <%= item.id === merchant.id ? 'selected' : '' %>><%= item.merchantName %></option><% }); %></select></label><button class="text-button" type="submit">Switch</button></form>
 
 <% if (tab === 'campaign') { %>
-<p class="reward"><%= availability.title %></p><p><%= Math.max(0, campaign.maxRewardedPaymentsPerDay - campaign.redemptionsToday) %> rewarded payments remaining today · $<%= Math.max(0, campaign.maxRewardBudgetPerDay - campaign.rewardBudgetSpentToday).toFixed(2) %> reward budget remaining today</p>
-<% if (error) { %><p class="error">Check the campaign values and try again.</p><% } %>
+<div class="campaign-status-row">
+  <span class="campaign-badge campaign-badge--<%= campaign.status === 'ACTIVE' ? 'active' : 'inactive' %>"><%= availability.title %></span>
+  <span class="campaign-capacity"><%= Math.max(0, campaign.maxRewardedPaymentsPerDay - campaign.redemptionsToday) %> slots · $<%= Math.max(0, campaign.maxRewardBudgetPerDay - campaign.rewardBudgetSpentToday).toFixed(2) %> budget left today</span>
+</div>
+<% if (error === 'label') { %><p class="error">Reward labels must describe a Vouch Credit (a cash balance usable only at your outlet) and cannot promise a free item or repeat the amount. Nothing was saved.</p><% } else if (error) { %><p class="error">Check the campaign values and try again.</p><% } %>
+<% var _isCustomLabel = rewardOptions.indexOf(campaign.rewardLabel) === -1; %>
 <form method="POST" action="/merchant/offer" class="card form-stack">
 <input type="hidden" name="merchantId" value="<%= merchant.id %>">
-<label class="field">Reward per qualifying payment ($)<input name="rewardAmount" type="number" min="0" max="50" step=".01" value="<%= campaign.rewardAmount.toFixed(2) %>" required></label>
+<fieldset class="field">
+<legend class="field-label" id="rewardTypeLabel">Reward type</legend>
+<small class="field-hint" id="rewardTypeHint">Customers earn a merchant-funded Vouch Credit: a cash balance usable only at your outlet on a later NETS payment. There is no item redemption in this prototype, so a label may only say what the credit is towards.</small>
+<div class="mood-grid mood-grid--2 reward-chip-grid" role="radiogroup" aria-labelledby="rewardTypeLabel" aria-describedby="rewardTypeHint">
+<% rewardOptions.forEach(function(opt) { %><label class="mood-chip"><input type="radio" name="rewardLabel" value="<%= opt %>" <%= campaign.rewardLabel === opt ? 'checked' : '' %>><span><%= rewardCreditText(campaign.rewardAmount, opt) %></span></label><% }); %>
+<label class="mood-chip"><input type="radio" name="rewardLabel" value="__custom__" id="rewardCustomRadio" aria-controls="rewardCustomInput" <%= _isCustomLabel ? 'checked' : '' %>><span>Custom…</span></label>
+</div>
+<label class="visually-hidden" for="rewardCustomInput">Custom reward label — must describe a Vouch Credit</label>
+<input type="text" name="rewardLabelCustom" id="rewardCustomInput" class="reward-custom-input" placeholder="e.g. Vouch Credit towards a wonton side" maxlength="50" aria-describedby="rewardTypeHint" value="<%= _isCustomLabel ? campaign.rewardLabel : '' %>" style="<%= _isCustomLabel ? '' : 'display:none' %>">
+</fieldset>
+<label class="field">Reward value ($)<input name="rewardAmount" type="number" min="0" max="50" step=".01" value="<%= campaign.rewardAmount.toFixed(2) %>" required></label>
 <label class="field">Minimum qualifying spend ($)<input name="minimumEligibleSpend" type="number" min="0" max="1000" step=".01" value="<%= campaign.minimumEligibleSpend.toFixed(2) %>" required></label>
 <label class="field">Maximum rewarded payments/day<input name="maxRewardedPaymentsPerDay" type="number" min="1" max="1000" value="<%= campaign.maxRewardedPaymentsPerDay %>" required></label>
 <label class="field">Maximum reward budget/day ($)<input name="maxRewardBudgetPerDay" type="number" min="0" max="100000" step=".01" value="<%= campaign.maxRewardBudgetPerDay.toFixed(2) %>" required></label>
-<label class="field">Start<input name="startTime" type="time" value="<%= campaign.startTime %>" required></label><label class="field">End<input name="endTime" type="time" value="<%= campaign.endTime %>" required></label>
+<div class="time-row"><label class="field">Start<input name="startTime" type="time" value="<%= campaign.startTime %>" required></label><label class="field">End<input name="endTime" type="time" value="<%= campaign.endTime %>" required></label></div>
 <label class="field">Status<select name="status"><option value="ACTIVE" <%= campaign.status === 'ACTIVE' ? 'selected' : '' %>>Active</option><option value="INACTIVE" <%= campaign.status === 'INACTIVE' ? 'selected' : '' %>>Inactive</option></select></label>
 <button class="button" type="submit">Save campaign</button></form>
+<script>
+(function() {
+  var radios = document.querySelectorAll('input[name="rewardLabel"]');
+  var inp = document.getElementById('rewardCustomInput');
+  if (!inp) return;
+  radios.forEach(function(r) {
+    r.addEventListener('change', function() {
+      inp.style.display = r.value === '__custom__' ? 'block' : 'none';
+      if (r.value !== '__custom__') inp.value = '';
+    });
+  });
+})();
+</script>
 <section class="card qr-card">
 <p class="eyebrow">Your NETS QR code</p>
 <p>Display this at your counter. Customers scan it to pay with NETS Vouch.</p>
@@ -33,13 +60,12 @@
 </dl>
 <small>Referral rewards are included within the reward budget. NETS success fee: $<%= campaign.platformFeePerAttributedPayment.toFixed(2) %> per Smart Match or Shared Vouch payment. Illustrative prototype pricing only.</small>
 </section>
-
 <% } else { %>
 <p class="eyebrow">Illustrative Prototype Data · sample history, not Open House activity</p>
 <% if (illustrativeMetrics && illustrativeMetrics.dailyPayments.length) { %>
-<% var _trendMax = Math.max.apply(null, illustrativeMetrics.dailyPayments) || 1; var _trendDates = ['14 Sep','15 Sep','16 Sep','17 Sep','18 Sep','19 Sep','20 Sep']; %>
+<% var _trendMax = Math.max.apply(null, illustrativeMetrics.dailyPayments) || 1; var _trendDates = ['Day 1','Day 2','Day 3','Day 4','Day 5','Day 6','Day 7']; %>
 <section class="card trend-chart-card">
-<p class="eyebrow">Sample daily payments · last 7 days</p>
+<p class="eyebrow">Sample daily payments · seven sample days</p>
 <div class="trend-chart">
 <% illustrativeMetrics.dailyPayments.forEach(function(v, i) { %><div class="trend-col"><div class="trend-bar" style="height:<%= Math.round(100 * v / _trendMax) %>%"></div><span class="trend-date"><%= _trendDates[i] || '' %></span></div><% }); %>
 </div>
@@ -99,134 +125,18 @@
     </div>
   </div>
 </section>
-
-<%
-  var shown = m.smartMatchShown || 0;
-  var accepted = m.smartMatchAccepted || 0;
-  var paid = m.smartMatchPayments || 0;
-  var accPct = shown ? Math.round((accepted / shown) * 100) : 0;
-  var paidPct = shown ? Math.round((paid / shown) * 100) : 0;
-%>
-<div class="card" style="margin-bottom: 16px;">
-  <h2 style="font-size: 15px; margin-bottom: 14px; font-weight: 800; color: var(--navy);">Smart Match Funnel</h2>
-  <div style="display: grid; gap: 10px;">
-    <div>
-      <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
-        <span>1. Recommended by AI</span>
-        <strong><%= shown %></strong>
-      </div>
-      <div style="height: 8px; width: 100%; background: var(--line); border-radius: 999px; overflow: hidden;">
-        <div style="height: 100%; width: 100%; background: var(--navy); border-radius: 999px;"></div>
-      </div>
-    </div>
-    <div>
-      <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
-        <span>2. Accepted by Student</span>
-        <strong><%= accepted %> <small style="color: var(--muted);">(<%= accPct %>%)</small></strong>
-      </div>
-      <div style="height: 8px; width: 100%; background: var(--line); border-radius: 999px; overflow: hidden;">
-        <div style="height: 100%; width: <%= accPct %>%; background: #165585; border-radius: 999px;"></div>
-      </div>
-    </div>
-    <div>
-      <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
-        <span>3. Terminal Payment Settled</span>
-        <strong><%= paid %> <small style="color: var(--green); font-weight: 700;">(<%= paidPct %>%)</small></strong>
-      </div>
-      <div style="height: 8px; width: 100%; background: var(--line); border-radius: 999px; overflow: hidden;">
-        <div style="height: 100%; width: <%= paidPct %>%; background: var(--green); border-radius: 999px;"></div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- Detailed Raw Metrics Section -->
-<h2 style="font-size: 15px; margin: 24px 0 12px; font-weight: 800; color: var(--navy);">Detailed Metrics</h2>
-<dl class="receipt-lines card">
-  <div><dt>Smart Match shown</dt><dd><%= campaign.metrics.smartMatchShown %></dd></div>
-  <div><dt>Smart Match accepted</dt><dd><%= campaign.metrics.smartMatchAccepted %></dd></div>
-  <div><dt>Smart Match payments</dt><dd><%= campaign.metrics.smartMatchPayments %></dd></div>
-  <div><dt>Smart Match sales</dt><dd>$<%= campaign.metrics.smartMatchSales.toFixed(2) %></dd></div>
-  <div><dt>Shared Vouch claims</dt><dd><%= campaign.metrics.sharedVouchClaims %></dd></div>
-  <div><dt>Shared Vouch payments</dt><dd><%= campaign.metrics.sharedVouchPayments %></dd></div>
-  <div><dt>Shared Vouch sales</dt><dd>$<%= campaign.metrics.sharedVouchSales.toFixed(2) %></dd></div>
-  <div><dt>Shared Vouch conversion</dt><dd><%= campaign.metrics.sharedVouchClaims ? Math.round(100 * campaign.metrics.sharedVouchPayments / campaign.metrics.sharedVouchClaims) : 0 %>%</dd></div>
-  <div><dt>Direct Scan payments</dt><dd><%= campaign.metrics.directScanPayments %></dd></div>
-  <div><dt>Direct Scan sales</dt><dd>$<%= campaign.metrics.directScanSales.toFixed(2) %></dd></div>
-  <div><dt>QR scans</dt><dd><%= campaign.metrics.scans %></dd></div>
-  <div><dt>Completed payments</dt><dd><%= campaign.metrics.payments %></dd></div>
-  <div><dt>Merchant reward spend</dt><dd>$<%= campaign.metrics.rewardCost.toFixed(2) %></dd></div>
-  <div><dt>Illustrative success fees accrued</dt><dd>$<%= campaign.platformFeeAccrued.toFixed(2) %></dd></div>
-  <div><dt>Smart Match conversion</dt><dd><%= campaign.metrics.smartMatchShown ? Math.round(100 * campaign.metrics.smartMatchPayments / campaign.metrics.smartMatchShown) : 0 %>%</dd></div>
-</dl>
-
 <% if (recentPayments && recentPayments.length) { %>
 <section class="card">
 <p class="eyebrow">Recent live payments · NETS paid</p>
 <div class="payment-feed">
+<% if (recentPayments && recentPayments.length) { %>
 <% recentPayments.forEach(function(p) { %><div class="feed-row"><span class="feed-source feed-source--<%= p.source.toLowerCase().replace('_','-') %>"><%= p.source === 'SMART_MATCH' ? 'Smart Match' : p.source === 'SHARED_VOUCH' ? 'Shared Vouch' : 'Direct Scan' %></span><span class="feed-item"><%= p.itemName || 'In-store purchase' %></span><span class="feed-meta"><%= p.date %> · <%= p.time %></span><b><%= p.displayAmount %></b></div><% }); %>
+<% } else { %>
+<div class="feed-row feed-placeholder"><span class="feed-item">No live payments yet — activity will appear here automatically.</span></div>
+<% } %>
 </div>
 </section>
 <% } %>
-
-<!-- START: PDPA-Compliant Export & Print Controls -->
-<!-- Load SheetJS for native client-side Excel generation (Zero server-side data leakage) -->
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-
-<div style="display: flex; gap: 8px; margin: 20px 0;">
-  <button type="button" class="button" onclick="window.print()" style="background: var(--navy); flex: 1; min-height: 44px; font-size: 13px; padding: 0 8px;">
-    🖨️ Print
-  </button>
-  <button type="button" class="button" onclick="exportCSV()" style="background: var(--muted); flex: 1; min-height: 44px; font-size: 13px; padding: 0 8px;">
-    📊 CSV
-  </button>
-  <button type="button" class="button" onclick="exportExcel()" style="background: #107c41; flex: 1; min-height: 44px; font-size: 13px; padding: 0 8px;">
-    📗 Excel
-  </button>
-</div>
-
-<script>
-// Grab the server-rendered payments feed securely
-const payments = <%- JSON.stringify(typeof recentPayments !== 'undefined' ? recentPayments : []) %>;
-const merchantFilename = "<%= typeof merchant !== 'undefined' && merchant ? merchant.id : 'merchant' %>_transactions";
-
-function exportCSV() {
-  // PDPA COMPLIANCE GUARD: Only financial metadata, zero user PII.
-  const rows = [["Date", "Time", "Amount", "Acquisition Source", "Item/Category"]];
-  
-  payments.forEach(function(p) {
-    rows.push([p.date, p.time, p.displayAmount, p.source, p.itemName || 'N/A']);
-  });
-  
-  const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.join(",")).join("\n");
-  const encodedUri = encodeURI(csvContent);
-  const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
-  link.setAttribute("download", merchantFilename + ".csv");
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-}
-
-function exportExcel() {
-  // Transform data for Excel formatting
-  const exportData = payments.map(p => ({
-    "Date": p.date,
-    "Time": p.time,
-    "Amount": p.displayAmount,
-    "Acquisition Source": p.source,
-    "Item/Category": p.itemName || 'N/A'
-  }));
-
-  // Generate an Excel workbook strictly in the browser
-  const worksheet = XLSX.utils.json_to_sheet(exportData);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Transactions");
-
-  // Trigger native .xlsx download
-  XLSX.writeFile(workbook, merchantFilename + ".xlsx");
-}
-</script>
-<!-- END: PDPA-Compliant Export & Print Controls -->
+<dl class="receipt-lines card"><div><dt>Smart Match shown</dt><dd><%= campaign.metrics.smartMatchShown %></dd></div><div><dt>Smart Match accepted</dt><dd><%= campaign.metrics.smartMatchAccepted %></dd></div><div><dt>Smart Match payments</dt><dd><%= campaign.metrics.smartMatchPayments %></dd></div><div><dt>Smart Match sales</dt><dd>$<%= campaign.metrics.smartMatchSales.toFixed(2) %></dd></div><div><dt>Shared Vouch claims</dt><dd><%= campaign.metrics.sharedVouchClaims %></dd></div><div><dt>Shared Vouch payments</dt><dd><%= campaign.metrics.sharedVouchPayments %></dd></div><div><dt>Shared Vouch sales</dt><dd>$<%= campaign.metrics.sharedVouchSales.toFixed(2) %></dd></div><div><dt>Shared Vouch conversion</dt><dd><%= campaign.metrics.sharedVouchClaims ? Math.round(100 * campaign.metrics.sharedVouchPayments / campaign.metrics.sharedVouchClaims) : 0 %>%</dd></div><div><dt>Direct Scan payments</dt><dd><%= campaign.metrics.directScanPayments %></dd></div><div><dt>Direct Scan sales</dt><dd>$<%= campaign.metrics.directScanSales.toFixed(2) %></dd></div><div><dt>QR scans</dt><dd><%= campaign.metrics.scans %></dd></div><div><dt>Completed payments</dt><dd><%= campaign.metrics.payments %></dd></div><div><dt>Merchant reward spend</dt><dd>$<%= campaign.metrics.rewardCost.toFixed(2) %></dd></div><div><dt>Illustrative success fees accrued</dt><dd>$<%= campaign.platformFeeAccrued.toFixed(2) %></dd></div><div><dt>Smart Match conversion</dt><dd><%= campaign.metrics.smartMatchShown ? Math.round(100 * campaign.metrics.smartMatchPayments / campaign.metrics.smartMatchShown) : 0 %>%</dd></div></dl>
 <% } %><a class="text-button" href="/home">Return to Jia</a>
 <%- include('partials/end', { active: tab, merchantNav: { merchantId: merchant.id } }) %>

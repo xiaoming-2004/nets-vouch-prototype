@@ -1,6 +1,6 @@
 # NETS Vouch AI — Engineering Handover
 
-_Last updated: 25 Sep 2026. Written from the code at `main` @ `f96ba38` ("halal, non-halal"). **If this document and the code disagree, the code wins** — then fix this document._
+_Last updated: 1 Oct 2026. Written from the code at `main` @ `33046c4` ("fix: make hourly chart horizontally scrollable") plus the uncommitted truthfulness/correctness repairs described in section 16. **If this document and the code disagree, the code wins** — then fix this document._
 
 | | |
 |---|---|
@@ -8,7 +8,7 @@ _Last updated: 25 Sep 2026. Written from the code at `main` @ `f96ba38` ("halal,
 | Team | **Capital 6** |
 | Context | PolyFinTech Challenge 2026 — continued development as a functional coded prototype |
 | Recognition | **Merit Award – Poly FinTech Hackathon 2026** |
-| Test baseline | **326 / 326 passing** (`npm test`), syntax checks clean |
+| Test baseline | **383 / 383 passing** (`npm test`), syntax checks clean. Measured with every provider credential cleared and all providers mocked. (The `33046c4` snapshot itself was 296 / 326 — see section 16.) |
 | Stack | Node.js ≥ 22, Express 5, EJS, express-session, vanilla JS/CSS, CommonJS, `@upstash/redis` (optional) |
 
 Do not introduce a large framework or a new database unless explicitly requested.
@@ -24,12 +24,14 @@ Do not introduce a large framework or a new database unless explicitly requested
 7. Smart Match result UI (card, badge, photo, map, Vouch count)
 8. Payments, Vouch Credit, Payment-Verified Vouch, Shared Vouch, attribution, analytics
 9. Activity, sessions/Upstash, Reset Demo
-10. API keys & environment variables (setup, missing-key behaviour, degradation, security)
+10. API keys & environment variables (setup, safe packaging, missing-key behaviour, degradation, security)
 11. Developer setup & testing
 12. Known limitations
 13. Live test history (observed, not guaranteed)
 14. Git / working state
 15. Do NOT reintroduce · Paused areas · Working rules
+16. Repairs applied after `33046c4` (reward truthfulness, report truthfulness, discovery cache, Redis reset)
+17. Open House demonstration script
 
 ---
 
@@ -480,19 +482,50 @@ simulated NETS success → receipt /payment-success/:id → reward released → 
 ## 8.2 Vouch Credit (merchant-specific)
 
 - Stored per merchant (`demo.vouchCredits[merchantId]`), usable **only at that merchant**, and it accumulates. It is not platform-wide money.
-- Default campaign (`createDemoCampaign`) for every demo and discovered merchant:
+- **A reward is money, never an item.** There is no item entitlement and no in-store item redemption
+  anywhere in the code: `releaseMerchantReward` adds an amount to `demo.vouchCredits[merchantId]`
+  and nothing else. Treat this as a locked constraint on anything customer-facing: a screen may
+  never present an earned item.
+- **Reward amounts and minimum spends are per merchant**, not one global default. `getRewardConfig`
+  resolves them in this order:
+  1. `MERCHANT_REWARD_CONFIGS` — an explicit entry for one of the five curated demo merchants.
+  2. `discoveredRewardConfigs` — the offer assigned to a discovered merchant when it was first
+     registered, so the same place keeps the same offer.
+  3. `CATEGORY_REWARD_MAPS` — a category-matched offer, chosen by a stable hash of the merchant id.
+  4. `GENERIC_REWARD_POOL` — the fallback, also by stable hash.
+
+  The five curated demo merchants currently ship:
+
+  | Merchant | Reward | Minimum spend |
+  |---|---|---|
+  | `felicia-chicken-rice` | $0.80 | $5.00 |
+  | `green-bowl` | $1.00 | $9.00 |
+  | `woodlands-noodle-bar` | $0.80 | $6.00 |
+  | `northside-wraps` | $0.50 | $8.00 |
+  | `spice-lane` | $0.70 | $7.50 |
+
+- Settings that are still the same for every campaign (`createDemoCampaign`):
 
   | Setting | Default |
   |---|---|
-  | Reward | $0.50 |
-  | Minimum eligible spend | $5.00 |
   | Rewarded payments per day | 20 |
   | Reward budget per day | $10.00 |
   | Hours | 00:00–23:59, ACTIVE |
   | Sender referral reward | $0.20 |
   | Illustrative platform fee per attributed payment | $0.10 |
 
-  Merchants can edit the reward, minimum spend, caps, hours and status at `/merchant` (Campaign tab).
+  Merchants can edit the reward, minimum spend, label, caps, hours and status at `/merchant`
+  (Campaign tab).
+- **Reward labels describe the credit, and the amount is never stored in the label.** A stored label
+  is a purpose phrase such as `Vouch Credit towards a side dish`. Screens render it through
+  `rewardCreditText(campaign.rewardAmount, campaign.rewardLabel)`, which prefixes the campaign's
+  live amount — so editing the amount can never leave a stale figure in text. `validateRewardLabel`
+  enforces this server-side on `POST /merchant/offer` and rejects a label that promises an item
+  (`free`, `complimentary`, `on the house`, `gratis`, `redeemable for` …), carries its own amount,
+  contains `<`/`>`, is empty, or exceeds 50 characters. A rejected submission saves **nothing** and
+  redirects with `&error=label`; an empty label leaves the existing one in place.
+  The journey test suites deliberately pin campaigns to a known amount/minimum so they assert
+  literal dollar figures; the per-merchant catalogue itself is covered by `tests/merchant-rewards.test.js`.
 - A reward requires **all** of:
   - NETS-paid ≥ $1.00
   - a campaign that is available (active, within hours, cap not reached, budget not reached)
@@ -591,7 +624,32 @@ UI: a small outlined button at the bottom of Profile and on `/demo` (`views/part
 
 It redirects to `/home?reset=done`.
 
-⚠ **Needs verification:** `UpstashStore` doesn't implement `all()`, and `express-session`'s base Store has no `all`. With Upstash configured, Reset Demo will probably fail at `demoStore.all` (TypeError → 500). Tests cover the MemoryStore path only.
+**Repaired (was broken at `33046c4`).** `UpstashStore` implements only `get`/`set`/`destroy`, and
+`express-session`'s base `Store` has no `all`, so the old route threw a `TypeError` at
+`demoStore.all` and Reset Demo returned 500 whenever Upstash was configured. Enumeration is now an
+optimisation rather than the mechanism:
+
+- `resetOtherStoredSessions` enumerates and clears other sessions **only when the configured store
+  implements `all()`** (MemoryStore does; Upstash deliberately does not, because the Upstash REST
+  API has no cheap key scan).
+- What actually makes the reset global is the **reset generation**. `demoResetGeneration` is bumped
+  on every reset, and `initialiseDemoSession` runs on every request and replaces the demo state of
+  any session whose stored generation is behind it. So on either store, every other session is reset
+  the moment it is next used.
+- That same guard defeats a **stale in-flight save**: a request that started before the reset writes
+  back the superseded generation, so its data is replaced on the next read instead of coming back.
+- The requesting session is now saved **explicitly** (`req.session.save`) before the redirect. The
+  session middleware's own save completes *after* the response, so a failed write previously still
+  showed `reset=done`. A store failure now returns 500 `Demo reset could not be completed`.
+- Covered by `tests/reset-demo-redis.test.js`, which loads the app against a fake
+  Upstash-compatible client (no real Redis, no `.env` credentials) and checks two sessions, reset
+  around a pending save, idempotent repeats, and an honestly-reported write failure.
+
+⚠ **Limitation, not papered over:** `demoResetGeneration` lives in the server process. On a single
+instance (local, or one Vercel lambda) a reset clears everything. With Upstash configured across
+**several** instances, a reset does not reach sessions being served by another instance. Making that
+work would mean storing the generation in Redis and reading it per request, which is a deliberate
+design change and is not done.
 
 ---
 
@@ -631,15 +689,42 @@ It redirects to `/home?reset=done`.
 
 - No Maps embed or browser-side key is used. The map is Leaflet/OSM and the Maps link is a keyless URL.
 - `GEMINI_API_KEY` / `GEOAPIFY_API_KEY` may exist in someone's local `.env`, but the code never reads them.
-- `.env.example` is **out of date**:
-  - it lacks `GROQ_API_KEY`, `TAVILY_API_KEY`, the model overrides and the timing variables
-  - its OpenAI comment still says "gpt-4o-mini ranking"
+- `.env.example` now documents **every** variable in this table, with safe placeholders and a note
+  on what happens when each is missing. It contains names and placeholders only — never values — and
+  is the one `.env*` file that may be committed or shipped (`.gitignore` ignores `.env` and
+  `.env.*`, with `!.env.example` re-included).
 
-  Use this table as the reference until `.env.example` is updated. It was not changed in the handover task.
+## 10.1b Packaging a handover archive safely
+
+`.gitignore` protects Git, not `zip`. Build an archive from what Git tracks, so an ignored `.env`
+can never be included:
+
+```bash
+# From the repo root. Writes ../nets-vouch-prototype-handover.zip containing tracked files only.
+git archive --format=zip --output=../nets-vouch-prototype-handover.zip HEAD
+```
+
+If you must zip the working directory instead, exclude secrets and build output explicitly:
+
+```bash
+zip -r ../nets-vouch-prototype-handover.zip . \
+  -x '.env' -x '.env.*' -x 'node_modules/*' -x '.git/*' -x '*.zip'
+```
+
+Then verify, without printing any value:
+
+```bash
+unzip -l ../nets-vouch-prototype-handover.zip | grep -E '(^|/)\.env($|[^.])' || echo 'no .env in archive'
+```
+
+If an existing archive does contain `.env`, delete the archive and rebuild it with one of the
+commands above. Do not open it to inspect the contents.
 
 ## 10.2 Teammate API key setup — READ THIS
 
-- API keys are **never stored in Git**. `.env` is local and **gitignored** (verified: `.gitignore` line 5, and `.env` has never been committed).
+- API keys are **never stored in Git**. `.env` is local and **gitignored** (re-verified 1 Oct 2026:
+  `git ls-files .env` finds nothing, `git check-ignore .env` matches, and `.gitignore` also ignores
+  `.env.*` and `*.zip`/`*.tar*` so a stale archive cannot be committed with secrets inside).
 - `.env.example` contains variable **names and placeholders only**.
 - **Cloning the repo does NOT give you anyone's keys.** For full live functionality, use one of:
   - **A.** your **own** provider keys, or
@@ -691,7 +776,7 @@ It redirects to `/home?reset=done`.
 2. Node.js ≥ 22 required (process.loadEnvFile, AbortSignal.any)
 3. npm install
 4. cp .env.example .env     # then add the keys you have (see §10); never commit .env
-5. npm test                 # node --check public/js/script.js + node --test tests/*.test.js → expect 326/326
+5. npm test                 # node --check public/js/script.js + node --test tests/*.test.js → expect 383/383
 6. npm start                # node app.js
 7. open http://localhost:3000   (→ /welcome; PORT overrides)
 ```
@@ -707,7 +792,7 @@ Deployment: Vercel (`vercel.json` routes everything to `server.js`, which export
 | `smart-match.test.js` | Core matching, rejection rules, Too far, history, research integration, reliability/429, retrieval, empty states |
 | `dietary-matching.test.js` | Dietary-intent discovery, `coffee_shop` handling, shared/fake Upstash store, TTLs, concurrent dedupe, no provider → 0 Tavily, deadline → incomplete, warm cache, outlet identity (wrong outlet / brand prefix) |
 | `google-discovery.test.js` | Google Text/Nearby, provider order, Foursquare fallback, containers, dedupe |
-| `discovery-cache.test.js` | Discovery cache keys/TTL/per-visitor distances |
+| `discovery-cache.test.js` | Discovery cache keys/TTL/per-visitor distances, and that a wider walking radius can never be answered from a narrower cached search |
 | `meal-eligibility.test.js` | MEAL/NON_MEAL/UNCERTAIN, Nearby exclusions |
 | `craving-intent.test.js` | Raw-first flow, Groq expansion validation, intent cache |
 | `ranking-providers.test.js` | Groq → OpenAI → rules, validator, unsupported claims, walking-time protection, ranking budget |
@@ -717,8 +802,14 @@ Deployment: Vercel (`vercel.json` routes everything to `server.js`, which export
 | `edge-cases.test.js` | Negative and abuse cases |
 | `merchant-analytics.test.js` | Attribution, live vs illustrative metrics |
 | `reset-demo.test.js` | Reset Demo (MemoryStore) |
+| `reset-demo-redis.test.js` | Reset Demo against the **configured Upstash store** via a fake Upstash client: two sessions, reset around a pending save, idempotent repeats, honest failure reporting |
+| `merchant-rewards.test.js` | Reward truthfulness: no shipped label promises an item, the rendered amount always comes from the live campaign value, server-side custom-label validation, per-merchant minimum-spend boundaries, the $1 NETS floor |
+| `merchant-report.test.js` | Report truthfulness: no fabricated live transactions, illustrative rows excluded from live feeds, live vs illustrative totals kept separate, honest date ranges, rule-based observation naming, escaped merchant-controlled text |
+| `acceptance-journeys.test.js` | End-to-end acceptance of the five demo journeys (no restriction, active Halal across verified/unverified/unavailable/timed-out/cached states, Direct Scan attribution, Shared Vouch claim and redemption, Reset Demo), plus long-label and reward-control accessibility checks |
+| `template-js.test.js` | Every EJS template compiles; every inline `<script>` block and public JS file is valid JavaScript; no template ships an activity-inventing timer |
 
-Only mocks and unit tests run in CI. The tests do not cover real Upstash or live providers.
+Only mocks and unit tests run in CI. The tests do not cover live providers, and the Upstash path is
+covered with a fake client rather than a real Redis service.
 
 ---
 
@@ -750,6 +841,29 @@ Only mocks and unit tests run in CI. The tests do not cover real Upstash or live
 - Reset Demo with Upstash: **needs verification** (§9.3).
 - Map tiles and scripts load from unpkg, OpenStreetMap and jsDelivr, so the map needs internet access.
 
+### Rewards
+- **No item redemption exists.** A reward is a cash Vouch Credit balance only; nothing can issue,
+  track or redeem a physical item. Reward labels may therefore only describe what the credit is
+  towards (§8.2).
+
+### Merchant report
+- The hourly chart, the seven-sample-day series, the busy-period heatmap and the baseline totals are
+  **fixed sample data**, labelled as illustrative. The prototype keeps no per-hour, per-weekday or
+  dated history, so no chart below the live section carries a date range.
+- Live report figures cover "since the last Reset Demo", not a calendar day. Campaign metrics are
+  not bucketed per day; only `redemptionsToday` and `rewardBudgetSpentToday` roll over.
+- The observations section is rule-based demo heuristics. It asserts no sales lift, return-visit or
+  perceived-value figures, because the prototype collects no outcome data.
+
+### State and reset
+- Campaigns, shared Vouch links, referral cooldowns and the payment feed are **process memory**.
+  They are not durable and not shared across instances; a restart returns them to their defaults.
+- Reset Demo is coordinated in-process and so is single-instance only (§9.3).
+
+### Verification
+- **No browser-automation testing.** The suite drives the app over HTTP and asserts on rendered
+  markup. Layout at a narrow viewport has not been confirmed in a real browser.
+
 ---
 
 # 13. LIVE TEST HISTORY (observed development tests — not guaranteed behaviour)
@@ -772,10 +886,15 @@ Only mocks and unit tests run in CI. The tests do not cover real Upstash or live
 
 # 14. GIT / CURRENT WORKING STATE
 
-- Branch `main`, up to date with `origin/main`.
-- HEAD `f96ba38` "halal, non-halal" (25 Sep 2026). This commit contains the dietary discovery/research/cache/deadline work: `request-budget.js`, `research-store.js`, `tests/dietary-matching.test.js`, plus the `app.js` changes.
-- Before this handover edit the working tree was clean. The only uncommitted change is this `handover.md` update.
-- Recent history: `c76576d` update ui (it had cut budgets to 1.5 s; superseded) · `befcad6` AI matching preferences · `740723f` Google Places migration · `0a23bf2` / `ff105ef` Upstash sessions.
+- Branch `main`. HEAD `33046c4` "fix: make hourly chart horizontally scrollable".
+- The working tree was clean at `33046c4`. The repairs in §16 are **uncommitted** working-tree
+  changes: `app.js`, `public/css/style.css`, five views, eight existing test files, five new test
+  files, `package-lock.json`, `.env.example`, `.gitignore`, `README.md`, `PROTOTYPE_PLAN.md` and this
+  document. Nothing has been committed, pushed or deployed.
+- Recent history: `33046c4` hourly chart scroll · `bcb30c6` hourly chart overflow and decimal split ·
+  `ff0c07d` merchant-report view · `ab8e3f4` halal/non-halal filtering, merchant report, Smart Match
+  result improvements (this is the commit that introduced the per-merchant reward catalogue) ·
+  `9e1f039` APIs and location · `f96ba38` halal, non-halal.
 
 ---
 
@@ -810,3 +929,118 @@ Only mocks and unit tests run in CI. The tests do not cover real Upstash or live
 - **Honesty:** never claim live browser, geolocation, real-API or multi-device testing unless it happened. Distinguish mocked tests from live calls.
 - **UI shell:** the iPhone 16 Pro Max frame (`views/partials/start.ejs` / `end.ejs`) is hidden at ≤ 560 px width. Keep the logo `public/images/nets-vouch-ai-logo.jpg` unchanged, and reuse the design tokens at the top of `public/css/style.css`. Many tests assert visible strings, so change wording only together with its tests.
 - **Sprint report:** list the files changed, root cause, implementation, new tests, full-suite result, any impact on teammate features, and live-testing limits. Then STOP; don't start the next item automatically.
+
+---
+
+# 16. REPAIRS APPLIED AFTER `33046c4`
+
+The `33046c4` snapshot was **296 / 326 passing**. All 30 failures traced to one deliberate v17
+change: `ab8e3f4` replaced the uniform `$0.50` reward / `$5.00` minimum with the per-merchant
+catalogue in §8.2, and the journey suites still encoded the old uniform values. The product change
+was kept; the test fixtures were brought up to date by pinning each campaign the test pays at, so
+every invariant those tests protected is still asserted on literal figures.
+
+The repairs below were applied on top of that snapshot. Final state: **383 / 383 passing**.
+
+### 16.1 Reward truthfulness
+- 72 reward labels promised items ("Free side dish", "Free upsize") while the backend only ever
+  credited money. Every label is now a credit-purpose phrase, and the live amount is rendered beside
+  it by `rewardCreditText`. See §8.2 for the full rule and the validator.
+- `POST /merchant/offer` now validates the label **before writing any field**, so a rejected
+  submission saves nothing instead of silently keeping the old label and applying the rest.
+- The `vouch-success` page no longer falls back to a hardcoded `$0.50` when a campaign has ended; it
+  says the offer has ended.
+
+### 16.2 Merchant report truthfulness (§8.6)
+- **Removed the fabricated live feed.** Both the Results tab and the Business Report shipped a
+  browser timer (`setInterval`) that injected randomly chosen sample transactions into a feed headed
+  "Live transactions", built with `innerHTML` from merchant-controlled strings. The timer, the
+  sample pool (`getMerchantLiveFeedPool`) and the unsafe markup construction are gone.
+- The report's live feed previously did **not** filter `illustrative: true`, so shipped sample rows
+  dated 2026-09-18/19 rendered as live payments. It now shows only recorded payments.
+- "Today at a Glance" added a sample weekly average to live counters and multiplied it by a blended
+  basket size to produce "Revenue today". Replaced by **Live demo activity · since last Reset Demo**,
+  computed from recorded payments only, with an honest empty state and no basket average until there
+  is at least one payment.
+- Channel mix is now reported **twice** — live and illustrative — so neither borrows the other's
+  volume.
+- Date-range claims that the data could not support ("last 7 days", "last 4 weeks", "today") are
+  gone. The hourly, seven-day and heatmap charts are each labelled as illustrative sample data with
+  their own caption, and the weekly series is labelled Day 1–7 because the prototype keeps no dated
+  history. The Results tab's sample series no longer carries invented calendar dates.
+- **"AI Insights" renamed to "Demo observations · rule-based"**, because it is a set of fixed
+  `if`/`else` statements. Unsupported claims were removed: the 15–25 % slow-period lift, the
+  30–40 % next-visit rate, the "2–3× perceived value" claim and the "a free item reward could
+  outperform credits" recommendation (which also contradicted the credit-only model). Each
+  observation now states the basis it was read off instead of a confidence level.
+
+### 16.3 Discovery cache radius (§3.3)
+- The Foursquare cache key was location bucket + query and **ignored the search radius**, so a short
+  walking-limit result set could answer a later, wider request — missing every merchant between the
+  two radii, which the provider had never returned.
+- The radius is now quantised once, upwards to the next 250 m, and the same value is used for both
+  the provider request and the cache key. A hit therefore always means "same place, same query, same
+  radius actually searched". Quantising upwards keeps near-equivalent walking limits sharing one
+  entry rather than fragmenting the cache per metre, and never shrinks a search; any extra far
+  merchant is removed per visitor by `merchantMatchesProfile`'s exact distance check.
+- Google was already correct: its `nearby` key includes the radius, and `text` mode uses a fixed
+  location bias that does not vary with the walking limit. TTL, cache limits, per-visitor distance
+  recalculation, provider order, dietary-targeted discovery and craving search are unchanged.
+
+### 16.4 Reset Demo on the configured store (§9.3)
+See §9.3 for the full description, including the explicit session save and the single-instance
+limitation.
+
+### 16.5 Accessibility and layout
+- The reward-type radios are now a real `fieldset`/`legend` with `role="radiogroup"`,
+  `aria-labelledby` and `aria-describedby`; the custom-label text field has a real (visually hidden)
+  label instead of only a placeholder.
+- `.visually-hidden` was scoped to `.match-card` and is now global, so those labels actually hide.
+
+### 16.6 Setup
+- `package-lock.json` declared two dependencies `package.json` never did — `nodejs@0.0.0` and
+  `yarn@1.22.22`, neither installed in `node_modules`. Removed by regenerating the lockfile offline
+  from `package.json`; no real dependency was added, upgraded or changed.
+  Verified with `npm ls --depth=0` and `npm ci --dry-run --offline`.
+- `.env.example` rewritten to cover every variable in §10.1 with safe placeholders.
+- `.gitignore` extended to ignore `.env.*` (re-including `.env.example`) and `*.zip` / `*.tar*`.
+
+### 16.7 Not done
+- **No browser verification.** No browser automation was added, so layout at a narrow viewport was
+  not confirmed in a real browser. The checks are over rendered markup only.
+- **No live provider or real Redis calls.** Every check ran with credentials cleared and providers
+  mocked.
+- Distributed persistence for campaigns, offers and the payment feed was deliberately not
+  implemented; those remain in process memory.
+
+---
+
+# 17. OPEN HOUSE DEMONSTRATION SCRIPT
+
+Roughly 5 minutes. Run `npm start`, open `http://localhost:3000`, and press **Reset Demo** at
+`/demo` first so every figure starts at zero.
+
+1. **Set the scene (20 s).** At `/welcome`, say what the prototype claims: AI helps the visitor
+   decide, NETS verifies the payment, and a verified payment becomes social discovery. Say plainly
+   that payments and merchant participation are simulated.
+2. **Smart Match (45 s).** From Home, take the recommendation. Point out the offer line: a dollar
+   amount of Vouch Credit, the minimum spend, and that the credit is usable only at that merchant.
+   Optionally press **Not for me** once to show rejection produces a different merchant.
+3. **Pay (60 s).** **Choose this → Scan when you arrive → Scan**, enter a real-looking amount above
+   the minimum, and pay. On the receipt, read the earned credit aloud — it names the amount and what
+   the merchant intends it towards, and it is money, not an item.
+4. **Vouch and share (45 s).** Create the Payment-Verified Vouch, add a tag, and open the share
+   sheet. Note that the purchase amount is never shown on the shared page.
+5. **Shared Vouch (60 s).** At `/demo`, switch to **Darren**, open the share link, claim it, then pay
+   at the **same** merchant. Show that the claim only converts on a payment at that merchant, and
+   that Darren's receipt and Jia's sender bonus both appear. (If you have time, pay at the wrong
+   merchant first to show the claim is not consumed.)
+6. **Merchant view (60 s).** Switch to **Merchant → Results**, then **Business Report**. Show the
+   live figures matching exactly the payments just made, and point at the labelled illustrative
+   baseline beside them — the charts are sample data so the report has shape, and the report says so.
+   Mention that the observations are rule-based demo heuristics, not model output.
+7. **Reset (20 s).** Press **Reset Demo** and show the live figures and feed return to zero while the
+   merchant's campaign configuration survives.
+
+Do not claim during the demonstration: real NETS settlement, a production AI integration, measured
+sales lift or return-visit rates, durable storage, or multi-instance behaviour.

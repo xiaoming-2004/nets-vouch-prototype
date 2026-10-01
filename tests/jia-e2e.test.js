@@ -82,6 +82,17 @@ function campaign(id) {
   return getMerchantCampaigns().find(function(item) { return item.merchantId === id; });
 }
 
+// Reward amounts and minimum spends are per-merchant campaign configuration a merchant can edit.
+// These journey tests assert literal dollar figures end to end and Smart Match picks the merchant,
+// so they pin every campaign to one known offer rather than inheriting the merchant catalogue.
+// The per-merchant catalogue itself is covered in tests/merchant-rewards.test.js.
+function pinAllCampaigns(rewardAmount, minimumEligibleSpend) {
+  getMerchantCampaigns().forEach(function(c) {
+    c.rewardAmount = rewardAmount;
+    c.minimumEligibleSpend = minimumEligibleSpend;
+  });
+}
+
 function merchantId(html) {
   const match = html.match(/data-merchant-id="([^"]+)"/);
   assert.ok(match, 'recommendation card should identify its merchant');
@@ -132,6 +143,7 @@ async function chooseAndScan(v, cardHtml, amount, useCredit) {
 }
 
 test('Jia completes rejection → Choose this → Scan → Pay → Vouch → share → Profile → reset', async function() {
+  pinAllCampaigns(0.50, 5.00);
   const jia = visitor();
   assert.equal((await jia.request('/reset-demo', {})).location, '/home?reset=done');
   const fresh = (await jia.state()).demo;
@@ -179,7 +191,7 @@ test('Jia completes rejection → Choose this → Scan → Pay → Vouch → sha
   const success = await jia.request('/payment-success/' + tx.id);
   assert.match(success.html, /Payment successful/);
   assert.match(success.html, /\$8\.50/);
-  assert.match(success.html, /\+\$0\.50 Vouch Credit earned/);
+  assert.match(success.html, /\+\$0\.50 Vouch Credit[^<]* earned/);
   assert.match(success.html, /action="\/vouch\/[^\"]+"/);
   assert.match(success.html, /Not now/);
   await jia.request('/payment-success/' + tx.id);
@@ -218,7 +230,7 @@ test('Jia completes rejection → Choose this → Scan → Pay → Vouch → sha
   const detail = await jia.request('/transactions/' + tx.id);
   assert.equal(detail.status, 200);
   assert.match(detail.html, /Paid with NETS/);
-  assert.match(detail.html, /\+\$0\.50 Vouch Credit earned/);
+  assert.match(detail.html, /\+\$0\.50 Vouch Credit[^<]* earned/);
   assert.ok(!detail.html.includes(tx.id), 'detail should not surface an internal ID');
   const vouches = await jia.request('/profile/vouches');
   assert.match(vouches.html, /Payment-Verified/);
@@ -246,6 +258,7 @@ test('Jia completes rejection → Choose this → Scan → Pay → Vouch → sha
 });
 
 test('Not now keeps the successful payment and reward without creating a Vouch', async function() {
+  pinAllCampaigns(0.50, 5.00);
   const jia = visitor();
   const card = await onboardAndMatch(jia);
   const paid = await chooseAndScan(jia, card.html, '10.00', false);
@@ -265,6 +278,7 @@ test('Not now keeps the successful payment and reward without creating a Vouch',
 });
 
 test('credit stays merchant-specific and the server leaves at least $1 payable with NETS', async function() {
+  pinAllCampaigns(0.50, 5.00);
   const jia = visitor();
   await jia.request('/home');
   await jia.change(function(demo) { demo.vouchCredits['felicia-chicken-rice'] = 5; });

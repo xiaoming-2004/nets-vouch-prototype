@@ -96,6 +96,17 @@ async function scan(v, merchantId) {
 
 function credit(demo, merchantId) { return demo.vouchCredits[merchantId] || 0; }
 
+// Reward amounts and minimum spends are per-merchant campaign configuration a merchant can edit,
+// and Smart Match chooses the merchant in most of these journeys. Tests that assert literal dollar
+// figures pin one known offer on every campaign rather than inheriting whatever the merchant
+// catalogue ships; the catalogue itself is covered in tests/merchant-rewards.test.js.
+function pinAllCampaigns(rewardAmount, minimumEligibleSpend) {
+  getMerchantCampaigns().forEach(function(c) {
+    c.rewardAmount = rewardAmount;
+    c.minimumEligibleSpend = minimumEligibleSpend;
+  });
+}
+
 test('payment IDs and consumer receipts/Vouches are private to their owner', async function() {
   const jia = visitor();
   const jiaScan = await scan(jia, 'felicia-chicken-rice');
@@ -197,6 +208,7 @@ test('Profile preferences still filter Smart Match', async function() {
 });
 
 test('Smart Match Scan accepts actual amount, merchant credit and optional Vouch', async function() {
+  pinAllCampaigns(0.50, 5.00);
   const v = visitor();
   const merchantId = await goThere(v);
   await v.change(function(demo) { demo.vouchCredits[merchantId] = .5; });
@@ -284,6 +296,7 @@ test('Amount validation, $1 NETS floor, campaign cap and duplicate payment safet
 });
 
 test('Reward eligibility respects minimum spend and daily reward budget, and merchant sees a max-cost estimate', async function() {
+  pinAllCampaigns(0.50, 5.00);
   const v = visitor();
   await v.request('/home');
   const campaign = getMerchantCampaigns().find(function(item) { return item.merchantId === 'green-bowl'; });
@@ -331,6 +344,7 @@ test('Reward eligibility respects minimum spend and daily reward budget, and mer
 });
 
 test('Merchant campaign cap is shared across different user sessions, not per browser', async function() {
+  pinAllCampaigns(0.50, 5.00);
   const jia = visitor();
   const darren = visitor();
   await jia.request('/home');
@@ -358,6 +372,7 @@ test('Merchant campaign cap is shared across different user sessions, not per br
 });
 
 test('Normal Vouch Credit is earned once per user, merchant and Singapore day', async function() {
+  pinAllCampaigns(0.50, 5.00);
   const v = visitor();
   await v.request('/home');
   const feliciaCampaign = getMerchantCampaigns().find(function(item) {
@@ -375,7 +390,7 @@ test('Normal Vouch Credit is earned once per user, merchant and Singapore day', 
   // The card's earned state is checked for the merchant just paid. Ranking is neutral (no merchant
   // is hardcoded to win), so the card is pointed at that merchant explicitly.
   await v.change(function(demo) { demo.selectedMerchantId = 'felicia-chicken-rice'; });
-  assert.match((await v.request('/smart-match/result')).html, /Today's Vouch Credit earned/);
+  assert.match((await v.request('/smart-match/result')).html, /Today's \$0\.50 Vouch Credit[^<]* earned/);
 
   const second = await scan(v, 'felicia-chicken-rice');
   const secondPaymentPage = await v.request('/scan/payment');
@@ -406,6 +421,7 @@ test('Normal Vouch Credit is earned once per user, merchant and Singapore day', 
 });
 
 test('Using accumulated merchant credit does not block the first daily reward', async function() {
+  pinAllCampaigns(0.50, 5.00);
   const v = visitor();
   await v.request('/home');
   await v.change(function(demo) { demo.vouchCredits['felicia-chicken-rice'] = 1; });
@@ -419,6 +435,7 @@ test('Using accumulated merchant credit does not block the first daily reward', 
 });
 
 test('Shared Vouch claim rewards only after same-merchant payment without stacking', async function() {
+  pinAllCampaigns(0.50, 5.00);
   const sender = visitor();
   await sender.request('/home');
   const pending = await scan(sender, 'green-bowl');
@@ -521,6 +538,7 @@ test('Shared Vouch claim expires after 20 minutes and stops redeeming as a refer
 });
 
 test('Referral cooldown blocks repeated rewarded conversions for the same sender, recipient and merchant', async function() {
+  pinAllCampaigns(0.50, 5.00);
   const sender = visitor();
   await sender.request('/home');
   async function payAndVouch(amount) {
@@ -594,6 +612,7 @@ test('Task 3 regression — Smart Match route resolves correctly after async ref
 });
 
 test('Task 7 — daily reward is per-user; campaign cap is shared globally across sessions', async function() {
+  pinAllCampaigns(0.50, 5.00);
   const jia = visitor();
   const darren = visitor();
   await jia.request('/home');
@@ -633,6 +652,7 @@ test('Task 7 — daily reward is per-user; campaign cap is shared globally acros
 });
 
 test('Task 6 — full Open House story: Jia Smart Match → Vouch → Darren pays → merchant sees both conversions', async function() {
+  pinAllCampaigns(0.50, 5.00);
   const jia = visitor();
   const darren = visitor();
 

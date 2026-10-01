@@ -192,3 +192,105 @@ test('lazy cleanup removes expired entries without evicting a still-valid query'
     Date.now = originalNow;
   }
 });
+
+// ---------------------------------------------------------------------------
+// Search radius is part of the cache identity
+// ---------------------------------------------------------------------------
+// A Foursquare result set is only valid for the radius it was searched with. A short walking limit
+// returns nothing beyond that limit, so its result set can never answer a later, wider request.
+
+// A fixture merchant placed at a real offset north of `location`, so the distance the app computes
+// from its coordinates matches the distance the mocked provider filters on. ~0.001 degrees of
+// latitude is ~111 m near Singapore.
+function placeAtMetres(id, metres) {
+  const latitude = location.latitude + metres / 111320;
+  return { fsq_place_id: id, name: 'Merchant ' + id, latitude: latitude, longitude: location.longitude,
+    geocodes: { main: { latitude: latitude, longitude: location.longitude } },
+    distance: metres, categories: [{ name: 'Restaurant' }],
+    location: { formatted_address: 'Canberra, Singapore' } };
+}
+
+// Records the radius sent with each call alongside the query, and answers from a distance-aware
+// fixture so a too-narrow search genuinely cannot see the far merchant.
+function mockPlacesByRadius(placesWithDistance) {
+  const calls = [];
+  global.fetch = async function(url) {
+    const requestUrl = new URL(String(url));
+    assert.equal(requestUrl.hostname, 'places-api.foursquare.com');
+    const radius = Number(requestUrl.searchParams.get('radius'));
+    const query = requestUrl.searchParams.get('query');
+    calls.push({ radius: radius, query: query });
+    // A provider only returns what is inside the radius it was asked for.
+    const results = placesWithDistance.filter(function(p) { return p.distance <= radius; });
+    return { ok: true, json: async function() { return { results: results }; } };
+  };
+  return calls;
+}
+
+test('a wider walking limit cannot be answered from a narrower cached search', async function() {
+  const near = placeAtMetres('near', 300);
+  const far = placeAtMetres('far', 900);
+  const calls = mockPlacesByRadius([near, far]);
+
+  // 5 minutes ≈ 400 m: the far merchant is outside the radius and is never returned.
+  const short = await getNearbyMerchants(location, 'jia', '', 5);
+  assert.equal(calls.length, 1, 'the first search must reach the provider');
+  assert.ok(calls[0].radius >= 400, 'the searched radius must cover the 400 m walking limit');
+  assert.deepEqual(short.merchants.map(function(m) { return m.id; }), ['foursquare-' + near.fsq_place_id],
+    'only the near merchant is within a 5 minute walk');
+
+  // 15 minutes ≈ 1200 m: this must NOT be served from the 400 m entry, which never saw the far one.
+  const wide = await getNearbyMerchants(location, 'darren', '', 15);
+  assert.equal(calls.length, 2, 'a materially wider request must search again, not reuse the narrow entry');
+  assert.ok(calls[1].radius >= 1200, 'the second searched radius must cover the 1200 m walking limit');
+  const wideIds = wide.merchants.map(function(m) { return m.id; });
+  assert.ok(wideIds.includes('foursquare-' + near.fsq_place_id), 'the wider search still includes the near merchant');
+  assert.ok(wideIds.includes('foursquare-' + far.fsq_place_id),
+    'the wider search must find the merchant the narrow search could never have returned');
+});
+
+test('repeating a search at the same walking limit still hits the cache', async function() {
+  const calls = mockPlacesByRadius([placeAtMetres('near', 300)]);
+  const first = await getNearbyMerchants(location, 'jia', '', 10);
+  const second = await getNearbyMerchants(location, 'darren', '', 10);
+  assert.equal(calls.length, 1, 'an identical repeat request must be served from the cache');
+  assert.deepEqual(second.merchants.map(function(m) { return m.id; }),
+    first.merchants.map(function(m) { return m.id; }));
+});
+
+test('walking limits that resolve to the same searched radius share one cache entry', async function() {
+  const calls = mockPlacesByRadius([placeAtMetres('near', 300)]);
+  // 5 min = 400 m and 6 min = 480 m both quantise up to the same searched radius, so one provider
+  // call serves both: the cache is keyed on what was actually searched, not on every raw metre.
+  await getNearbyMerchants(location, 'jia', '', 5);
+  await getNearbyMerchants(location, 'darren', '', 6);
+  assert.equal(calls.length, 1, 'equivalent radii must not fragment the cache');
+  assert.equal(calls[0].radius, 500, 'both limits resolve to the same 250 m-quantised radius');
+});
+
+test('the searched radius never falls short of the requested walking limit', async function() {
+  for (const [minutes, atLeast] of [[1, 80], [5, 400], [10, 800], [13, 1040], [30, 2400]]) {
+    clearDiscoveryCache();
+    const calls = mockPlacesByRadius([placeAtMetres('near', 50)]);
+    await getNearbyMerchants(location, 'jia', '', minutes);
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].radius >= atLeast,
+      minutes + ' min needs at least ' + atLeast + ' m, searched ' + calls[0].radius + ' m');
+  }
+});
+
+test('radius is part of the key for the broad fallback query too, not just the craving query', async function() {
+  const calls = mockPlacesByRadius([placeAtMetres('near', 300), placeAtMetres('far', 900)]);
+  await getNearbyMerchants(location, 'jia', 'laksa', 5);
+  const shortQueries = calls.map(function(c) { return c.query; });
+  assert.ok(shortQueries.length >= 1);
+  const shortRadii = calls.map(function(c) { return c.radius; });
+  assert.ok(shortRadii.every(function(r) { return r >= 400; }), 'every call covers the 400 m limit');
+
+  const before = calls.length;
+  await getNearbyMerchants(location, 'darren', 'laksa', 15);
+  const newCalls = calls.slice(before);
+  assert.ok(newCalls.length >= 1, 'the wider craving search must not reuse the narrow entries');
+  assert.ok(newCalls.every(function(c) { return c.radius >= 1200; }),
+    'every wider call covers the 1200 m limit');
+});

@@ -35,6 +35,11 @@ test.beforeEach(async function() {
   resetMerchantCampaigns();
   resetReferralCooldowns();
   await visitor().request('/reset-demo', {});
+  // These tests assert reward spend, success fees and sales in literal dollars, and Smart Match
+  // picks the merchant. Reward amounts and minimum spends are per-merchant campaign configuration a
+  // merchant can edit, so pin one known offer on every campaign rather than inheriting the merchant
+  // catalogue. The catalogue itself is covered in tests/merchant-rewards.test.js.
+  getMerchantCampaigns().forEach(function(c) { c.rewardAmount = 0.50; c.minimumEligibleSpend = 5.00; });
 });
 test.afterEach(function() {
   if (originalKey === undefined) delete process.env.FOURSQUARE_API_KEY;
@@ -170,7 +175,14 @@ test('Direct Scan gross sales, NETS-paid feed, merchant isolation and no success
   assert.match(html, /Gross purchase sales<\/small><b>\$6\.00/);
   assert.match(html, /Recent live payments · NETS paid/);
   assert.match(html, /\$5\.00/);
-  assert.ok(!(await results(v, 'felicia-chicken-rice')).includes('Recent live payments'));
+  // v17 keeps the live-payments card visible with an honest empty state instead of hiding it, so
+  // isolation is asserted on the rows: Felicia must show no feed row and none of green-bowl's money.
+  const feliciaHtml = await results(v, 'felicia-chicken-rice');
+  assert.match(feliciaHtml, /No live payments yet/);
+  assert.equal((feliciaHtml.match(/class="feed-row"(?! feed-placeholder)/g) || []).length, 0,
+    "green-bowl's payment must not appear as a feed row for Felicia");
+  assert.ok(!feliciaHtml.includes('Gross purchase sales</small><b>$6.00'),
+    "green-bowl's gross sale must not appear for Felicia");
 });
 
 test('shared claim counts once, receiver payment counts once, sender bonus only adds reward spend', async function() {

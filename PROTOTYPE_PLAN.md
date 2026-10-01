@@ -46,6 +46,14 @@ AI may rank eligible merchants and learn from outcomes; it must not override eli
 - At least `$1.00` must remain payable through NETS for the transaction to qualify for a new reward or Payment-Verified Vouch.
 - One qualifying transaction earns at most one customer reward.
 - The qualifying reward is earned from payment; creating a Vouch is optional.
+- **A reward is a cash amount, not an item.** The prototype holds a numeric per-merchant credit
+  balance and has no item entitlement and no in-store item redemption. Nothing customer-facing may
+  present an earned item.
+- **Each merchant sets its own reward amount and minimum qualifying spend**, so two merchants shown
+  by Smart Match may offer different amounts above different minimums. A merchant may also choose a
+  label describing what the credit is *towards*; every screen renders that label beside the
+  campaign's live amount, and the label is validated server-side so it cannot promise an item or
+  carry a figure of its own.
 
 Payment records retain merchant, original purchase amount, merchant credit used, NETS amount paid, reward earned, attribution source, status, and Vouch decision.
 
@@ -100,20 +108,35 @@ NETS turns verified payments into a measurable merchant referral loop.
 - Self-claim is blocked by session identity.
 - Same-session requests are serialized to reduce double-spend and duplicate-reward risk.
 
-### Required before multi-user or production use
+### Also implemented since this section was first written
 
-The current prototype does **not** yet implement these controls:
+- Merchant campaign state (caps, budget, status, metrics) is **shared across browser sessions**: it
+  lives in one module-level store, not under `req.session.demo`.
+- A maximum merchant **reward-budget amount per day**, which both the customer reward and any sender
+  referral bonus count against.
+- A **configurable merchant minimum purchase amount**, separate from and in addition to the `$1.00`
+  NETS-paid requirement, and editable per merchant.
+- **Sender/recipient/merchant referral cooldowns**, which block a repeated rewarded conversion for
+  the same trio.
+- **Shared-offer claim expiry**, evaluated lazily wherever a claim is read.
+- Attribution is **split by `SMART_MATCH`, `SHARED_VOUCH` and `DIRECT_SCAN`** throughout metrics and
+  reporting. A Direct Scan is never counted as a Smart Match conversion and accrues no success fee.
+- Merchant reporting separates **live recorded payments from labelled illustrative sample data** and
+  never adds the two together.
 
-- Globally shared merchant campaign state across browser sessions.
-- A maximum merchant reward-budget amount per day.
-- A configurable merchant minimum purchase amount separate from the `$1.00` NETS-paid requirement.
-- Sender/recipient/merchant referral cooldowns.
-- Shared-offer claim expiry.
-- Durable cross-process duplicate and reward-farming protection.
+### Still required before multi-user or production use
 
-Campaigns currently live under each `req.session.demo`; therefore caps and metrics are per demo session, not truly global. Shared offers live only in one in-process `Map`. These limits must not be described as production abuse prevention.
-
-The current metrics implementation also increments attributed-payment totals for every reward-eligible payment, including direct Scan. It must be split by `SMART_MATCH`, `SHARED_VOUCH`, and `DIRECT_SCAN` before merchant attribution is presented as commercially reliable.
+- **Durable cross-process duplicate and reward-farming protection.** Campaign state, shared offers,
+  referral cooldowns and the payment feed are process memory: shared across sessions on one
+  instance, but lost on restart and not shared across instances. These must not be described as
+  production abuse prevention.
+- **Instance-wide Reset Demo.** The reset generation is held in the resetting process, so with
+  Redis-backed sessions across several instances a reset does not reach sessions served elsewhere.
+- **Per-day metric bucketing.** Live campaign metrics accumulate since the last Reset Demo; only the
+  daily redemption count and budget spent roll over at the Singapore date boundary. The report
+  therefore reports "since last Reset Demo" rather than "today".
+- **Outcome measurement.** No sales-lift, return-visit or perceived-value data is collected, so no
+  such figure may be presented. The report's observations are explicitly rule-based demo heuristics.
 
 ## 11. Technical architecture
 
@@ -131,7 +154,14 @@ Stack: Node.js, Express.js, EJS, `express-session`, CommonJS, HTML, CSS, and Van
 
 ### Process memory
 
+- Merchant campaigns: caps, budget spent, status, hours, accrued fees and live metrics, shared across
+  every browser session on the instance.
 - Shared Vouch offer links connecting sender and recipient sessions.
+- Referral cooldowns for a sender/recipient/merchant trio.
+- The cross-session merchant payment feed, including the labelled illustrative seed rows.
+- Provider discovery, search-intent and dietary-research caches, and the discovered-merchant registry.
+
+All of this is lost on restart and is **not** shared across server instances.
 
 There is no database, authentication, durable campaign store, production consent system, or multi-instance persistence.
 
@@ -141,7 +171,7 @@ There is no database, authentication, durable campaign store, production consent
 - Scan and payment: `/scan`, `/scan/payment`, `/payment-success/:id`.
 - Vouch and sharing: `/vouch/:id`, `/vouch/:id/success`, `/offers/:token`.
 - Profile: `/profile`, `/profile/rewards`, `/profile/vouches`, `/profile/activity`, `/profile/preferences`, `/transactions/:id`.
-- Merchant/demo: `/merchant`, `/merchant/offer`, `/demo`, `/reset-demo`.
+- Merchant/demo: `/merchant`, `/merchant/offer`, `/merchant/report`, `/demo`, `/reset-demo`.
 
 The internal `/recommendation/accept` route records the choice and sends Jia directly to Scan; it does not create an order.
 
@@ -168,3 +198,10 @@ Do not claim production NETS APIs, banking settlement, camera scanning, POS inte
 - Profile cleanly separates rewards, Vouches, activity, and preferences.
 - No visible consumer control leads to an unavailable route.
 - Simulated features and current integrity limitations are stated accurately.
+- Every reward shown to a customer is described as the cash Vouch Credit the backend actually grants,
+  never as an item the prototype cannot issue.
+- The merchant report presents only recorded payments as live activity, labels all sample data as
+  illustrative, claims no date range it cannot support, and makes no outcome claim the prototype
+  collects no data for.
+- With a dietary restriction active, a merchant is offered as suitable only on verified evidence
+  about that outlet; otherwise the unverified state is stated and nothing is recommended.

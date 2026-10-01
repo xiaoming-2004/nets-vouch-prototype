@@ -17,13 +17,15 @@
         </label>
         <% }); %>
       </div>
-      <label class="field onboard-field">Dietary requirements
-        <select name="dietaryPreference">
-          <% dietaryPreferenceOptions.forEach(function(opt) { %>
-          <option value="<%= opt.value %>"><%= opt.label %></option>
-          <% }); %>
-        </select>
-      </label>
+      <p class="onboard-or">Any dietary requirements?</p>
+      <div class="mood-grid mood-grid--2">
+        <% dietaryPreferenceOptions.forEach(function(opt) { %>
+        <label class="mood-chip">
+          <input type="radio" name="dietaryPreference" value="<%= opt.value %>" <%= opt.value === 'none' ? 'checked' : '' %>>
+          <span><%= opt.label %></span>
+        </label>
+        <% }); %>
+      </div>
       <button class="button" type="submit">Find my match →</button>
     </form>
   </div>

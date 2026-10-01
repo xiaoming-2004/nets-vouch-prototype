@@ -81,6 +81,24 @@ function campaign(id) {
   return getMerchantCampaigns().find(function(item) { return item.merchantId === id; });
 }
 
+// Reward amounts and minimum spends are per-merchant campaign configuration a merchant can edit.
+// Tests that assert literal reward figures pin the campaigns they pay at, after the reset that
+// would otherwise restore the merchant catalogue's own values. Where a test checks that edited
+// configuration survives a reset it pins only the campaign it pays at, never the edited one.
+function pinCampaign(merchantId, rewardAmount, minimumEligibleSpend) {
+  const c = campaign(merchantId);
+  assert.ok(c, 'no campaign for ' + merchantId);
+  c.rewardAmount = rewardAmount;
+  c.minimumEligibleSpend = minimumEligibleSpend;
+  return c;
+}
+function pinAllCampaigns(rewardAmount, minimumEligibleSpend) {
+  getMerchantCampaigns().forEach(function(c) {
+    c.rewardAmount = rewardAmount;
+    c.minimumEligibleSpend = minimumEligibleSpend;
+  });
+}
+
 test('fresh and repeated global resets are safe and confirm on Home', async function() {
   const v = visitor();
   await reset(v);
@@ -94,6 +112,7 @@ test('fresh and repeated global resets are safe and confirm on Home', async func
 test('payment, credit, Vouch, daily marker, idempotency and stale URLs reset', async function() {
   const v = visitor();
   await reset(v);
+  pinCampaign('felicia-chicken-rice', 0.50, 5.00);
   const tx = await pay(v, 'felicia-chicken-rice', '5.00');
   await v.request('/vouch/' + tx.id, { action: 'create' });
   const token = (await v.state()).demo.paymentVerifiedVouches[0].shareToken;
@@ -149,6 +168,7 @@ test('Smart Match, preferences, location, selected merchant and partial scan res
 test('Smart Match payment attribution and live success fees reset without changing campaign settings', async function() {
   const v = visitor();
   await reset(v);
+  pinAllCampaigns(0.50, 5.00);
   await v.request('/home');
   await v.request('/smart-match/result');
   const selected = (await v.state()).demo.selectedMerchantId;
@@ -170,6 +190,7 @@ test('Smart Match payment attribution and live success fees reset without changi
 test('global reset clears both sessions, referral claim/cooldown and sender pending credit', async function() {
   const sender = visitor();
   await reset(sender);
+  pinCampaign('green-bowl', 0.50, 5.00);
   const tx = await pay(sender, 'green-bowl', '6.00');
   await sender.request('/vouch/' + tx.id, { action: 'create' });
   const token = (await sender.state()).demo.paymentVerifiedVouches[0].shareToken;
@@ -231,6 +252,7 @@ test('campaign configuration and illustrative baseline survive; live caps, fees,
   c.startTime = '01:00';
   c.endTime = '22:00';
   // Use a different active campaign for actual runtime counters.
+  pinCampaign('green-bowl', 0.50, 5.00);
   await pay(v, 'green-bowl', '5.37');
   const live = campaign('green-bowl');
   assert.equal(live.redemptionsToday, 1);
