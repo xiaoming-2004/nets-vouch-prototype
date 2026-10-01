@@ -68,6 +68,9 @@ const REFERRAL_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
 // Configure Express
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
+// Every screen renders a reward through this helper so the amount shown always comes from the
+// campaign's live rewardAmount rather than from text stored alongside it. See rewardCreditText.
+app.locals.rewardCreditText = function(amount, label) { return rewardCreditText(amount, label); };
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -461,142 +464,142 @@ const campaignSeedMetrics = {
 // Per-merchant reward configs — each stall offers something different so the card feels varied.
 // Discovered merchants (Foursquare/Google Places) get a deterministic pick from the pool below.
 const MERCHANT_REWARD_CONFIGS = {
-  'felicia-chicken-rice': { rewardAmount: 0.80, rewardLabel: 'Free side dish', minimumEligibleSpend: 5.00 },
-  'green-bowl':           { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 9.00 },
-  'woodlands-noodle-bar': { rewardAmount: 0.80, rewardLabel: 'Free soup add-on', minimumEligibleSpend: 6.00 },
-  'northside-wraps':      { rewardAmount: 0.50, rewardLabel: '$0.50 off', minimumEligibleSpend: 8.00 },
-  'spice-lane':           { rewardAmount: 0.70, rewardLabel: 'Free upsize', minimumEligibleSpend: 7.50 }
+  'felicia-chicken-rice': { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards a side dish', minimumEligibleSpend: 5.00 },
+  'green-bowl':           { rewardAmount: 1.00, rewardLabel: 'Vouch Credit', minimumEligibleSpend: 9.00 },
+  'woodlands-noodle-bar': { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards a soup add-on', minimumEligibleSpend: 6.00 },
+  'northside-wraps':      { rewardAmount: 0.50, rewardLabel: 'Vouch Credit', minimumEligibleSpend: 8.00 },
+  'spice-lane':           { rewardAmount: 0.70, rewardLabel: 'Vouch Credit towards an upsize', minimumEligibleSpend: 7.50 }
 };
 const CATEGORY_REWARD_MAPS = [
   { keywords: ['bubble tea', 'boba', 'milk tea', 'teh tarik', 'juice', 'smoothie', 'beverage', 'drinks'],
     rewards: [
-      { rewardAmount: 0.70, rewardLabel: 'Free upsize', minimumEligibleSpend: 5.00 },
-      { rewardAmount: 0.80, rewardLabel: 'Free topping', minimumEligibleSpend: 5.00 },
-      { rewardAmount: 0.60, rewardLabel: 'Free pearl add-on', minimumEligibleSpend: 4.50 },
-      { rewardAmount: 0.50, rewardLabel: 'Free sugar upgrade', minimumEligibleSpend: 4.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Vouch Credit towards an upsize', minimumEligibleSpend: 5.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards a topping', minimumEligibleSpend: 5.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Vouch Credit towards a pearl add-on', minimumEligibleSpend: 4.50 },
+      { rewardAmount: 0.50, rewardLabel: 'Vouch Credit towards a sugar upgrade', minimumEligibleSpend: 4.00 },
     ]
   },
   { keywords: ['coffee', 'cafe', 'café', 'espresso', 'kopi', 'kopitiam'],
     rewards: [
-      { rewardAmount: 0.80, rewardLabel: 'Free extra shot', minimumEligibleSpend: 5.00 },
-      { rewardAmount: 0.70, rewardLabel: 'Free upsize', minimumEligibleSpend: 5.00 },
-      { rewardAmount: 1.00, rewardLabel: 'Free pastry with any coffee', minimumEligibleSpend: 7.00 },
-      { rewardAmount: 0.50, rewardLabel: '$0.50 off any drink', minimumEligibleSpend: 4.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards an extra shot', minimumEligibleSpend: 5.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Vouch Credit towards an upsize', minimumEligibleSpend: 5.00 },
+      { rewardAmount: 1.00, rewardLabel: 'Vouch Credit towards a pastry with any coffee', minimumEligibleSpend: 7.00 },
+      { rewardAmount: 0.50, rewardLabel: 'Vouch Credit towards any drink', minimumEligibleSpend: 4.00 },
     ]
   },
   { keywords: ['bakery', 'bread', 'cake', 'pastry', 'dessert', 'waffle', 'crepe', 'gelato', 'ice cream'],
     rewards: [
-      { rewardAmount: 0.80, rewardLabel: 'Free mini cake slice', minimumEligibleSpend: 8.00 },
-      { rewardAmount: 0.60, rewardLabel: 'Free bread roll', minimumEligibleSpend: 6.00 },
-      { rewardAmount: 0.70, rewardLabel: 'Free scoop upgrade', minimumEligibleSpend: 7.00 },
-      { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 10.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards a mini cake slice', minimumEligibleSpend: 8.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Vouch Credit towards a bread roll', minimumEligibleSpend: 6.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Vouch Credit towards a scoop upgrade', minimumEligibleSpend: 7.00 },
+      { rewardAmount: 1.00, rewardLabel: 'Vouch Credit', minimumEligibleSpend: 10.00 },
     ]
   },
   { keywords: ['noodle', 'ramen', 'laksa', 'mee', 'pho', 'ban mian', 'wonton', 'udon'],
     rewards: [
-      { rewardAmount: 0.80, rewardLabel: 'Free soup add-on', minimumEligibleSpend: 6.00 },
-      { rewardAmount: 0.70, rewardLabel: 'Free extra noodles', minimumEligibleSpend: 6.00 },
-      { rewardAmount: 0.60, rewardLabel: 'Free soft-boiled egg', minimumEligibleSpend: 5.50 },
-      { rewardAmount: 0.50, rewardLabel: 'Free fishball add-on', minimumEligibleSpend: 5.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards a soup add-on', minimumEligibleSpend: 6.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Vouch Credit towards extra noodles', minimumEligibleSpend: 6.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Vouch Credit towards a soft-boiled egg', minimumEligibleSpend: 5.50 },
+      { rewardAmount: 0.50, rewardLabel: 'Vouch Credit towards a fishball add-on', minimumEligibleSpend: 5.00 },
     ]
   },
   { keywords: ['rice', 'nasi', 'cai png', 'economic rice', 'biryani', 'briyani', 'donburi'],
     rewards: [
-      { rewardAmount: 0.80, rewardLabel: 'Free side dish', minimumEligibleSpend: 5.00 },
-      { rewardAmount: 0.60, rewardLabel: 'Free extra rice', minimumEligibleSpend: 4.50 },
-      { rewardAmount: 0.70, rewardLabel: 'Free soup', minimumEligibleSpend: 5.00 },
-      { rewardAmount: 0.50, rewardLabel: 'Free egg add-on', minimumEligibleSpend: 4.50 },
+      { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards a side dish', minimumEligibleSpend: 5.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Vouch Credit towards extra rice', minimumEligibleSpend: 4.50 },
+      { rewardAmount: 0.70, rewardLabel: 'Vouch Credit towards soup', minimumEligibleSpend: 5.00 },
+      { rewardAmount: 0.50, rewardLabel: 'Vouch Credit towards an egg add-on', minimumEligibleSpend: 4.50 },
     ]
   },
   { keywords: ['indian', 'curry', 'prata', 'thosai', 'dosa', 'masala', 'tandoori'],
     rewards: [
-      { rewardAmount: 0.70, rewardLabel: 'Free upsize', minimumEligibleSpend: 7.00 },
-      { rewardAmount: 0.80, rewardLabel: 'Free papadom', minimumEligibleSpend: 7.00 },
-      { rewardAmount: 0.90, rewardLabel: 'Free raita', minimumEligibleSpend: 8.00 },
-      { rewardAmount: 0.60, rewardLabel: 'Free chutney set', minimumEligibleSpend: 6.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Vouch Credit towards an upsize', minimumEligibleSpend: 7.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards papadom', minimumEligibleSpend: 7.00 },
+      { rewardAmount: 0.90, rewardLabel: 'Vouch Credit towards raita', minimumEligibleSpend: 8.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Vouch Credit towards a chutney set', minimumEligibleSpend: 6.00 },
     ]
   },
   { keywords: ['sushi', 'japanese', 'tempura', 'bento', 'yakitori', 'teppanyaki', 'tonkatsu'],
     rewards: [
-      { rewardAmount: 0.80, rewardLabel: 'Free miso soup', minimumEligibleSpend: 12.00 },
-      { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 15.00 },
-      { rewardAmount: 0.70, rewardLabel: 'Free edamame', minimumEligibleSpend: 12.00 },
-      { rewardAmount: 0.60, rewardLabel: 'Free gyoza (2 pcs)', minimumEligibleSpend: 10.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards miso soup', minimumEligibleSpend: 12.00 },
+      { rewardAmount: 1.00, rewardLabel: 'Vouch Credit', minimumEligibleSpend: 15.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Vouch Credit towards edamame', minimumEligibleSpend: 12.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Vouch Credit towards gyoza (2 pcs)', minimumEligibleSpend: 10.00 },
     ]
   },
   { keywords: ['korean', 'bbq', 'hotpot', 'bibimbap', 'topokki', 'bulgogi', 'kimchi'],
     rewards: [
-      { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 15.00 },
-      { rewardAmount: 0.80, rewardLabel: 'Free banchan set', minimumEligibleSpend: 12.00 },
-      { rewardAmount: 0.90, rewardLabel: 'Free extra rice', minimumEligibleSpend: 12.00 },
-      { rewardAmount: 0.70, rewardLabel: 'Free kimchi refill', minimumEligibleSpend: 10.00 },
+      { rewardAmount: 1.00, rewardLabel: 'Vouch Credit', minimumEligibleSpend: 15.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards a banchan set', minimumEligibleSpend: 12.00 },
+      { rewardAmount: 0.90, rewardLabel: 'Vouch Credit towards extra rice', minimumEligibleSpend: 12.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Vouch Credit towards a kimchi refill', minimumEligibleSpend: 10.00 },
     ]
   },
   { keywords: ['burger', 'fries', 'fried chicken', 'wings', 'nuggets', 'hot dog'],
     rewards: [
-      { rewardAmount: 0.70, rewardLabel: 'Free upsize combo', minimumEligibleSpend: 8.00 },
-      { rewardAmount: 0.80, rewardLabel: 'Free extra fries', minimumEligibleSpend: 9.00 },
-      { rewardAmount: 0.60, rewardLabel: 'Free dipping sauce', minimumEligibleSpend: 7.00 },
-      { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 12.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Vouch Credit towards an upsize combo', minimumEligibleSpend: 8.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards extra fries', minimumEligibleSpend: 9.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Vouch Credit towards a dipping sauce', minimumEligibleSpend: 7.00 },
+      { rewardAmount: 1.00, rewardLabel: 'Vouch Credit', minimumEligibleSpend: 12.00 },
     ]
   },
   { keywords: ['pizza', 'pasta', 'italian', 'risotto', 'lasagna', 'carbonara'],
     rewards: [
-      { rewardAmount: 0.80, rewardLabel: 'Free garlic bread', minimumEligibleSpend: 12.00 },
-      { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 15.00 },
-      { rewardAmount: 0.70, rewardLabel: 'Free soft drink', minimumEligibleSpend: 12.00 },
-      { rewardAmount: 0.90, rewardLabel: 'Free caesar salad (small)', minimumEligibleSpend: 14.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards garlic bread', minimumEligibleSpend: 12.00 },
+      { rewardAmount: 1.00, rewardLabel: 'Vouch Credit', minimumEligibleSpend: 15.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Vouch Credit towards a soft drink', minimumEligibleSpend: 12.00 },
+      { rewardAmount: 0.90, rewardLabel: 'Vouch Credit towards a caesar salad (small)', minimumEligibleSpend: 14.00 },
     ]
   },
   { keywords: ['wrap', 'sandwich', 'toast', 'pita', 'burrito', 'sub', 'bagel'],
     rewards: [
-      { rewardAmount: 0.60, rewardLabel: 'Free side salad', minimumEligibleSpend: 8.00 },
-      { rewardAmount: 0.70, rewardLabel: 'Free upsize drink', minimumEligibleSpend: 7.00 },
-      { rewardAmount: 0.50, rewardLabel: '$0.50 off any set meal', minimumEligibleSpend: 7.00 },
-      { rewardAmount: 0.80, rewardLabel: 'Free cookie', minimumEligibleSpend: 9.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Vouch Credit towards a side salad', minimumEligibleSpend: 8.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Vouch Credit towards an upsize drink', minimumEligibleSpend: 7.00 },
+      { rewardAmount: 0.50, rewardLabel: 'Vouch Credit towards any set meal', minimumEligibleSpend: 7.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards a cookie', minimumEligibleSpend: 9.00 },
     ]
   },
   { keywords: ['malay', 'nasi lemak', 'satay', 'rendang', 'mee rebus', 'mee goreng', 'murtabak'],
     rewards: [
-      { rewardAmount: 0.80, rewardLabel: 'Free extra sambal', minimumEligibleSpend: 6.00 },
-      { rewardAmount: 0.70, rewardLabel: 'Free upsize', minimumEligibleSpend: 6.00 },
-      { rewardAmount: 0.60, rewardLabel: 'Free additional satay stick', minimumEligibleSpend: 8.00 },
-      { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 10.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards extra sambal', minimumEligibleSpend: 6.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Vouch Credit towards an upsize', minimumEligibleSpend: 6.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Vouch Credit towards an additional satay stick', minimumEligibleSpend: 8.00 },
+      { rewardAmount: 1.00, rewardLabel: 'Vouch Credit', minimumEligibleSpend: 10.00 },
     ]
   },
   { keywords: ['chinese', 'dim sum', 'char siew', 'roast', 'congee', 'porridge', 'claypot'],
     rewards: [
-      { rewardAmount: 0.80, rewardLabel: 'Free soup of the day', minimumEligibleSpend: 8.00 },
-      { rewardAmount: 0.70, rewardLabel: 'Free extra dim sum', minimumEligibleSpend: 10.00 },
-      { rewardAmount: 0.60, rewardLabel: 'Free egg tart', minimumEligibleSpend: 8.00 },
-      { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 12.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards soup of the day', minimumEligibleSpend: 8.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Vouch Credit towards extra dim sum', minimumEligibleSpend: 10.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Vouch Credit towards an egg tart', minimumEligibleSpend: 8.00 },
+      { rewardAmount: 1.00, rewardLabel: 'Vouch Credit', minimumEligibleSpend: 12.00 },
     ]
   },
   { keywords: ['thai', 'pad thai', 'tom yum', 'green curry', 'mango sticky'],
     rewards: [
-      { rewardAmount: 0.80, rewardLabel: 'Free spring roll', minimumEligibleSpend: 9.00 },
-      { rewardAmount: 0.70, rewardLabel: 'Free thai tea upgrade', minimumEligibleSpend: 8.00 },
-      { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 12.00 },
-      { rewardAmount: 0.60, rewardLabel: 'Free prawn cracker', minimumEligibleSpend: 7.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards a spring roll', minimumEligibleSpend: 9.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Vouch Credit towards a thai tea upgrade', minimumEligibleSpend: 8.00 },
+      { rewardAmount: 1.00, rewardLabel: 'Vouch Credit', minimumEligibleSpend: 12.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Vouch Credit towards a prawn cracker', minimumEligibleSpend: 7.00 },
     ]
   },
   { keywords: ['salad', 'healthy', 'grain bowl', 'poke', 'quinoa', 'acai'],
     rewards: [
-      { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 12.00 },
-      { rewardAmount: 0.80, rewardLabel: 'Free protein add-on', minimumEligibleSpend: 10.00 },
-      { rewardAmount: 0.70, rewardLabel: 'Free dressing upgrade', minimumEligibleSpend: 9.00 },
-      { rewardAmount: 0.60, rewardLabel: 'Free topping', minimumEligibleSpend: 8.00 },
+      { rewardAmount: 1.00, rewardLabel: 'Vouch Credit', minimumEligibleSpend: 12.00 },
+      { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards a protein add-on', minimumEligibleSpend: 10.00 },
+      { rewardAmount: 0.70, rewardLabel: 'Vouch Credit towards a dressing upgrade', minimumEligibleSpend: 9.00 },
+      { rewardAmount: 0.60, rewardLabel: 'Vouch Credit towards a topping', minimumEligibleSpend: 8.00 },
     ]
   },
 ];
 const GENERIC_REWARD_POOL = [
-  { rewardAmount: 0.50, rewardLabel: '$0.50 Vouch Credit', minimumEligibleSpend: 5.00 },
-  { rewardAmount: 0.80, rewardLabel: 'Free side dish', minimumEligibleSpend: 8.00 },
-  { rewardAmount: 0.70, rewardLabel: 'Free upsize', minimumEligibleSpend: 7.00 },
-  { rewardAmount: 1.00, rewardLabel: 'Earn $1.00 Vouch Credit', minimumEligibleSpend: 10.00 },
-  { rewardAmount: 0.80, rewardLabel: 'Free add-on', minimumEligibleSpend: 6.00 },
-  { rewardAmount: 0.60, rewardLabel: 'Free drink', minimumEligibleSpend: 8.00 },
-  { rewardAmount: 0.90, rewardLabel: 'Free surprise item', minimumEligibleSpend: 9.00 },
+  { rewardAmount: 0.50, rewardLabel: 'Vouch Credit', minimumEligibleSpend: 5.00 },
+  { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards a side dish', minimumEligibleSpend: 8.00 },
+  { rewardAmount: 0.70, rewardLabel: 'Vouch Credit towards an upsize', minimumEligibleSpend: 7.00 },
+  { rewardAmount: 1.00, rewardLabel: 'Vouch Credit', minimumEligibleSpend: 10.00 },
+  { rewardAmount: 0.80, rewardLabel: 'Vouch Credit towards an add-on', minimumEligibleSpend: 6.00 },
+  { rewardAmount: 0.60, rewardLabel: 'Vouch Credit towards a drink', minimumEligibleSpend: 8.00 },
+  { rewardAmount: 0.90, rewardLabel: 'Vouch Credit towards a surprise item', minimumEligibleSpend: 9.00 },
 ];
 const discoveredRewardConfigs = new Map();
 function getCategoryRewardConfig(merchant) {
@@ -630,6 +633,34 @@ function getRewardConfig(merchantId) {
   let hash = 0;
   for (let i = 0; i < merchantId.length; i++) hash = (hash * 31 + merchantId.charCodeAt(i)) | 0;
   return GENERIC_REWARD_POOL[Math.abs(hash) % GENERIC_REWARD_POOL.length];
+}
+
+// A reward is a merchant-funded Vouch Credit: a cash balance usable only at that merchant. There is
+// no item-entitlement or in-store redemption mechanism, so a stored label may only describe what the
+// credit is *towards* - never promise an item outright. The amount is never stored inside the label;
+// it is always rendered from the campaign's live rewardAmount so an edited value cannot go stale.
+const REWARD_CREDIT_NOUN = 'Vouch Credit';
+function rewardCreditText(amount, label) {
+  const value = '$' + Number(amount || 0).toFixed(2);
+  const text = String(label || '').trim();
+  return text.length > 0 ? value + ' ' + text : value + ' ' + REWARD_CREDIT_NOUN;
+}
+// Merchant-authored labels are shown to customers next to a cash amount, so they must read as a
+// credit description. Reject in-kind wording ("free ...", "complimentary ...", "on the house") and
+// any embedded currency amount, which would contradict the live rewardAmount rendered beside it.
+const IN_KIND_LABEL_PATTERNS = [
+  /\bfree\b/i, /\bcomplimentary\b/i, /\bon the house\b/i, /\bgratis\b/i,
+  /\bno charge\b/i, /\bgiveaway\b/i, /\bredeem(?:able)? for\b/i
+];
+function validateRewardLabel(rawLabel) {
+  const label = String(rawLabel || '').trim().replace(/\s+/g, ' ');
+  if (label.length === 0 || label.length > 50) return null;
+  if (/[<>]/.test(label)) return null;
+  if (/\$\s*\d/.test(label) || /\d\s*(?:cents?|dollars?)\b/i.test(label)) return null;
+  if (IN_KIND_LABEL_PATTERNS.some(function(pattern) { return pattern.test(label); })) return null;
+  // Must state that this is a credit, so the customer is never promised an item.
+  if (!new RegExp(REWARD_CREDIT_NOUN.replace(/ /g, '\\s+'), 'i').test(label)) return null;
+  return label;
 }
 
 // The illustrative baseline is displayed separately; live metrics start at zero.
@@ -692,7 +723,12 @@ function getMerchantHourlyProfile(merchantId) {
   return MERCHANT_HOURLY_PROFILES[merchantId] || DEFAULT_HOURLY_PROFILE;
 }
 
-function generateMerchantInsights(merchant, campaign, seedMetrics, profile, weeklyData, acquisitionData) {
+// Rule-based observations over the illustrative hourly/weekly baseline. These are deterministic
+// if/else statements in this file - not a model, not an inference over live data, and not evidence
+// of anything that happened during a demonstration. Every claim here must be readable straight off
+// the baseline numbers the report already shows; anything about sales lift, return-visit rate or
+// perceived value would need outcome data this prototype does not collect, so none is asserted.
+function generateMerchantInsights(merchant, campaign, seedMetrics, profile, weeklyData, liveAcquisition) {
   const insights = [];
   const profileMax = Math.max.apply(null, profile) || 1;
   const peakIdx = profile.indexOf(profileMax);
@@ -700,32 +736,32 @@ function generateMerchantInsights(merchant, campaign, seedMetrics, profile, week
   const eveningAvg = (profile[20] + profile[21] + profile[22]) / 3;
   const afternoonTotal = profile[14] + profile[15] + profile[16];
   const lunchTotal = profile[11] + profile[12] + profile[13] || 1;
-  // 1. Opening hours opportunity
+  // 1. Shape of the trading day.
   if (morningAvg < 1.5 && peakIdx >= 11) {
     insights.push({
       icon: '🕙',
-      headline: 'Opening earlier has minimal upside',
-      detail: 'Morning traffic before 10 AM is very low. Maintaining your current opening time avoids prep cost with no meaningful revenue loss — and lets your team focus on quality at peak.',
-      confidence: 'High'
+      headline: 'Baseline morning traffic is very low',
+      detail: 'In the illustrative baseline, volume before 10 AM is close to zero and the busiest hour is around midday. Opening-hour decisions would need real trading data this prototype does not collect.',
+      basis: 'Illustrative hourly baseline'
     });
   } else if (eveningAvg < 1 && peakIdx < 18) {
     insights.push({
       icon: '🕗',
-      headline: 'Consider closing 30 min earlier',
-      detail: 'Transactions after 8 PM drop close to zero. Closing earlier can reduce staffing and utility cost with minimal revenue impact.',
-      confidence: 'High'
+      headline: 'Baseline evening traffic is very low',
+      detail: 'In the illustrative baseline, volume after 8 PM is close to zero. Closing-hour decisions would need real trading data this prototype does not collect.',
+      basis: 'Illustrative hourly baseline'
     });
   }
-  // 2. Afternoon dead zone
+  // 2. Quietest window, stated only as a ratio of the baseline itself.
   if (afternoonTotal / lunchTotal < 0.35) {
     insights.push({
       icon: '📉',
-      headline: '2–5 PM is your quietest window',
-      detail: 'Afternoon traffic is about ' + Math.round(100 * afternoonTotal / lunchTotal) + '% of your lunch volume. A limited-time Smart Match deal during this slot historically lifts slow-period sales by 15–25%.',
-      confidence: 'High'
+      headline: '2-5 PM is the quietest window in the baseline',
+      detail: 'Afternoon volume is about ' + Math.round(100 * afternoonTotal / lunchTotal) + '% of lunch volume in the illustrative baseline. Whether a campaign in that slot would change it is untested here.',
+      basis: 'Illustrative hourly baseline'
     });
   }
-  // 3. Weakest day of week
+  // 3. Weakest and strongest day in the illustrative weekly series.
   if (weeklyData && weeklyData.length >= 7) {
     const vals = weeklyData.map(function(d) { return d.payments; });
     const minV = Math.min.apply(null, vals);
@@ -735,36 +771,30 @@ function generateMerchantInsights(merchant, campaign, seedMetrics, profile, week
     if (weakDay && strongDay && weakDay.label !== strongDay.label) {
       insights.push({
         icon: '📅',
-        headline: weakDay.label + 's need a push',
-        detail: weakDay.label + ' averages ' + minV + ' payments vs ' + maxV + ' on ' + strongDay.label + 's. Smart Match promotions targeted on ' + weakDay.label + 's could close that gap over 4–6 weeks.',
-        confidence: 'Medium'
+        headline: 'Baseline volume varies across the week',
+        detail: weakDay.label + ' is the lowest day in the illustrative series at ' + minV +
+          ' payments, against ' + maxV + ' on ' + strongDay.label + '. These are sample figures, not dated records.',
+        basis: 'Illustrative weekly baseline'
       });
     }
   }
-  // 4. Reward type effectiveness
-  const rl = (campaign && campaign.rewardLabel) ? campaign.rewardLabel : '';
-  if (rl.toLowerCase().includes('free')) {
+  // 4. Live campaign spend, straight from recorded payments.
+  if (liveAcquisition && liveAcquisition.total > 0) {
     insights.push({
-      icon: '⭐',
-      headline: '"' + rl + '" drives strong return visits',
-      detail: 'Tangible free-item rewards show a 30–40% higher next-visit rate vs flat cashback at comparable stalls. Your current offer is well-positioned for repeat custom.',
-      confidence: 'Medium'
+      icon: '🎯',
+      headline: liveAcquisition.smartMatch.pct + '% of live payments came from Smart Match',
+      detail: 'Of ' + liveAcquisition.total + ' payment(s) recorded since the last Reset Demo, ' +
+        liveAcquisition.smartMatch.count + ' arrived through Smart Match, ' +
+        liveAcquisition.sharedVouch.count + ' through a Shared Vouch and ' +
+        liveAcquisition.directScan.count + ' through a Direct Scan.',
+      basis: 'Live demo payments'
     });
   } else {
     insights.push({
-      icon: '💡',
-      headline: 'A free item reward could outperform credits',
-      detail: 'Switching from credits to a free side or upsize typically increases perceived value 2–3× at the same cost. Worth testing for a month to see if return-visit rate improves.',
-      confidence: 'Medium'
-    });
-  }
-  // 5. Smart Match growth opportunity
-  if (acquisitionData && acquisitionData.smartMatch.pct < 30) {
-    insights.push({
       icon: '🎯',
-      headline: 'Smart Match still has room to grow',
-      detail: 'Only ' + acquisitionData.smartMatch.pct + '% of Vouch payments are AI-attributed. Increasing your daily reward budget on quieter days can boost Smart Match visibility and drive new-customer discovery.',
-      confidence: 'Medium'
+      headline: 'No live payments recorded yet',
+      detail: 'Nothing has been paid through this prototype since the last Reset Demo, so there is no live channel mix to report. Complete a payment to populate it.',
+      basis: 'Live demo payments'
     });
   }
   return insights.slice(0, 4);
@@ -784,18 +814,6 @@ function getRewardOptionsForMerchant(merchant) {
     }
   }
   return GENERIC_REWARD_POOL.slice(0, 6).map(function(r) { return r.rewardLabel; });
-}
-
-function getMerchantLiveFeedPool(merchant) {
-  const price = (merchant.price || 6.00);
-  return [
-    { source: 'SMART_MATCH',  item: merchant.itemName || 'Signature item',    amount: '$' + price.toFixed(2) },
-    { source: 'DIRECT_SCAN',  item: null,                                      amount: '$' + price.toFixed(2) },
-    { source: 'SHARED_VOUCH', item: merchant.itemName || null,                 amount: '$' + price.toFixed(2) },
-    { source: 'DIRECT_SCAN',  item: null,                                      amount: '$' + (price * 2).toFixed(2) },
-    { source: 'SMART_MATCH',  item: merchant.itemName || null,                 amount: '$' + price.toFixed(2) },
-    { source: 'DIRECT_SCAN',  item: null,                                      amount: '$' + (price * 1.5).toFixed(2) },
-  ];
 }
 
 // Cross-session payment feed with labelled illustrative examples and live payments.
@@ -1484,11 +1502,28 @@ const DISCOVERY_CACHE_TTL_MS = 15 * 60 * 1000;
 const DISCOVERY_CACHE_MAX_ENTRIES = 200;
 const discoveryCache = new Map();
 
-// Roughly 110 m latitude buckets near Singapore; query is part of the key so
-// craving-specific and broad food searches never share provider results.
-function discoveryCacheKey(location, query) {
+// Foursquare results are only valid for the radius they were searched with: a 400 m result set
+// cannot answer an 800 m request, because the merchants between 400 m and 800 m were never returned
+// by the provider and so can never appear, however the results are filtered afterwards.
+//
+// Key semantics: location bucket (roughly 110 m near Singapore) + the radius actually searched +
+// the query. The radius is quantised ONCE, upwards to the next DISCOVERY_RADIUS_STEP_METRES, and
+// the same quantised value is used both for the provider request and for the cache key. A cache hit
+// therefore always means "same place, same query, same radius actually searched", so a stored entry
+// can never under-cover a later, wider request. Quantising upwards (never downwards) lets nearby
+// walking limits share one entry instead of fragmenting the cache per metre, and never shrinks a
+// search; any extra far merchant a slightly wider search returns is removed for each visitor by
+// merchantMatchesProfile's exact distance check. Query stays in the key so craving-specific and
+// broad food searches never share provider results.
+const DISCOVERY_RADIUS_STEP_METRES = 250;
+function effectiveSearchRadiusMetres(radiusMetres) {
+  const requested = Number(radiusMetres) > 0 ? Number(radiusMetres) : demoLocation.searchRadiusMetres;
+  return Math.ceil(requested / DISCOVERY_RADIUS_STEP_METRES) * DISCOVERY_RADIUS_STEP_METRES;
+}
+function discoveryCacheKey(location, query, radiusMetres) {
   const bucket = location.latitude.toFixed(3) + ',' + location.longitude.toFixed(3);
-  return bucket + '|' + query.trim().toLowerCase().replace(/\s+/g, ' ');
+  return bucket + '|' + effectiveSearchRadiusMetres(radiusMetres) + 'm|' +
+    query.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 function clearDiscoveryCache() {
@@ -1523,17 +1558,20 @@ function cachedFoursquareResults(entry, location) {
 async function fetchFoursquarePlaces(searchLocation, query, radiusMetres) {
   const now = Date.now();
   removeExpiredDiscoveryEntries(now);
-  const cacheKey = discoveryCacheKey(searchLocation, query);
+  const searchRadius = effectiveSearchRadiusMetres(radiusMetres);
+  const cacheKey = discoveryCacheKey(searchLocation, query, radiusMetres);
   const cached = discoveryCache.get(cacheKey);
   if (cached) {
     logDiscovery('FOURSQUARE CACHE HIT\nbucket: ' + cacheKey.split('|')[0] +
-      '\nquery: ' + query + '\nage: ' + Math.floor((now - cached.createdAt) / 1000) + 's');
+      '\nradius: ' + searchRadius + 'm\nquery: ' + query +
+      '\nage: ' + Math.floor((now - cached.createdAt) / 1000) + 's');
     const results = cachedFoursquareResults(cached, searchLocation);
     const parsed = parseFoursquareNearbyPlaces(results, searchLocation);
     return { ok: true, rawCount: results.length, results: results, merchants: parsed.merchants,
       containersRemoved: parsed.containersRemoved, note: results.length === 0 ? 'empty response' : null };
   }
-  logDiscovery('FOURSQUARE CACHE MISS\nbucket: ' + cacheKey.split('|')[0] + '\nquery: ' + query);
+  logDiscovery('FOURSQUARE CACHE MISS\nbucket: ' + cacheKey.split('|')[0] +
+    '\nradius: ' + searchRadius + 'm\nquery: ' + query);
   const timeoutMs = requestBudget.callTimeout(PLACES_REQUEST_TIMEOUT_MS);
   if (timeoutMs < MIN_CALL_MS) {
     requestBudget.markDeadlineHit('foursquare search skipped');
@@ -1546,7 +1584,7 @@ async function fetchFoursquarePlaces(searchLocation, query, radiusMetres) {
   try {
    const url = new URL('https://places-api.foursquare.com/places/search');
     url.searchParams.set('ll', searchLocation.latitude + ',' + searchLocation.longitude);
-    url.searchParams.set('radius', String(radiusMetres || demoLocation.searchRadiusMetres));
+    url.searchParams.set('radius', String(searchRadius));
     url.searchParams.set('query', query);
     url.searchParams.set('sort', 'DISTANCE');
     url.searchParams.set('limit', String(FOURSQUARE_RESULT_LIMIT));
@@ -1574,7 +1612,7 @@ async function fetchFoursquarePlaces(searchLocation, query, radiusMetres) {
     const createdAt = Date.now();
     discoveryCache.set(cacheKey, { createdAt: createdAt, expiresAt: createdAt + DISCOVERY_CACHE_TTL_MS,
       latitude: searchLocation.latitude, longitude: searchLocation.longitude,
-      results: structuredClone(data.results) });
+      radiusMetres: searchRadius, results: structuredClone(data.results) });
     callOk = true;
     return { ok: true, rawCount: data.results.length, results: data.results, merchants: parsed.merchants,
       containersRemoved: parsed.containersRemoved, note: data.results.length === 0 ? 'empty response' : null };
@@ -4336,11 +4374,10 @@ app.get('/merchant', function(req, res) {
     tab: req.query.tab === 'results' ? 'results' : 'campaign',
     availability: getCampaignAvailability(campaign, false),
     maxDailyCost: getMaxDailyCostEstimate(campaign),
-    error: req.query.error === 'invalid',
+    error: req.query.error === 'invalid' || req.query.error === 'label' ? req.query.error : false,
     recentPayments: merchantPaymentFeed.filter(function(p) {
       return p.merchantId === merchant.id && !p.illustrative;
     }).slice(0, 12),
-    liveFeedPool: JSON.stringify(getMerchantLiveFeedPool(merchant)),
     rewardOptions: getRewardOptionsForMerchant(merchant)
   });
 });
@@ -4353,56 +4390,87 @@ app.get('/merchant/report', function(req, res) {
   const campaign = findCampaign(demo, merchant.id);
   const seedMetrics = campaignSeedMetrics[merchant.id] || null;
 
+  // This report separates two kinds of figure and never adds them together:
+  //   LIVE  - derived only from payments actually recorded by this prototype since the last
+  //           Reset Demo (campaign.metrics and the non-illustrative payment feed).
+  //   DEMO  - a fixed illustrative baseline shipped with the prototype so the charts have shape
+  //           during a demonstration. It did not happen today and is labelled as illustrative
+  //           everywhere it appears.
+  // The hourly profile, weekday weights and seeded weekly totals are all DEMO data: the prototype
+  // keeps no per-hour or per-weekday history, so those charts cannot be live and do not claim to be.
   const profile = getMerchantHourlyProfile(merchant.id);
   const profileMax = Math.max.apply(null, profile) || 1;
   const profileSum = profile.reduce(function(s, v) { return s + v; }, 0) || 1;
-  const dailyAvgPayments = seedMetrics ? Math.round(seedMetrics.payments / 7) : 20;
+  const baselineDailyPayments = seedMetrics ? Math.round(seedMetrics.payments / 7) : 20;
 
-  // Hourly chart: hours 8am–9pm (indices 8–21)
+  // Illustrative hourly shape, hours 8am-9pm (indices 8-21). Counts are a modelled distribution of
+  // the illustrative daily average, not recorded transactions.
   const chartHours = profile.slice(8, 22).map(function(weight, i) {
     const h = i + 8;
     return {
       label: h < 12 ? h + 'am' : h === 12 ? '12pm' : (h - 12) + 'pm',
-      count: Math.round(dailyAvgPayments * weight / profileSum),
+      count: Math.round(baselineDailyPayments * weight / profileSum),
       height: Math.round(100 * weight / profileMax)
     };
   });
 
-  // Weekly trend
-  const weekLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  // Illustrative weekly shape. Labelled Day 1-7 because the prototype has no dated history to map
+  // these onto real weekdays, and calling them "last 7 days" would assert a range it cannot support.
   const rawDaily = seedMetrics ? seedMetrics.dailyPayments : [15, 14, 16, 18, 20, 22, 12];
   const maxDaily = Math.max.apply(null, rawDaily) || 1;
   const weeklyData = rawDaily.map(function(v, i) {
-    return { label: weekLabels[i % 7], payments: v, height: Math.round(100 * v / maxDaily) };
+    return { label: 'Day ' + (i + 1), payments: v, height: Math.round(100 * v / maxDaily) };
   });
 
-  // KPIs
   const peakIdx = profile.indexOf(profileMax);
   const peakLabel = peakIdx < 12 ? peakIdx + 'am' : peakIdx === 12 ? '12pm' : (peakIdx - 12) + 'pm';
   const peakEndLabel = (peakIdx + 1) < 12 ? (peakIdx + 1) + 'am' : (peakIdx + 1) === 12 ? '12pm' : (peakIdx - 11) + 'pm';
-  const lm = campaign.metrics;
-  const seedPay = seedMetrics ? seedMetrics.payments : 0;
-  const seedSales = seedMetrics ? (seedMetrics.smartMatchSales + seedMetrics.sharedVouchSales + seedMetrics.directScanSales) : 0;
-  const liveSales = lm.smartMatchSales + lm.sharedVouchSales + lm.directScanSales;
-  const totalPay = Math.max(seedPay + lm.payments, 1);
-  const avgBasket = ((seedSales + liveSales) / totalPay).toFixed(2);
-  const todayPay = dailyAvgPayments + lm.payments;
 
-  // Acquisition mix (seed + live)
-  const smN = (seedMetrics ? seedMetrics.smartMatchPayments : 0) + lm.smartMatchPayments;
-  const svN = (seedMetrics ? seedMetrics.sharedVouchPayments : 0) + lm.sharedVouchPayments;
-  const dsN = (seedMetrics ? seedMetrics.directScanPayments : 0) + lm.directScanPayments;
-  const acqN = smN + svN + dsN || 1;
-  const acquisitionData = {
-    smartMatch:  { count: smN, pct: Math.round(100 * smN / acqN) },
-    sharedVouch: { count: svN, pct: Math.round(100 * svN / acqN) },
-    directScan:  { count: dsN, pct: Math.round(100 * dsN / acqN) }
+  // LIVE figures: recorded payments only.
+  const lm = campaign.metrics;
+  const liveSales = money(lm.smartMatchSales + lm.sharedVouchSales + lm.directScanSales);
+  const liveKpis = {
+    payments: lm.payments,
+    sales: liveSales.toFixed(2),
+    // An average basket needs at least one recorded payment; otherwise there is nothing to average.
+    avgBasket: lm.payments > 0 ? (liveSales / lm.payments).toFixed(2) : null,
+    rewardCost: lm.rewardCost.toFixed(2),
+    successFees: campaign.platformFeeAccrued.toFixed(2)
   };
 
-  // Heatmap: Mon–Sun × 9am–8pm (12 cols)
+  // DEMO baseline figures, shown in their own card and never merged into the live ones.
+  const baselineSales = seedMetrics
+    ? money(seedMetrics.smartMatchSales + seedMetrics.sharedVouchSales + seedMetrics.directScanSales)
+    : 0;
+  const baselineKpis = seedMetrics ? {
+    payments: seedMetrics.payments,
+    sales: baselineSales.toFixed(2),
+    avgBasket: seedMetrics.payments > 0 ? (baselineSales / seedMetrics.payments).toFixed(2) : null,
+    dailyAverage: baselineDailyPayments,
+    peakHour: peakLabel + '-' + peakEndLabel
+  } : null;
+
+  // Channel mix is reported twice - live and illustrative - so neither can borrow the other's volume.
+  function channelMix(smartMatch, sharedVouch, directScan) {
+    const total = smartMatch + sharedVouch + directScan;
+    function entry(count) {
+      return { count: count, pct: total > 0 ? Math.round(100 * count / total) : 0 };
+    }
+    return {
+      total: total,
+      smartMatch: entry(smartMatch), sharedVouch: entry(sharedVouch), directScan: entry(directScan)
+    };
+  }
+  const liveAcquisition = channelMix(lm.smartMatchPayments, lm.sharedVouchPayments, lm.directScanPayments);
+  const baselineAcquisition = seedMetrics
+    ? channelMix(seedMetrics.smartMatchPayments, seedMetrics.sharedVouchPayments, seedMetrics.directScanPayments)
+    : null;
+
+  // Illustrative busy-period shape: the hourly profile weighted per weekday. Not a measurement.
   const heatmapHourLabels = ['9am','10am','11am','12pm','1pm','2pm','3pm','4pm','5pm','6pm','7pm','8pm'];
+  const heatWeekLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const heatMax = profileMax * Math.max.apply(null, HEATMAP_DAY_WEIGHTS);
-  const heatmapData = weekLabels.map(function(day, d) {
+  const heatmapData = heatWeekLabels.map(function(day, d) {
     return {
       day: day,
       cells: heatmapHourLabels.map(function(hlabel, hi) {
@@ -4418,20 +4486,25 @@ app.get('/merchant/report', function(req, res) {
     };
   });
 
-  const insights = generateMerchantInsights(merchant, campaign, seedMetrics, profile, weeklyData, acquisitionData);
+  const insights = generateMerchantInsights(merchant, campaign, seedMetrics, profile, weeklyData, liveAcquisition);
 
   res.render('merchant-report', {
     merchants: merchantList, merchant: merchant, campaign: campaign,
     tab: 'report',
-    kpis: { todayRevenue: (todayPay * parseFloat(avgBasket)).toFixed(2), todayTransactions: todayPay, avgBasketSize: avgBasket, peakHour: peakLabel + '–' + peakEndLabel },
+    liveKpis: liveKpis,
+    baselineKpis: baselineKpis,
     chartHours: chartHours,
     weeklyData: weeklyData,
     heatmapData: heatmapData,
     heatmapHourLabels: heatmapHourLabels,
-    acquisitionData: acquisitionData,
+    liveAcquisition: liveAcquisition,
+    baselineAcquisition: baselineAcquisition,
     insights: insights,
-    liveFeedPool: JSON.stringify(getMerchantLiveFeedPool(merchant)),
-    recentPayments: merchantPaymentFeed.filter(function(p) { return p.merchantId === merchant.id; }).slice(0, 8)
+    // Only payments this prototype actually recorded may appear in the live feed. Illustrative seed
+    // rows are excluded here; they are summarised in the labelled baseline card instead.
+    recentPayments: merchantPaymentFeed.filter(function(p) {
+      return p.merchantId === merchant.id && !p.illustrative;
+    }).slice(0, 8)
   });
 });
 
@@ -4444,6 +4517,13 @@ app.post('/merchant/offer', function(req, res) {
   const paymentsCap = Number(req.body.maxRewardedPaymentsPerDay);
   const budgetCap = Number(req.body.maxRewardBudgetPerDay);
   const destination = '/merchant?merchantId=' + encodeURIComponent(req.body.merchantId || '');
+  // An empty label leaves the current one in place; anything else must pass credit-label validation
+  // before any field is written, so a rejected submission never half-applies.
+  const rawLabel = req.body.rewardLabel === '__custom__'
+    ? String(req.body.rewardLabelCustom || '').trim()
+    : String(req.body.rewardLabel || '').trim();
+  const validatedLabel = rawLabel.length === 0 ? '' : validateRewardLabel(rawLabel);
+  if (validatedLabel === null) return res.redirect(destination + '&error=label');
   if (!campaign || !Number.isFinite(reward) || reward < 0 || reward > 50 ||
       !Number.isFinite(minimumSpend) || minimumSpend < 0 || minimumSpend > 1000 ||
       !Number.isInteger(paymentsCap) || paymentsCap < 1 || paymentsCap > 1000 ||
@@ -4458,12 +4538,54 @@ app.post('/merchant/offer', function(req, res) {
   campaign.startTime = req.body.startTime;
   campaign.endTime = req.body.endTime;
   campaign.status = req.body.status === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE';
-  const rawLabel = req.body.rewardLabel === '__custom__'
-    ? String(req.body.rewardLabelCustom || '').trim()
-    : String(req.body.rewardLabel || '').trim();
-  if (rawLabel.length > 0 && rawLabel.length <= 50) campaign.rewardLabel = rawLabel;
+  if (validatedLabel) campaign.rewardLabel = validatedLabel;
   res.redirect(destination);
 });
+// Clears the demo state of every OTHER stored session, where the configured store can enumerate
+// them. MemoryStore implements all(); the Upstash store deliberately implements only get/set/destroy
+// because the Upstash REST API has no cheap key scan, so there is nothing to enumerate there.
+//
+// Enumeration is therefore an optimisation, not the mechanism. What actually makes the reset global
+// is the reset generation: initialiseDemoSession runs on every request and replaces the demo state
+// of any session whose stored generation is behind the current one. So on either store every other
+// session is reset the moment it is next used - including a session whose in-flight save lands
+// *after* this reset, because that save carries the superseded generation and is replaced on its
+// next read rather than restoring pre-reset state.
+//
+// Limitation, deliberately not papered over: the generation counter lives in this process. With
+// Upstash configured across several server instances, a reset on one instance does not reach
+// sessions being served by another. Single instance (including local and a single Vercel lambda)
+// resets completely. See handover.md.
+function resetOtherStoredSessions(currentSessionId, generation, done) {
+  if (typeof demoStore.all !== 'function') {
+    // Not enumerable: the reset generation covers these sessions lazily on their next request.
+    return done(null, { swept: 0, enumerable: false });
+  }
+  demoStore.all(function(error, sessions) {
+    if (error) return done(error);
+    const ids = Object.keys(sessions || {}).filter(function(id) { return id !== currentSessionId; });
+    if (!ids.length) return done(null, { swept: 0, enumerable: true });
+    let remaining = ids.length;
+    let failure = null;
+    ids.forEach(function(id) {
+      const stored = sessions[id];
+      if (!stored || typeof stored !== 'object') {
+        remaining -= 1;
+        if (!remaining) done(failure, { swept: ids.length, enumerable: true });
+        return;
+      }
+      stored.demo = createInitialDemo('jia');
+      stored.demoUserStates = {};
+      stored.demoResetGeneration = generation;
+      demoStore.set(id, stored, function(saveError) {
+        if (saveError && !failure) failure = saveError;
+        remaining -= 1;
+        if (!remaining) done(failure, { swept: ids.length, enumerable: true });
+      });
+    });
+  });
+}
+
 app.post('/reset-demo', function(req, res) {
   // This helper control has always reset shared campaign state, so reset all demo
   // sessions too. The generation also protects against an in-flight stale save.
@@ -4483,25 +4605,15 @@ app.post('/reset-demo', function(req, res) {
   req.session.demo = createInitialDemo('jia');
   req.session.demoUserStates = {};
   req.session.demoResetGeneration = demoResetGeneration;
-  demoStore.all(function(error, sessions) {
+  resetOtherStoredSessions(req.sessionID, demoResetGeneration, function(error) {
+    // A store failure is reported, never swallowed: the operator must not be told the demo was
+    // reset when part of it was not. The requesting session is saved explicitly here rather than
+    // left to the session middleware's save at response end, because that save completes after the
+    // redirect has been sent - so a failed write would otherwise still show "reset=done".
     if (error) return res.status(500).send('Demo reset could not be completed');
-    const ids = Object.keys(sessions || {}).filter(function(id) { return id !== req.sessionID; });
-    let remaining = ids.length;
-    if (!remaining) return res.redirect('/home?reset=done');
-    let failed = false;
-    ids.forEach(function(id) {
-      const stored = sessions[id];
-      stored.demo = createInitialDemo('jia');
-      stored.demoUserStates = {};
-      stored.demoResetGeneration = demoResetGeneration;
-      demoStore.set(id, stored, function(saveError) {
-        if (saveError) failed = true;
-        remaining -= 1;
-        if (!remaining) {
-          if (failed) return res.status(500).send('Demo reset could not be completed');
-          res.redirect('/home?reset=done');
-        }
-      });
+    req.session.save(function(saveError) {
+      if (saveError) return res.status(500).send('Demo reset could not be completed');
+      res.redirect('/home?reset=done');
     });
   });
 });
@@ -4521,6 +4633,18 @@ module.exports = { app: app, createInitialDemo: createInitialDemo, demoStore: de
   MATCH_STATE: MATCH_STATE,
   getMerchantCampaigns: function() { return merchantCampaignStore; },
   resetMerchantCampaigns: function() { merchantCampaignStore = createCampaigns(); },
+  // Reward-truthfulness hooks: the shipped reward catalogue, the credit renderer every screen
+  // uses, and the server-side label validator.
+  getRewardCatalogueForTest: function() {
+    const labels = [];
+    Object.keys(MERCHANT_REWARD_CONFIGS).forEach(function(id) { labels.push(MERCHANT_REWARD_CONFIGS[id]); });
+    CATEGORY_REWARD_MAPS.forEach(function(map) { map.rewards.forEach(function(r) { labels.push(r); }); });
+    GENERIC_REWARD_POOL.forEach(function(r) { labels.push(r); });
+    return labels;
+  },
+  getRewardConfigForTest: getRewardConfig,
+  rewardCreditText: rewardCreditText,
+  validateRewardLabel: validateRewardLabel,
   resetReferralCooldowns: function() { referralCooldowns.clear(); },
   clearDiscoveryCache: clearDiscoveryCache, clearMerchantResearchCache: clearMerchantResearchCache,
   clearSearchIntentCache: clearSearchIntentCache, classifyMealEligibility: classifyMealEligibility,

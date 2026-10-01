@@ -118,6 +118,12 @@ button:disabled { opacity:.55; cursor:wait; }
 .reward small { display:block; font-size:11.5px; font-weight:500; margin-top:2px; }
 .reward-note { margin:14px 0 4px; color:var(--nets-red); font-size:13px; font-weight:650; }
 .field { display:grid; gap:7px; font-size:13px; font-weight:600; color:var(--text); }
+/* A grouped set of radios is a real fieldset so its legend names the group for assistive tech;
+   strip the browser's default fieldset chrome so it lays out exactly like a .field div. */
+fieldset.field { padding:0; margin:0; border:0; min-width:0; }
+fieldset.field>legend.field-label { float:left; width:100%; padding:0; margin:0 0 7px; }
+fieldset.field>legend.field-label+* { clear:both; }
+.field-hint { font-size:11.5px; font-weight:500; line-height:1.5; color:var(--text-2); }
 .field input,.field select { width:100%; min-height:48px; background:var(--surface); padding:12px 14px; border:1px solid #d3dae2; border-radius:var(--r-sm); color:var(--text); transition:border-color .15s,box-shadow .15s; }
 .field input:focus,.field select:focus { outline:none; border-color:var(--focus); box-shadow:0 0 0 3px rgba(47,127,209,.18); }
 .field input:invalid:not(:placeholder-shown) { border-color:var(--danger); }
@@ -624,7 +630,7 @@ button:disabled { opacity:.55; cursor:wait; }
 .match-map-open:focus-visible { outline:3px solid var(--focus); outline-offset:2px; }
 .match-map-hint { display:inline-flex; align-items:center; gap:4px; padding:6px 10px; border-radius:var(--r-pill); background:rgba(255,255,255,.94); box-shadow:var(--shadow-sm); color:var(--nets-navy); font-size:12px; font-weight:650; }
 .match-map-hint svg { width:14px; height:14px; fill:none; stroke:var(--nets-red); stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round; }
-.match-card .visually-hidden { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.visually-hidden { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
 
 /* ---------- Business Report page ---------- */
 .report-link { margin-bottom:16px; }
@@ -673,6 +679,8 @@ button:disabled { opacity:.55; cursor:wait; }
 .insight-badge { display:inline-block; font-size:10px; font-weight:750; text-transform:uppercase; letter-spacing:.5px; padding:2px 7px; border-radius:5px; }
 .insight-badge--high { background:var(--success-bg); color:var(--success); }
 .insight-badge--medium { background:var(--warn-bg); color:var(--warn); }
+/* States what an observation was read off, in place of a confidence claim the demo cannot support. */
+.insight-badge--basis { background:var(--surface-2); color:var(--text-2); text-transform:none; letter-spacing:.2px; }
 .insight-detail { font-size:13px; color:var(--text-2); margin:0; line-height:1.5; }
 
 /* ---------- Campaign status badge ---------- */
@@ -701,5 +709,17 @@ button:disabled { opacity:.55; cursor:wait; }
 .kpi-card>.eyebrow { display:block; padding:14px 18px 12px; border-bottom:1px solid var(--border); margin:0; }
 .kpi-card .roi-summary { margin:0; border:0; box-shadow:none; border-radius:0; }
 
-/* ---------- Report section heading (AI Insights label) ---------- */
+/* ---------- Report section heading ---------- */
 .report-section-heading { font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:.8px; color:var(--text-2); margin:22px 0 10px 2px; }
+
+/* ---------- Live vs illustrative labelling in the merchant report ----------
+   Illustrative sections are fixed sample data, so they are visually set apart from live figures
+   and every one carries its own caption saying so. */
+.report-note { font-size:12.5px; line-height:1.55; color:var(--text-2); margin:0 0 14px; padding:11px 13px; border-radius:var(--r-sm); background:var(--surface-2); }
+.report-note strong { color:var(--text); font-weight:700; }
+.report-note--demo { border-left:3px solid var(--warn); }
+.report-caption { font-size:11.5px; line-height:1.5; color:var(--text-2); margin:10px 18px 14px; }
+.kpi-card .report-caption, .kpi-card .report-empty { margin:0; padding:11px 18px 14px; border-top:1px solid var(--border); }
+.report-empty { font-size:12.5px; line-height:1.5; color:var(--text-2); margin:10px 0 0; }
+.card.is-illustrative { border-left:3px solid var(--warn); }
+.card.is-illustrative>.eyebrow { color:var(--warn); }

@@ -1,6 +1,17 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { app, demoStore, resetMerchantCampaigns, resetReferralCooldowns } = require('../app');
+const { app, demoStore, getMerchantCampaigns, resetMerchantCampaigns, resetReferralCooldowns } = require('../app');
+
+// Reward amounts and minimum spends are per-merchant campaign configuration a merchant can edit, so
+// a test that asserts literal dollar figures pins the campaign it depends on instead of inheriting
+// whatever the merchant catalogue currently ships.
+function pinCampaign(merchantId, rewardAmount, minimumEligibleSpend) {
+  const campaign = getMerchantCampaigns().find(function(item) { return item.merchantId === merchantId; });
+  assert.ok(campaign, 'no campaign for ' + merchantId);
+  campaign.rewardAmount = rewardAmount;
+  campaign.minimumEligibleSpend = minimumEligibleSpend;
+  return campaign;
+}
 
 // Tests must never reach real providers, even when .env configures keys: Google is the default
 // discovery provider and Groq the default ranker, so each test starts without those (and the other
@@ -118,6 +129,7 @@ test('one successful Direct Scan shows one owned NETS amount and no zero-credit 
 });
 
 test('merchant credit used and earned display factual two-decimal amounts', async function() {
+  pinCampaign('felicia-chicken-rice', 0.50, 5.00);
   const v = visitor();
   await v.request('/home');
   await v.change(function(demo) { demo.vouchCredits['felicia-chicken-rice'] = 1; });

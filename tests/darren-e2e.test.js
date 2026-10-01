@@ -34,7 +34,15 @@ test.after(function() {
   if (originalFoursquareKey === undefined) delete process.env.FOURSQUARE_API_KEY;
   else process.env.FOURSQUARE_API_KEY = originalFoursquareKey;
 });
-test.beforeEach(async function() { await visitor().request('/reset-demo', {}); });
+// Every test here asserts the referral money trail in literal dollars ($0.50 receiver reward,
+// $0.20 sender bonus). Reward amounts and minimum spends are per-merchant campaign configuration a
+// merchant can edit, so this suite pins one known offer on every campaign after each reset rather
+// than inheriting whatever the merchant catalogue ships. The per-merchant catalogue itself is
+// covered in tests/merchant-rewards.test.js.
+test.beforeEach(async function() {
+  await visitor().request('/reset-demo', {});
+  getMerchantCampaigns().forEach(function(c) { c.rewardAmount = 0.50; c.minimumEligibleSpend = 5.00; });
+});
 
 function visitor() {
   let cookie = '';

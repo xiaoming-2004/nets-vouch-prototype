@@ -2,6 +2,18 @@ node_modules/
 dist/
 coverage/
 *.local
-.env
 .DS_Store
 npm-debug.log*
+
+# Secrets. .env.example is the only one of these that may ever be committed or shipped: it holds
+# names and placeholders, never values. See the packaging command in handover.md.
+.env
+.env.*
+!.env.example
+
+# Handover archives are built on demand and must never be committed, so a stale archive can never
+# be shipped with secrets still inside it.
+*.zip
+*.tar
+*.tar.gz
+*.tgz
