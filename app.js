@@ -263,32 +263,48 @@ const dietaryPreferenceOptions = [
   { value: 'vegan', label: 'Vegan' }
 ];
 
+// "Mood today" - the staple the user feels like eating. Values are stable internal identifiers
+// stored in the session; labels are the only thing any screen shows.
 const moodCuisineOptions = [
   { value: 'any', label: 'Anything' },
-  { value: 'rice', label: 'Rice dishes' },
+  { value: 'rice', label: 'Rice' },
   { value: 'noodles', label: 'Noodles' },
-  { value: 'healthy', label: 'Healthy bowls' },
-  { value: 'indian', label: 'Indian food' },
-  { value: 'wraps', label: 'Wraps' }
+  { value: 'pasta', label: 'Pasta' },
+  { value: 'soup', label: 'Soup' },
+  { value: 'bread', label: 'Bread' }
 ];
 
+// Local demo categories that definitely serve a mood's staple. Only the curated offline merchants
+// carry these categories; real provider merchants are matched through keywords instead.
 const moodCategoryMap = {
   rice: ['chicken-rice'],
   noodles: ['noodles'],
-  healthy: ['healthy-food'],
-  indian: ['indian-food'],
-  wraps: ['wraps']
+  pasta: [],
+  soup: [],
+  bread: []
 };
 
-// Keyword hints used only to interpret factual cuisine tags Foursquare actually returns
-// (see parseFoursquareCuisineTags) - never used to invent a merchant's cuisine.
+// Local demo categories that state a definite, known cuisine. A merchant carrying one of these
+// has a known staple, so failing a mood's keywords is a confirmed non-match rather than unknown.
+// Kept explicit (not derived from moodCategoryMap) so the mood list can change without silently
+// turning known demo cuisines into unknowns.
+const knownSpecificCategories = ['chicken-rice', 'noodles', 'healthy-food', 'indian-food', 'wraps'];
+
+// Evidence-backed staple keywords, including common Singapore terms. They are read ONLY from facts
+// a provider supplied - factual cuisine tags (see parseFoursquareCuisineTags), provider category
+// names and a merchant's own listed dish - to guide discovery and ranking. They never invent a
+// merchant's cuisine, never prove a menu item, and never prove dietary suitability.
 const moodCuisineKeywords = {
-  rice: ['rice', 'chinese', 'cantonese', 'nasi'],
-  noodles: ['noodle', 'noodles', 'mee', 'ramen', 'pho', 'laksa'],
-  healthy: ['healthy', 'salad', 'vegetarian', 'vegan', 'bowl'],
-  indian: ['indian', 'curry', 'briyani', 'biryani'],
-  wraps: ['wrap', 'wraps', 'sandwich', 'western', 'burger']
+  rice: ['rice', 'chicken rice', 'nasi', 'nasi lemak', 'biryani', 'briyani', 'donburi', 'claypot rice'],
+  noodles: ['noodle', 'noodles', 'mee', 'bee hoon', 'ramen', 'udon', 'pho', 'laksa', 'kway teow'],
+  pasta: ['pasta', 'spaghetti', 'macaroni'],
+  soup: ['soup', 'broth', 'stew', 'bak kut teh'],
+  bread: ['bread', 'toast', 'sandwich', 'bun', 'bakery', 'kaya toast']
 };
+
+// Retrieval terms for the one mood-targeted provider search. Like the dietary terms they only
+// steer WHICH places are searched for - never what a merchant is claimed to serve.
+const MOOD_SEARCH_TERMS = { rice: 'rice', noodles: 'noodles', pasta: 'pasta', soup: 'soup', bread: 'bread' };
 
 // Cravings that mean "no real preference" - these drive Foursquare's broad query=food search
 // and never produce a craving match/non-match (Issue 1).
@@ -914,6 +930,14 @@ function initialiseDemoSession(req) {
   }
   if (!req.session.demoUserStates) req.session.demoUserStates = {};
   if (!req.session.demo.processedPaymentAttempts) req.session.demo.processedPaymentAttempts = {};
+  // A mood stored by an older build (or any value no longer offered) safely becomes "Anything"
+  // rather than silently matching nothing; an unrecognised dietary value becomes "none" rather
+  // than an active restriction nothing can ever satisfy.
+  if (req.session.demo.profile) {
+    req.session.demo.profile.moodCuisine = normaliseMoodCuisine(req.session.demo.profile.moodCuisine);
+    req.session.demo.profile.dietaryPreference =
+      normaliseDietaryPreference(req.session.demo.profile.dietaryPreference);
+  }
 }
 
 function copyObjects(items) {
@@ -1022,6 +1046,14 @@ function getVouchTagLabel(tag) {
   return '';
 }
 
+// Any value that is not one of the four options - an empty profile, or a restriction stored by an
+// older build - safely means "no dietary restriction". Falling back to a LOOSER setting is safe
+// here only because suitability itself is still proved by evidence per merchant, never by this
+// value (see getDietaryMatchState).
+function normaliseDietaryPreference(value) {
+  return isValidDietaryPreference(value) ? value : 'none';
+}
+
 function getDietaryPreferenceLabel(preference) {
   for (let i = 0; i < dietaryPreferenceOptions.length; i++) {
     if (dietaryPreferenceOptions[i].value === preference) {
@@ -1038,11 +1070,24 @@ function isValidMoodCuisine(value) {
   return false;
 }
 
+// Any value that is not one of today's six options - an empty profile, or a mood stored by an
+// older build of this prototype - safely means "Anything".
+function normaliseMoodCuisine(value) {
+  return isValidMoodCuisine(value) ? value : 'any';
+}
+
 function getMoodCuisineLabel(value) {
+  const mood = normaliseMoodCuisine(value);
   for (let i = 0; i < moodCuisineOptions.length; i++) {
-    if (moodCuisineOptions[i].value === value) return moodCuisineOptions[i].label;
+    if (moodCuisineOptions[i].value === mood) return moodCuisineOptions[i].label;
   }
   return 'Anything';
+}
+
+// Partial-update guard: only a field the form actually submitted may change a saved setting. A
+// missing field is never an instruction to reset the value behind it.
+function hasField(body, name) {
+  return Boolean(body) && Object.prototype.hasOwnProperty.call(body, name) && body[name] !== undefined;
 }
 
 function sanitizeCraving(value) {
@@ -1719,6 +1764,50 @@ function dietarySearchQuery(restriction, craving) {
   return words.indexOf(term) !== -1 ? null : term + ' ' + craving.trim();
 }
 
+// ---------------------------------------------------------------------------
+// "Mood today" discovery (retrieval only). The selected staple becomes ONE food search term for
+// Google Text Search / Foursquare Place Search, inside the existing per-provider call budget.
+// It never proves what a merchant serves and never proves dietary suitability - exactly like the
+// dietary retrieval terms above.
+// ---------------------------------------------------------------------------
+function isActiveMood(mood) {
+  return Object.prototype.hasOwnProperty.call(MOOD_SEARCH_TERMS, normaliseMoodCuisine(mood));
+}
+
+// True when the user's own craving words already ask for this staple, so a separate mood search
+// would just repeat the raw craving search.
+function cravingCoversMood(craving, mood) {
+  if (!isSpecificCraving(craving) || !isActiveMood(mood)) return false;
+  const text = normaliseMatchText(craving);
+  const keywords = [MOOD_SEARCH_TERMS[mood]].concat(moodCuisineKeywords[mood] || []);
+  return keywords.some(function(keyword) { return textHasTerm(text, keyword); });
+}
+
+// The mood-targeted query, or null when there is nothing extra to search for: mood "any", or a
+// craving that already contains the staple.
+function moodSearchQuery(mood, craving) {
+  if (!isActiveMood(mood)) return null;
+  if (cravingCoversMood(craving, mood)) return null;
+  return MOOD_SEARCH_TERMS[normaliseMoodCuisine(mood)];
+}
+
+// Mood + dietary with no typed craving: compose ONE query ("halal rice") instead of spending a
+// second provider call, so the dietary-targeted retrieval and the mood hint share one search.
+// Dietary verification is untouched - the query words never prove suitability.
+function dietaryMoodSearchQuery(restriction, craving, mood) {
+  const dietaryQuery = dietarySearchQuery(restriction, craving);
+  const moodQuery = moodSearchQuery(mood, craving);
+  if (!dietaryQuery || !moodQuery || isSpecificCraving(craving)) return dietaryQuery;
+  return DIETARY_SEARCH_TERMS[restriction] + ' ' + moodQuery;
+}
+
+// True when the single dietary query above carries the mood staple too, so its results are flagged
+// as mood-targeted as well - still retrieval relevance only.
+function dietarySearchIncludesMood(restriction, craving, mood) {
+  return Boolean(dietarySearchQuery(restriction, craving)) && !isSpecificCraving(craving) &&
+    Boolean(moodSearchQuery(mood, craving));
+}
+
 function mergeByProviderPlaceId(first, second) {
   const seen = new Set(first.map(function(m) { return m.providerPlaceId; }));
   return first.concat(second.filter(function(m) { return !seen.has(m.providerPlaceId); }));
@@ -1833,7 +1922,7 @@ async function getCravingSearchIntent(rawCraving) {
 // than MIN_CRAVING_POOL_SIZE usable (container-free, within walking limit) merchants, ONE broad
 // Nearby Search is merged in by place ID. Max 2 Google requests. Returns null when Google cannot
 // supply any usable merchant, so the caller falls back to the next provider.
-async function discoverWithGoogle(searchLocation, craving, maxMetres, restriction) {
+async function discoverWithGoogle(searchLocation, craving, maxMetres, restriction, mood) {
   if (!process.env.GOOGLE_PLACES_API_KEY) {
     logDiscovery('Google Places unavailable: key missing');
     return null;
@@ -1844,7 +1933,12 @@ async function discoverWithGoogle(searchLocation, craving, maxMetres, restrictio
   // backstop). A Text Search full of cafés therefore still triggers the one broad Nearby fallback, and
   // zero usable still falls back to Foursquare rather than to the curated demo merchants.
   const specificCraving = isSpecificCraving(craving);
-  const dietaryQuery = dietarySearchQuery(restriction, craving);
+  // With no typed craving the dietary and mood terms compose into ONE query ("halal rice"); with a
+  // craving the dietary query keeps the second call, because dietary safety and the user's own
+  // words outrank the broad mood hint. Mood still steers ranking in every case.
+  const dietaryQuery = dietaryMoodSearchQuery(restriction, craving, mood);
+  const moodComposedIntoDietary = dietarySearchIncludesMood(restriction, craving, mood);
+  const moodQuery = dietaryQuery ? null : moodSearchQuery(mood, craving);
   const countUsable = function(pool) {
     return pool.filter(function(m) {
       const state = classifyMealEligibility(m);
@@ -1857,6 +1951,19 @@ async function discoverWithGoogle(searchLocation, craving, maxMetres, restrictio
   let nearbyFallbackUsed = false;
   let expandedSearchUsed = false;
   let dietarySearchUsed = false;
+  let moodSearchUsed = false;
+  // ONE mood-targeted Text Search. Retrieval relevance only: being returned by it never proves the
+  // merchant serves that staple, and never proves anything dietary.
+  const moodSearch = async function() {
+    moodSearchUsed = true;
+    const found = await fetchGooglePlaces('text', searchLocation, moodQuery);
+    if (!found.ok) {
+      logDiscovery('Mood search failed: ' + found.note);
+      return [];
+    }
+    found.merchants.forEach(function(m) { m.fromMoodSearch = true; if (specificCraving) m.fromCravingSearch = true; });
+    return found.merchants;
+  };
   const dietarySearch = async function() {
     dietarySearchUsed = true;
     const found = await fetchGooglePlaces('text', searchLocation, dietaryQuery);
@@ -1865,7 +1972,11 @@ async function discoverWithGoogle(searchLocation, craving, maxMetres, restrictio
       return [];
     }
     // Retrieval relevance only - the dietary words in the query never prove suitability.
-    found.merchants.forEach(function(m) { m.fromDietarySearch = true; if (specificCraving) m.fromCravingSearch = true; });
+    found.merchants.forEach(function(m) {
+      m.fromDietarySearch = true;
+      if (moodComposedIntoDietary) m.fromMoodSearch = true;
+      if (specificCraving) m.fromCravingSearch = true;
+    });
     return found.merchants;
   };
   if (!specificCraving) {
@@ -1873,6 +1984,19 @@ async function discoverWithGoogle(searchLocation, craving, maxMetres, restrictio
       // Active restriction, no craving: search for the diet near the user first, then (only if that
       // leaves too few usable merchants) the ONE broad Nearby Search. Max 2 Google calls.
       pool = await dietarySearch();
+      if (countUsable(pool) < MIN_CRAVING_POOL_SIZE) {
+        nearbyFallbackUsed = true;
+        const nearby = await fetchGooglePlaces('nearby', searchLocation, nearbyRadius);
+        if (nearby.ok) pool = mergeByProviderPlaceId(pool, nearby.merchants);
+        else if (!pool.length) {
+          logDiscovery('Google Places unavailable: ' + nearby.note);
+          return null;
+        }
+      }
+    } else if (moodQuery) {
+      // Mood with no craving and no restriction: search for the staple itself instead of only the
+      // generic nearby-food search, with the ONE broad Nearby Search kept as the fallback. Max 2.
+      pool = await moodSearch();
       if (countUsable(pool) < MIN_CRAVING_POOL_SIZE) {
         nearbyFallbackUsed = true;
         const nearby = await fetchGooglePlaces('nearby', searchLocation, nearbyRadius);
@@ -1906,6 +2030,10 @@ async function discoverWithGoogle(searchLocation, craving, maxMetres, restrictio
       // Active restriction: ONE dietary-targeted search ("<diet> <craving>") merged AFTER the raw
       // results. It replaces craving expansion / Nearby fallback, so still max 2 Google calls.
       pool = mergeByProviderPlaceId(pool, await dietarySearch());
+    } else if (moodQuery) {
+      // Craving + mood: the raw craving results are kept as they are, and ONE mood-targeted search
+      // broadens the pool, merged AFTER them and deduplicated by place ID. Still max 2 Google calls.
+      pool = mergeByProviderPlaceId(pool, await moodSearch());
     } else if (rawUsable < MIN_CRAVING_POOL_SIZE) {
       // Too few: ONE semantic expansion (Groq) and ONE more Text Search, MERGED after the raw results
       // (deduplicated by place ID) - expanded results can add merchants but never replace raw ones.
@@ -1934,8 +2062,9 @@ async function discoverWithGoogle(searchLocation, craving, maxMetres, restrictio
   const states = pool.map(classifyMealEligibility);
   const count = function(state) { return states.filter(function(s) { return s === state; }).length; };
   const nonMeal = pool.filter(function(m, i) { return states[i] === MEAL_ELIGIBILITY.NON_MEAL; });
-  logDiscovery('GOOGLE DISCOVERY\nMode: ' + (isSpecificCraving(craving) ? 'text' : 'nearby') +
+  logDiscovery('GOOGLE DISCOVERY\nMode: ' + (specificCraving || moodQuery || dietaryQuery ? 'text' : 'nearby') +
     '\nDietary search: ' + (dietarySearchUsed ? '"' + dietaryQuery + '"' : 'no') +
+    '\nMood search: ' + (moodSearchUsed ? '"' + moodQuery + '"' : 'no') +
     '\nExpanded craving search used: ' + (expandedSearchUsed ? 'yes' : 'no') +
     '\nNearby fallback used: ' + (nearbyFallbackUsed ? 'yes' : 'no') +
     '\nGoogle raw merchants: ' + pool.length + '\nMeal: ' + count(MEAL_ELIGIBILITY.MEAL) +
@@ -1952,7 +2081,7 @@ async function discoverWithGoogle(searchLocation, craving, maxMetres, restrictio
 // Foursquare discovery (fallback provider, or primary when PLACES_PROVIDER=foursquare). A specific
 // craving drives the query itself, with at most one broader query=food fallback if that produces
 // too few candidates. Returns null when Foursquare cannot supply any usable merchant.
-async function discoverWithFoursquare(searchLocation, craving, restriction, maxMetres) {
+async function discoverWithFoursquare(searchLocation, craving, restriction, maxMetres, mood) {
   if (!process.env.FOURSQUARE_API_KEY) {
     logDiscovery('Foursquare unavailable: key missing');
     return null;
@@ -1961,8 +2090,12 @@ async function discoverWithFoursquare(searchLocation, craving, restriction, maxM
   // Same retrieval policy as Google, max 2 Foursquare calls: raw craving first (always kept); with
   // an active restriction the second query is the dietary one ("<diet> <craving>" / "<diet> food")
   // instead of the broad "food" fallback.
-  const dietaryQuery = dietarySearchQuery(restriction, craving);
-  const primaryQuery = specificCraving ? normaliseCravingQuery(craving) : (dietaryQuery || 'food');
+  // Mood follows the same policy as Google: composed into the dietary query when there is no typed
+  // craving, otherwise the one extra targeted query, and dropped (ranking only) when a craving and a
+  // dietary restriction have already claimed both calls.
+  const dietaryQuery = dietaryMoodSearchQuery(restriction, craving, mood);
+  const moodQuery = dietaryQuery ? null : moodSearchQuery(mood, craving);
+  const primaryQuery = specificCraving ? normaliseCravingQuery(craving) : (dietaryQuery || moodQuery || 'food');
   const primary = await fetchFoursquarePlaces(searchLocation, primaryQuery, maxMetres);
   if (!primary.ok) {
     logDiscovery('Foursquare unavailable: ' + primary.note);
@@ -1974,13 +2107,21 @@ async function discoverWithFoursquare(searchLocation, craving, restriction, maxM
   let fallbackRawCount = 0;
   let containersRemoved = primary.containersRemoved;
   const secondQuery = specificCraving && dietaryQuery ? dietaryQuery :
-    (specificCraving && !dietaryQuery && apiMerchants.length < MIN_CRAVING_POOL_SIZE ? 'food' : null);
+    specificCraving && moodQuery ? moodQuery :
+    (!dietaryQuery && primaryQuery !== 'food' && apiMerchants.length < MIN_CRAVING_POOL_SIZE ? 'food' : null);
   let dietaryResultIds = primaryQuery === dietaryQuery
+    ? new Set(primary.results.map(function(place) { return place && place.fsq_place_id; })) : new Set();
+  const moodComposedIntoDietary = dietarySearchIncludesMood(restriction, craving, mood);
+  let moodResultIds = (moodQuery && primaryQuery === moodQuery) ||
+    (moodComposedIntoDietary && primaryQuery === dietaryQuery)
     ? new Set(primary.results.map(function(place) { return place && place.fsq_place_id; })) : new Set();
   if (secondQuery) {
     const fallback = await fetchFoursquarePlaces(searchLocation, secondQuery, maxMetres);
     if (fallback.ok && secondQuery === dietaryQuery) {
       dietaryResultIds = new Set(fallback.results.map(function(place) { return place && place.fsq_place_id; }));
+    }
+    if (fallback.ok && secondQuery === moodQuery) {
+      moodResultIds = new Set(fallback.results.map(function(place) { return place && place.fsq_place_id; }));
     }
     fallbackUsed = true;
     if (fallback.ok) {
@@ -2013,10 +2154,13 @@ async function discoverWithFoursquare(searchLocation, craving, restriction, maxM
     // Places the craving query itself returned (retrieval relevance only, never menu proof).
     const cravingIds = new Set(primary.results.map(function(place) { return place && place.fsq_place_id; }));
     apiMerchants.forEach(function(m) {
-      if (cravingIds.has(m.providerPlaceId) || dietaryResultIds.has(m.providerPlaceId)) m.fromCravingSearch = true;
+      if (cravingIds.has(m.providerPlaceId) || dietaryResultIds.has(m.providerPlaceId) ||
+          moodResultIds.has(m.providerPlaceId)) m.fromCravingSearch = true;
     });
   }
   apiMerchants.forEach(function(m) { if (dietaryResultIds.has(m.providerPlaceId)) m.fromDietarySearch = true; });
+  // Retrieval relevance only - never evidence of a menu item or of dietary suitability.
+  apiMerchants.forEach(function(m) { if (moodResultIds.has(m.providerPlaceId)) m.fromMoodSearch = true; });
   return apiMerchants;
 }
 
@@ -2032,7 +2176,8 @@ function discoveryProviderOrder() {
 // explicit when a real browser location only produced the fixed Woodlands demo merchants.
 // maxDistanceMinutes (the user's walking limit) sizes Google's search; the hard distance rule is
 // still applied later by getEligibleMerchants, never by the provider or the AI.
-async function getNearbyMerchants(location, sessionLabel, craving, maxDistanceMinutes, dietaryPreference) {
+async function getNearbyMerchants(location, sessionLabel, craving, maxDistanceMinutes, dietaryPreference, moodCuisine) {
+  const mood = normaliseMoodCuisine(moodCuisine);
   const searchLocation = location && validCoordinates(location.latitude, location.longitude)
     ? location : demoLocation;
   const usingDemoLocation = searchLocation === demoLocation;
@@ -2044,11 +2189,12 @@ async function getNearbyMerchants(location, sessionLabel, craving, maxDistanceMi
     '\nsource: ' + (usingDemoLocation ? 'demo fallback (no real browser coordinates)' : 'browser') +
     '\nCraving: ' + (isSpecificCraving(craving) ? normaliseCravingQuery(craving) : 'none') +
     '\nDietary retrieval: ' + (isActiveRestriction(dietaryPreference) ? dietaryPreference : 'none') +
+    '\nMood retrieval: ' + (isActiveMood(mood) ? mood : 'none') +
     '\nProvider order: ' + providers.join(' -> ') + ' -> demo');
   for (let i = 0; i < providers.length; i++) {
     const apiMerchants = providers[i] === 'google'
-      ? await discoverWithGoogle(searchLocation, craving, maxMetres, dietaryPreference)
-      : await discoverWithFoursquare(searchLocation, craving, dietaryPreference, maxMetres);
+      ? await discoverWithGoogle(searchLocation, craving, maxMetres, dietaryPreference, mood)
+      : await discoverWithFoursquare(searchLocation, craving, dietaryPreference, maxMetres, mood);
     if (!apiMerchants) continue;
     apiMerchants.forEach(registerDemoMerchant);
     logDiscovery('Smart Match merchant source: ' + providers[i].toUpperCase());
@@ -2067,7 +2213,7 @@ async function getNearbyMerchants(location, sessionLabel, craving, maxDistanceMi
 // Returns true only if the fresh discovery produced merchants not already in the current batch.
 async function refreshNearbyBatch(demo) {
   const nearby = await getNearbyMerchants(demo.discoveryLocation, demo.user.id, demo.profile.craving,
-    demo.profile.maxDistanceMinutes, demo.profile.dietaryPreference);
+    demo.profile.maxDistanceMinutes, demo.profile.dietaryPreference, demo.profile.moodCuisine);
   const newMerchants = nearby.merchants.filter(function(merchant) {
     return !findMerchantById(demo.nearbyMerchants, merchant.id);
   });
@@ -2955,7 +3101,8 @@ function buildRankingMessages(profile, eligible, feedbackItems, demo) {
     'relevance: "high" when those facts clearly fit the craving; "medium" when they plausibly relate; "low" when nothing clearly fits. Always still pick the best available merchant - never refuse.',
     'For a vague craving or none, pick a good nearby option using mood and distance.',
     'Every listed merchant is already within the user\'s walking limit. Distance matters, but a clearly better craving fit that is a little farther beats a nearer weak fit; when relevance is similar, prefer the nearer merchant (distanceMetres). A generic category such as "Restaurant" is uncertain, not a fit.',
-    'matchesCurrentMood being false is neutral, not a confirmed mismatch.',
+    'MOOD: "Food mood today" is the staple the user feels like (rice, noodles, pasta, soup or bread). matchesCurrentMood true means supplied facts - a factual cuisine tag, a provider category name or the listed dish - support that staple: prefer such a candidate when relevance is otherwise similar. It never outranks a specific craving, the supplied distance, budget or dietary evidence.',
+    'matchesCurrentMood being false is neutral, not a confirmed mismatch - provider category data is often incomplete. Never claim a merchant serves rice, noodles, pasta, soup or bread unless dish, categories, cuisine or research.menu shows it.',
     'BUDGET: budgetFit "within" only when prices in price or research.menu show relevant items at or under the user\'s budget, "over" only when they are all above it, otherwise "unknown". Never invent prices; an unknown price is not a reason to reject.',
     'DIETARY: the server has already applied the user\'s dietary restriction - never judge dietary suitability yourself. dietaryStatus "verified" means factual evidence exists; "unknown" means suitability is NOT verified, so never call that merchant halal, vegetarian, vegan or suitable for the user\'s diet.',
     'When parentVenue is set, the candidate is a specific stall inside that venue - recommend the stall, not the venue.',
@@ -2979,6 +3126,11 @@ function buildRankingMessages(profile, eligible, feedbackItems, demo) {
     ''
   ];
   if (profile.craving) userParts.splice(userParts.length - 1, 0, '- Specific craving: ' + profile.craving);
+  if (isActiveMood(profile.moodCuisine) && eligible.some(function(m) { return m.fromMoodSearch; })) {
+    userParts.splice(userParts.length - 1, 0, '- Discovery also searched for the mood staple "' +
+      MOOD_SEARCH_TERMS[normaliseMoodCuisine(profile.moodCuisine)] +
+      '" (retrieval only - it does not prove any merchant serves it)');
+  }
   const searchIntent = isSpecificCraving(profile.craving) &&
     eligible.some(function(m) { return m.fromExpandedSearch; }) ? getCachedSearchIntent(profile.craving) : null;
   if (searchIntent && normaliseCravingQuery(searchIntent.searchQuery) !== normaliseCravingQuery(profile.craving)) {
@@ -3113,20 +3265,21 @@ function merchantCuisineTags(merchant) {
 // must never collapse into a mismatch.
 const MATCH_STATE = { MATCH: 'match', NON_MATCH: 'non-match', UNKNOWN: 'unknown' };
 
-// All local-demo categories that moodCategoryMap actually maps to. A merchant carrying one of
-// these has a definite, known cuisine - if it isn't the requested mood's category, that is a
-// confirmed non-match, not an unknown.
-const knownSpecificCategories = Object.keys(moodCategoryMap).reduce(function(list, mood) {
-  return list.concat(moodCategoryMap[mood]);
-}, []);
-
+// Mood is a retrieval and ranking signal, never an eligibility rule (see getEligibleMerchants):
+// NON_MATCH only orders candidates, and incomplete provider category data stays UNKNOWN.
 function getMoodMatchState(merchant, moodCuisine) {
-  if (!moodCuisine || moodCuisine === 'any') return MATCH_STATE.UNKNOWN;
-  const moodCats = moodCategoryMap[moodCuisine] || [];
+  const mood = normaliseMoodCuisine(moodCuisine);
+  if (mood === 'any') return MATCH_STATE.UNKNOWN;
+  const moodCats = moodCategoryMap[mood] || [];
   if (moodCats.indexOf(merchant.category) !== -1) return MATCH_STATE.MATCH;
-  const keywords = moodCuisineKeywords[moodCuisine] || [];
+  const keywords = moodCuisineKeywords[mood] || [];
   const tags = merchantCuisineTags(merchant);
   if (tags.some(function(tag) { return keywords.indexOf(tag) !== -1; })) return MATCH_STATE.MATCH;
+  // Provider category names ("Ramen Restaurant", "Bakery") and the merchant's own listed dish are
+  // supplied facts. A merchant NAME is deliberately NOT read here - it is not evidence of a staple.
+  const factualText = normaliseMatchText(merchantCategoryNames(merchant)
+    .concat(merchant.itemName || '').join(' '));
+  if (keywords.some(function(keyword) { return textHasTerm(factualText, keyword); })) return MATCH_STATE.MATCH;
   const hasKnownCuisine = tags.length > 0 || knownSpecificCategories.indexOf(merchant.category) !== -1;
   return hasKnownCuisine ? MATCH_STATE.NON_MATCH : MATCH_STATE.UNKNOWN;
 }
@@ -3191,10 +3344,11 @@ function getFallbackRecommendation(candidates, feedbackItems, profile) {
     if (merchantMentionsCraving(merchant, profile.craving)) score += 100;
     // Explicit factual preference match only - unknown/non-match dietary data stays neutral.
     if (getDietaryMatchState(merchant, profile.dietaryPreference) === MATCH_STATE.MATCH) score += 35;
-    // Current mood outranks historical preference for this session (Step 11), but only when the
-    // user hasn't already given a more specific craving this cycle.
-    if (!isSpecificCraving(profile.craving) && getMoodMatchState(merchant, profile.moodCuisine) === MATCH_STATE.MATCH) {
-      score += 45;
+    // Current mood outranks historical preference for this session (Step 11). A typed craving is
+    // still the stronger signal, so with one the supported mood match only breaks ties (+15 against
+    // the craving's +100) and never outweighs distance, budget or dietary evidence.
+    if (getMoodMatchState(merchant, profile.moodCuisine) === MATCH_STATE.MATCH) {
+      score += isSpecificCraving(profile.craving) ? 15 : 45;
     }
     if (lastFeedback && lastFeedback.reason === 'too-far') {
       // The hard constraint already removed farther merchants; this only orders what remains.
@@ -3345,6 +3499,54 @@ async function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchant
 // Server-generated "Why this match" reasons, shown whenever there is no (safe) AI reason. Every line
 // is a checkable fact: craving fit only from the user's own words in the merchant's name/categories
 // or the AI ranker's own high/medium relevance judgement for this pick; dietary only when verified;
+// "Why this match", assembled at the PRESENTATION layer only. It makes no new AI or provider call:
+// it reuses the ranking reason that already passed safeAIReason, or composes one short sentence
+// from facts this recommendation already established. Every clause is evidence-backed - a verified
+// dietary verdict, the user's own craving words, a mood the supplied facts support, a factual
+// provider category, a measured distance, a real price, or a live campaign. It never claims a
+// walking time, a menu item, unverified dietary suitability, budget fit without a price, or any
+// quality/popularity judgement, and it never suggests the Vouch count influenced ranking.
+function joinClauses(parts) {
+  const text = parts.length < 2 ? (parts[0] || '') :
+    parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) + '.' : '';
+}
+
+function buildMatchExplanation(profile, merchant, campaign, aiReason, aiRelevance) {
+  const validated = typeof aiReason === 'string' ? aiReason.replace(/\s+/g, ' ').trim() : '';
+  if (validated) return validated;
+  const parts = [];
+  if (profile.dietaryPreference !== 'none' &&
+      getDietaryMatchState(merchant, profile.dietaryPreference) === MATCH_STATE.MATCH) {
+    parts.push('verified ' + getDietaryPreferenceLabel(profile.dietaryPreference));
+  }
+  if (isSpecificCraving(profile.craving)) {
+    if (aiRelevance === 'high' || merchantMentionsCraving(merchant, profile.craving)) {
+      parts.push('matches your ' + normaliseCravingQuery(profile.craving) + ' craving');
+    } else if (aiRelevance === 'medium') {
+      parts.push('a likely fit for your ' + normaliseCravingQuery(profile.craving) + ' craving');
+    }
+  }
+  if (getMoodMatchState(merchant, profile.moodCuisine) === MATCH_STATE.MATCH) {
+    parts.push('matches your ' + getMoodCuisineLabel(profile.moodCuisine).toLowerCase() + ' mood');
+  }
+  // The provider's own category, only when nothing above has already described the food.
+  const categoryName = merchantCategoryNames(merchant)[0];
+  if (parts.length === 0 && categoryName) parts.push('a ' + categoryName.toLowerCase() + ' nearby');
+  // A measured distance may be quoted; a demo minute estimate may not, so that case states the
+  // walking-range rule that actually applied instead.
+  if (parts.length < 3) {
+    parts.push(Number.isFinite(merchant.distanceMetres) && merchant.distanceLabel
+      ? merchant.distanceLabel : 'within your walking range');
+  }
+  if (parts.length < 3 && merchant.price !== null && merchant.price <= profile.budget) {
+    parts.push('fits your $' + profile.budget + ' budget');
+  }
+  if (parts.length < 3 && campaign) parts.push('has a Vouch Credit today');
+  if (!parts.length) parts.push('the closest option that fits your filters');
+  return joinClauses(parts);
+}
+
 // budget only from a real price; distance from the hard walking-range rule already applied.
 function getMatchReasons(profile, merchant, feedbackItems, aiRelevance) {
   const reasons = [];
@@ -3682,6 +3884,9 @@ function matchView(demo, recommendation) {
     vouchCount: recommendation ? countVouches(demo, recommendation.id) : 0,
     dietaryTagLabel: recommendation ? getResearchDietaryTagLabel(recommendation, demo.profile) : null,
     aiReason: demo.selectedMerchantReason || null,
+    matchExplanation: recommendation ? buildMatchExplanation(demo.profile, recommendation,
+      findCampaignForMerchant(recommendation, demo), demo.selectedMerchantReason,
+      demo.selectedMerchantRelevance) : null,
     profile: demo.profile,
     dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference),
     dietaryPreferenceOptions: dietaryPreferenceOptions,
@@ -3790,16 +3995,23 @@ app.get('/home', function(req, res) {
     ...matchView(demo, recommendation), user: demo.user,
     matchingAgain: req.query.matching === 'again', resetComplete: req.query.reset === 'done',
     homeGreeting: getHomeGreeting(),
-    showOnboarding: !demo.hasSetPreferences, locationAttempted: demo.locationAttempted
+    showOnboarding: !demo.hasSetPreferences, locationAttempted: demo.locationAttempted,
+    settingsError: req.query.error === 'invalid'
   });
 });
 
+// Onboarding is the CURRENT meal decision only: craving and "Mood today". Dietary restrictions are
+// a saved Profile setting and are deliberately not asked here, so an absent dietaryPreference field
+// must never be read as "reset it to none" - the saved restriction is kept untouched.
 app.post('/setup-preferences', function(req, res) {
   const demo = req.session.demo;
   const mood = req.body.moodCuisine || 'any';
-  const dietary = req.body.dietaryPreference || 'none';
-  if (isValidMoodCuisine(mood)) demo.profile.moodCuisine = mood;
-  if (isValidDietaryPreference(dietary)) demo.profile.dietaryPreference = dietary;
+  demo.profile.moodCuisine = normaliseMoodCuisine(mood);
+  if (hasField(req.body, 'dietaryPreference') && isValidDietaryPreference(req.body.dietaryPreference)) {
+    demo.profile.dietaryPreference = req.body.dietaryPreference;
+  } else {
+    demo.profile.dietaryPreference = normaliseDietaryPreference(demo.profile.dietaryPreference);
+  }
   demo.profile.craving = sanitizeCraving(req.body.craving);
   demo.hasSetPreferences = true;
   demo.selectedMerchantId = null;
@@ -3881,7 +4093,7 @@ app.get('/smart-match/result', async function(req, res) {
       if (!recommendation) {
         if (!demo.nearbyMerchants.length) {
           const nearby = await getNearbyMerchants(demo.discoveryLocation, demo.user.id, demo.profile.craving,
-            demo.profile.maxDistanceMinutes, demo.profile.dietaryPreference);
+            demo.profile.maxDistanceMinutes, demo.profile.dietaryPreference, demo.profile.moodCuisine);
           demo.nearbyMerchants = nearby.merchants;
           demo.nearbySource = nearby.source;
           // Explicit server state: a real browser location that only produced curated demo merchants.
@@ -4297,16 +4509,55 @@ app.get('/profile', function(req, res) {
   const demo = req.session.demo;
   res.render('profile', { user: demo.user, profile: demo.profile,
     rewardCredits: getRewardCredits(demo), dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference),
-    moodCuisineLabel: getMoodCuisineLabel(demo.profile.moodCuisine || 'any') });
+    moodCuisineLabel: getMoodCuisineLabel(demo.profile.moodCuisine || 'any'),
+    dietarySaved: req.query.saved === 'dietary' });
 });
 app.get('/profile/rewards', function(req, res) {
   res.render('profile-rewards', { rewardCredits: getRewardCredits(req.session.demo) });
 });
-app.get('/profile/preferences', function(req, res) {
+// "Dietary restrictions": the ONLY place a saved restriction is chosen. Craving, mood, budget and
+// walking distance are current-meal inputs and live in Home / the Smart Match refine controls.
+// /profile/preferences is the previous URL for this screen and keeps rendering it, so bookmarks and
+// existing links never break.
+function renderDietaryRestrictions(req, res) {
   const demo = req.session.demo;
-  res.render('profile-preferences', { profile: demo.profile,
-    dietaryPreferenceOptions: dietaryPreferenceOptions, moodCuisineOptions: moodCuisineOptions,
-    settingsError: req.query.error === 'invalid' });
+  res.render('profile-dietary', { profile: demo.profile,
+    dietaryPreferenceOptions: dietaryPreferenceOptions,
+    dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference),
+    settingsError: req.query.error === 'invalid', saved: req.query.saved === '1' });
+}
+app.get('/profile/dietary', renderDietaryRestrictions);
+app.get('/profile/preferences', renderDietaryRestrictions);
+
+// Saves ONLY the dietary restriction. Every other profile value (craving, mood, budget, walking
+// distance, notifications), and all session state - location, recommendation history, transactions,
+// Vouches and rewards - is left exactly as it was.
+app.post('/profile/dietary', function(req, res) {
+  const demo = req.session.demo;
+  if (!isValidDietaryPreference(req.body.dietaryPreference)) {
+    return res.redirect('/profile/dietary?error=invalid');
+  }
+  demo.profile.dietaryPreference = req.body.dietaryPreference;
+  // A merchant already selected under the OLD restriction must never be relabelled as compliant
+  // with the new one: drop the current selection and the discovered batch so the next Smart Match
+  // is discovered, verified and ranked under the restriction just saved. The shown/rejected history
+  // deliberately survives (Issue 3), as it does for every other filter edit.
+  demo.selectedMerchantId = null;
+  demo.selectedMerchantReason = null;
+  demo.selectedMerchantRelevance = null;
+  demo.recommendationAccepted = false;
+  demo.nearbyMerchants = [];
+  demo.nearbyRefreshAttempted = false;
+  demo.locationAttempted = false;
+  res.redirect('/profile/dietary?saved=1');
+});
+
+// Notifications stay a saved Profile setting, toggled from Profile itself now that this screen
+// manages dietary restrictions only.
+app.post('/profile/notifications', function(req, res) {
+  const demo = req.session.demo;
+  demo.profile.notifications = !demo.profile.notifications;
+  res.redirect('/profile');
 });
 app.get('/profile/vouches', function(req, res) {
   res.render('profile-vouches', { paymentVerifiedVouches: req.session.demo.paymentVerifiedVouches });
@@ -4314,18 +4565,28 @@ app.get('/profile/vouches', function(req, res) {
 app.get('/profile/activity', function(req, res) {
   res.render('profile-activity', { transactions: getActivityTransactions(req.session.demo) });
 });
+// The Smart Match refine form: craving, mood, budget and walking distance for THIS meal. It no
+// longer offers a dietary selector, so an omitted dietaryPreference keeps the saved restriction;
+// a submitted one is still honoured for compatibility with existing links and tests, and must
+// still be valid.
 app.post('/profile', function(req, res) {
   const demo = req.session.demo;
   const budget = parsePaymentAmount(req.body.budget);
   const distance = Number(req.body.maxDistanceMinutes);
-  const mood = req.body.moodCuisine || 'any';
-  if (!isValidDietaryPreference(req.body.dietaryPreference) || !isValidMoodCuisine(mood) ||
+  const mood = hasField(req.body, 'moodCuisine') ? req.body.moodCuisine : demo.profile.moodCuisine;
+  const dietarySubmitted = hasField(req.body, 'dietaryPreference');
+  const dietary = dietarySubmitted ? req.body.dietaryPreference
+    : normaliseDietaryPreference(demo.profile.dietaryPreference);
+  if ((dietarySubmitted && !isValidDietaryPreference(dietary)) || !isValidMoodCuisine(mood) ||
       budget === null || budget > 100 || !Number.isInteger(distance) || distance < 1 || distance > 60) {
-    return res.redirect('/profile/preferences?error=invalid');
+    return res.redirect('/home?error=invalid');
   }
-  demo.profile = { dietaryPreference: req.body.dietaryPreference, moodCuisine: mood,
-    craving: sanitizeCraving(req.body.craving),
-    budget: budget, maxDistanceMinutes: distance, notifications: req.body.notifications === 'on' };
+  // Only fields this submission actually carried are replaced; the rest keep their saved values.
+  demo.profile = { dietaryPreference: dietary, moodCuisine: mood,
+    craving: hasField(req.body, 'craving') ? sanitizeCraving(req.body.craving) : demo.profile.craving,
+    budget: budget, maxDistanceMinutes: distance,
+    notifications: hasField(req.body, 'notifications') ? req.body.notifications === 'on'
+      : demo.profile.notifications };
   demo.hasSetPreferences = true;
   demo.selectedMerchantId = null;
   demo.recommendationAccepted = false;
@@ -4629,6 +4890,8 @@ module.exports = { app: app, createInitialDemo: createInitialDemo, demoStore: de
   getNearbyMerchants: getNearbyMerchants, getEligibleMerchants: getEligibleMerchants,
   getSmartRecommendation: getSmartRecommendation,
   getMoodMatchState: getMoodMatchState, getDietaryMatchState: getDietaryMatchState,
+  moodCuisineOptions: moodCuisineOptions, normaliseMoodCuisine: normaliseMoodCuisine,
+  buildRankingMessagesForTest: buildRankingMessages,
   merchantMentionsCraving: merchantMentionsCraving,
   MATCH_STATE: MATCH_STATE,
   getMerchantCampaigns: function() { return merchantCampaignStore; },
@@ -4651,4 +4914,5 @@ module.exports = { app: app, createInitialDemo: createInitialDemo, demoStore: de
   // Test hook: the dietary research step exactly as getSmartRecommendation runs it.
   runDietaryResearchForTest: applyMerchantResearch,
   safeAIReason: safeAIReason, getMatchReasons: getMatchReasons, isMealMerchant: isMealMerchant,
+  buildMatchExplanation: buildMatchExplanation,
   RESEARCH_STATUS: RESEARCH_STATUS };

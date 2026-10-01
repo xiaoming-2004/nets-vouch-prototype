@@ -89,7 +89,14 @@ function initMerchantMap() {
     address.textContent = el.dataset.address;
     label.appendChild(address);
   }
-  L.marker([lat, lng], { icon: pin }).addTo(map).bindPopup(label, { closeButton: false, className: 'map-popup' }).openPopup();
+  // Leaflet's default popup maxWidth is 300px, which with its own padding renders ~329px wide and
+  // is centred on the marker - wider than the card's map on a phone, so a long address was cut off
+  // at the map's right edge. Bind it to the map's actual width instead, leaving room for the
+  // rounded corners and the "Open in Google Maps" control.
+  const popupMaxWidth = Math.max(150, Math.round(el.clientWidth) - 48);
+  L.marker([lat, lng], { icon: pin }).addTo(map)
+    .bindPopup(label, { closeButton: false, className: 'map-popup', maxWidth: popupMaxWidth, autoPan: false })
+    .openPopup();
 }
 
 // Concise, non-blocking client-side trace for diagnosing Smart Match end-to-end (Sprint 1.8
@@ -227,6 +234,55 @@ if (matchRegion) {
 }
 if (document.querySelector('[data-load-match]')) loadMatch(location.search.includes('matching=again'));
 initMerchantMap();
+
+// ---------------------------------------------------------------------------
+// Result bottom sheets ("Edit filters" / "Not for me"). Plain <details> elements, so they open and
+// close from the keyboard with no JavaScript at all; this only adds the behaviour a sheet needs on
+// top of that: one sheet at a time, Escape and backdrop close, focus moved into the panel and
+// handed back to the trigger afterwards.
+// ---------------------------------------------------------------------------
+let sheetReturnFocus = null;
+
+function closeSheet(host, restoreFocus) {
+  if (!host || !host.open) return;
+  host.open = false;
+  const trigger = host.querySelector('summary');
+  if (restoreFocus && trigger) trigger.focus();
+}
+
+function closeOpenSheets(except, restoreFocus) {
+  document.querySelectorAll('.sheet-host[open]').forEach(function(host) {
+    if (host !== except) closeSheet(host, restoreFocus);
+  });
+}
+
+// `toggle` does not bubble, so it is captured at the document level instead of bound per sheet -
+// this keeps working for a card that Smart Match swaps in later.
+document.addEventListener('toggle', function(event) {
+  const host = event.target;
+  if (!host.matches || !host.matches('.sheet-host')) return;
+  if (!host.open) return;
+  closeOpenSheets(host, false);
+  sheetReturnFocus = host.querySelector('summary');
+  const panel = host.querySelector('.result-sheet-panel');
+  if (!panel) return;
+  const first = panel.querySelector('input, select, textarea, button, a[href]');
+  if (first) first.focus({ preventScroll: true });
+}, true);
+
+document.addEventListener('click', function(event) {
+  const target = event.target;
+  if (!target.closest) return;
+  if (target.closest('[data-sheet-backdrop], [data-sheet-close]')) {
+    closeSheet(target.closest('.sheet-host'), true);
+  }
+});
+
+document.addEventListener('keydown', function(event) {
+  if (event.key !== 'Escape') return;
+  const open = document.querySelector('.sheet-host[open]');
+  if (open) { event.preventDefault(); closeSheet(open, true); }
+});
 
 // A reason button both selects and submits feedback. No extra confirmation.
 document.addEventListener('submit', async function(event) {

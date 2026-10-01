@@ -425,8 +425,10 @@ test('SERVER REASONS end-to-end: a dropped AI reason is never shown; the card re
     await request('/smart-match/location', ORIGIN);
     const html = await request('/smart-match/result');
     assert.match(html, /data-merchant-id="google-chix"/);
-    assert.ok(!/Why this match/.test(html), 'the result card has no reason section');
-    assert.ok(!/Famous|best spicy/.test(html));
+    // The card shows a "Why this match" line, but a rejected AI sentence never reaches it - the
+    // line falls back to the server's own factual reasons.
+    assert.match(html, /result-why-text/);
+    assert.ok(!/Famous|best spicy/.test(html), 'the unsafe AI claim is not rendered anywhere');
     assert.ok(!html.includes('AI Matched'), 'no AI badge without a safe AI reason');
   } finally {
     server.close();

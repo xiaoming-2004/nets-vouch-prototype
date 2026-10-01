@@ -626,7 +626,7 @@ test('TEST Q: OpenAI failure still uses factual preference and distance signals 
   process.env.FOURSQUARE_API_KEY = 'test-key';
   process.env.OPENAI_API_KEY = 'test-key';
   const placesMock = mockFoursquare([
-    fsqPlace('near', 'Near Match', 'Indian Restaurant', { distance: 60 }),
+    fsqPlace('near', 'Near Match', 'Noodle Restaurant', { distance: 60 }),
     fsqPlace('far', 'Far Unrelated', 'Restaurant', { distance: 1900 })
   ]);
   global.fetch = async function(url, options) {
@@ -634,7 +634,7 @@ test('TEST Q: OpenAI failure still uses factual preference and distance signals 
     return placesMock.fetchFn(url, options);
   };
   const demo = createInitialDemo('jia');
-  demo.profile.moodCuisine = 'indian';
+  demo.profile.moodCuisine = 'noodles';
   demo.profile.maxDistanceMinutes = 30;
   const nearby = await getNearbyMerchants({ latitude: 1.45, longitude: 103.82 });
   const result = await getSmartRecommendation(demo.profile, nearby.merchants, [], [], demo);
@@ -772,18 +772,18 @@ test('TEST W: only one Smart Match recommendation region renders, never a duplic
 // ---------------------------------------------------------------------------
 
 test('mood and dietary matching use the exact UI preference values and distinguish MATCH / NON_MATCH / UNKNOWN', async function() {
-  // moodCuisineOptions/dietaryPreferenceOptions values, verified against home.ejs/profile-preferences.ejs.
+  // moodCuisineOptions/dietaryPreferenceOptions values, verified against home.ejs/profile-dietary.ejs.
   const noodleMerchant = { category: 'noodles', cuisineTags: [] };
   assert.equal(getMoodMatchState(noodleMerchant, 'noodles'), MATCH_STATE.MATCH);
   const halalMerchant = { dietary: ['halal'] };
   assert.equal(getDietaryMatchState(halalMerchant, 'halal'), MATCH_STATE.MATCH);
 
-  const matchMerchant = { category: 'foursquare.place', cuisineTags: ['indian'] };
-  const nonMatchMerchant = { category: 'foursquare.place', cuisineTags: ['western'] };
+  const matchMerchant = { category: 'foursquare.place', cuisineTags: ['noodles'] };
+  const nonMatchMerchant = { category: 'foursquare.place', cuisineTags: ['bakery'] };
   const unknownMerchant = { category: 'foursquare.place', cuisineTags: [] };
-  assert.equal(getMoodMatchState(matchMerchant, 'indian'), MATCH_STATE.MATCH);
-  assert.equal(getMoodMatchState(nonMatchMerchant, 'indian'), MATCH_STATE.NON_MATCH);
-  assert.equal(getMoodMatchState(unknownMerchant, 'indian'), MATCH_STATE.UNKNOWN);
+  assert.equal(getMoodMatchState(matchMerchant, 'noodles'), MATCH_STATE.MATCH);
+  assert.equal(getMoodMatchState(nonMatchMerchant, 'noodles'), MATCH_STATE.NON_MATCH);
+  assert.equal(getMoodMatchState(unknownMerchant, 'noodles'), MATCH_STATE.UNKNOWN);
 
   const dietMatch = { dietary: ['halal'] };
   const dietNonMatch = { dietary: ['vegetarian'] };

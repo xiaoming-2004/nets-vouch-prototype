@@ -16,6 +16,9 @@
   --r-sm:10px; --r-md:14px; --r-lg:20px; --r-xl:26px; --r-pill:999px;
   --shadow-sm:0 1px 2px rgba(13,29,46,.06); --shadow-md:0 6px 18px rgba(13,29,46,.07); --shadow-lg:0 16px 40px rgba(13,29,46,.12);
   --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px;
+  /* Smart Match result card: thumbnail and map scale with the screen so the whole normal result
+     fits between the header and the bottom navigation without scrolling. */
+  --result-thumb:68px; --result-map-h:clamp(92px,18vh,150px); --result-map-min:140px; --result-map-max:185px;
   --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
   /* Legacy aliases used by existing markup */
   --navy:var(--nets-navy); --red:var(--nets-red); --muted:var(--text-2); --line:var(--border); --green:var(--success); --canvas:var(--app-bg);
@@ -55,7 +58,7 @@ form { margin:0; }
 .device-button--camera { right:-3px; top:52%; height:6.5%; background:linear-gradient(270deg,#1b1b1e,#3d3d42); }
 
 /* The screen. Content scrolls inside .screen only; status bar, header and tab bar stay put. */
-.phone { position:relative; height:100%; display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; overflow:hidden;
+.phone { position:relative; container-type:size; height:100%; display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; overflow:hidden;
   background:var(--app-bg); border-radius:13.6% / 6.3%; isolation:isolate; }
 .status-bar { position:relative; height:54px; display:flex; align-items:center; justify-content:space-between; padding:6px 30px 0 34px;
   background:rgba(255,255,255,.86); font-size:15px; font-weight:650; color:var(--text); letter-spacing:-.2px; z-index:3; }
@@ -74,7 +77,7 @@ form { margin:0; }
 .brand-logo { display:block; height:20px; width:auto; }
 .page-home .brand-logo { height:27px; }
 .avatar { width:34px; height:34px; display:grid; place-items:center; flex:0 0 34px; background:var(--nets-navy); color:white; border-radius:50%; text-decoration:none; font-size:14px; font-weight:700; }
-.screen { min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:18px 20px 28px; scrollbar-width:none; }
+.screen { min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; padding:18px 20px 28px; scrollbar-width:none; scroll-padding:12px 0 20px; }
 .screen::-webkit-scrollbar { display:none; }
 
 /* iOS-style tab bar, fixed inside the screen, translucent. Bottom padding leaves room for the home indicator. */
@@ -176,6 +179,10 @@ fieldset.field>legend.field-label+* { clear:both; }
 
 /* ---------- Smart Match ---------- */
 .match-card { overflow:hidden; background:var(--surface); border-radius:var(--r-xl); border:1px solid var(--border); box-shadow:var(--shadow-lg); }
+/* The reveal animation still plays, but it must not keep FILLING afterwards: while a transform
+   animation fills, the card stays a containing block for absolutely positioned descendants and its
+   overflow:hidden then cuts the result bottom sheets off halfway down the screen. */
+.match-card.reveal { animation-fill-mode:none; }
 .match-copy { padding:20px; }
 .match-head { display:flex; align-items:flex-start; gap:14px; margin-bottom:14px; }
 .match-monogram { width:52px; height:52px; flex:0 0 52px; display:grid; place-items:center; border-radius:16px; background:linear-gradient(140deg,var(--nets-red),#a8121f); color:white; font-size:24px; font-weight:750; box-shadow:0 8px 18px rgba(214,33,47,.25); }
@@ -197,31 +204,33 @@ fieldset.field>legend.field-label+* { clear:both; }
 .match-map { height:150px; border-radius:var(--r-md); overflow:hidden; margin:4px 0 14px; background:#e8eef2; }
 .map-pin { width:22px; height:22px; border-radius:50% 50% 50% 0; background:var(--nets-red); border:3px solid white; transform:rotate(-45deg); box-shadow:0 3px 10px rgba(214,33,47,.45); }
 .map-popup .leaflet-popup-content-wrapper { border-radius:10px; box-shadow:0 4px 14px #092c4920; padding:0; font-family:inherit; }
-.map-popup .leaflet-popup-content { margin:10px 14px; font-size:12px; font-weight:700; color:var(--nets-navy); line-height:1.4; }
-.map-popup .leaflet-popup-content small { font-weight:400; color:var(--text-2); }
+.map-popup .leaflet-popup-content { margin:9px 12px; font-size:12px; font-weight:700; color:var(--nets-navy); line-height:1.4; overflow-wrap:anywhere; }
+.map-popup .leaflet-popup-content small { display:block; font-weight:400; color:var(--text-2); overflow-wrap:anywhere; }
+/* The popup's own width comes from the maxWidth Leaflet is given in script.js (the map's width less
+   its margins). Percentage max-widths cannot be used here: a Leaflet pane is a zero-size positioned
+   box, so `max-width:100%` would collapse the popup to nothing. */
 .map-popup .leaflet-popup-tip-container { display:none; }
-.match-card .reward { padding:12px 14px; margin-bottom:14px; border-radius:var(--r-md); background:var(--nets-red-soft); font-size:15px; }
+/* Compact reward strip: the credit value and its full qualifying conditions in one highlighted row. */
+.match-card .reward { display:grid; gap:1px; padding:10px 12px; margin-bottom:var(--space-3); border-radius:var(--r-md); background:var(--nets-red-soft); font-size:14.5px; line-height:1.25; min-width:0; overflow-wrap:anywhere; }
+.match-card .reward small { margin-top:0; font-size:11px; line-height:1.4; }
 .match-card .reward.earned { background:var(--success-bg); }
-.refine-prefs { border-top:1px solid var(--border); margin-top:14px; }
+.match-card .reward--ended { background:var(--surface-2); color:var(--text); font-size:14px; font-weight:600; }
 .refine-summary { list-style:none; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 0; cursor:pointer; min-height:48px; }
 .refine-summary::-webkit-details-marker { display:none; }
-.refine-chips { display:flex; flex-wrap:wrap; gap:6px; flex:1; }
+.refine-chips { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 var(--space-3); }
 .refine-chips--center { justify-content:center; margin:0 0 14px; }
 .refine-chip { font-size:11.5px; font-weight:650; padding:5px 10px; background:var(--surface-2); border-radius:var(--r-pill); color:var(--text); white-space:nowrap; }
 .refine-edit { font-size:13px; font-weight:650; color:var(--nets-red); white-space:nowrap; flex-shrink:0; }
 .refine-summary--link { justify-content:center; font-size:14px; font-weight:650; color:var(--nets-red); }
-.refine-sheet { padding:4px 0 16px; animation:rise .2s ease; }
 .refine-sheet .form-stack { display:grid; gap:10px; }
 .refine-sheet .button { margin-top:6px; }
 .refine-prefs--flat { border:0; }
-.feedback summary { list-style:none; display:flex; align-items:center; justify-content:center; min-height:46px; margin-top:4px; font-size:14px; font-weight:600; color:var(--text-2); cursor:pointer; border-radius:var(--r-sm); }
-.feedback summary:active { background:var(--surface-2); }
-.feedback summary::-webkit-details-marker { display:none; }
-.feedback[open] summary { color:var(--nets-red); }
-.feedback-sheet { padding-top:12px; animation:rise .2s ease; }
-.feedback-sheet h3 { font-size:15px; }
-.feedback-sheet button { min-height:48px; width:100%; display:flex; justify-content:space-between; align-items:center; padding:12px 14px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); margin:7px 0; color:var(--text); cursor:pointer; font-size:14px; font-weight:550; transition:background .12s; }
-.feedback-sheet button:hover { background:var(--surface-2); }
+/* The empty-state screen keeps its own inline disclosure (it is allowed to scroll). */
+.refine-prefs--flat .refine-sheet { padding:4px 0 16px; animation:rise .2s ease; }
+.refine-prefs--flat .refine-summary { justify-content:center; }
+.feedback-sheet h3 { font-size:16px; }
+.feedback-sheet form button { min-height:48px; width:100%; display:flex; justify-content:space-between; align-items:center; padding:12px 14px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); margin:7px 0; color:var(--text); cursor:pointer; font-size:14px; font-weight:550; transition:background .12s; }
+.feedback-sheet form button:hover { background:var(--surface-2); }
 
 /* Loading: spinner + staged copy + skeleton (no fake progress) */
 .matching { min-height:340px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:28px 22px; border-radius:var(--r-xl); background:var(--surface); border:1px solid var(--border); box-shadow:var(--shadow-md); }
@@ -435,6 +444,10 @@ fieldset.field>legend.field-label+* { clear:both; }
 .profile-menu strong { font-size:15px; font-weight:600; }
 .profile-menu b { font-size:22px; font-weight:400; color:var(--text-3); }
 .profile-menu em { font-size:13px; color:var(--success); font-style:normal; font-weight:650; }
+/* The Notifications row is a toggle form, so it must read exactly like the link rows above it. */
+.profile-menu-form { margin:0; }
+.profile-menu-form button { width:100%; min-height:62px; display:flex; align-items:center; justify-content:space-between; padding:12px 16px; background:none; border:0; border-top:1px solid var(--border); font:inherit; color:inherit; text-align:left; cursor:pointer; transition:background .12s; }
+.profile-menu-form button:hover { background:#fafbfc; }
 .preferences-form { margin-top:20px; }
 .cashback-toggle { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); font-size:14px; font-weight:600; }
 .vouch-list { display:grid; gap:10px; margin-top:18px; }
@@ -542,7 +555,7 @@ fieldset.field>legend.field-label+* { clear:both; }
 .mood-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:16px; }
 .mood-grid--2 { grid-template-columns:repeat(2,1fr); }
 .field-label { font-size:13px; font-weight:600; color:var(--text); }
-.mood-chip { display:flex; cursor:pointer; }
+.mood-chip { position:relative; display:flex; cursor:pointer; }
 .mood-chip input { position:absolute; opacity:0; pointer-events:none; }
 .mood-chip span { display:flex; align-items:center; justify-content:center; text-align:center; width:100%; padding:10px 8px; border-radius:12px; border:1.5px solid var(--border); font-size:12.5px; font-weight:600; background:var(--app-bg); transition:background .12s,border-color .12s,color .12s; word-break:break-word; overflow-wrap:anywhere; }
 .mood-chip input:checked+span { background:var(--nets-red); border-color:var(--nets-red); color:#fff; }
@@ -551,10 +564,13 @@ fieldset.field>legend.field-label+* { clear:both; }
 .reward-custom-input:focus { border-color:var(--nets-red); }
 .onboard-field { margin-bottom:14px; }
 .onboard-or { font-size:12px; color:var(--text-2); font-weight:600; text-transform:uppercase; letter-spacing:.5px; margin:0 0 8px; }
+.onboard-note { font-size:11.5px; color:var(--text-2); line-height:1.5; margin:12px 0 0; }
 @media (max-width:560px) { .onboard-overlay { position:fixed; padding:0 10px calc(14px + env(safe-area-inset-bottom)); } }
 
 /* ---------- Motion ---------- */
-@keyframes rise { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+/* Ends at `none`, not `translateY(0)`: with animation-fill-mode:both a leftover transform would
+   make .match-card a containing block AND let its overflow:hidden clip the result bottom sheets. */
+@keyframes rise { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
 @keyframes pop { from { opacity:0; transform:scale(.85); } to { opacity:1; transform:scale(1); } }
 @keyframes draw { to { stroke-dashoffset:0; } }
 @keyframes bar-grow { from { width:0; } }
@@ -595,42 +611,180 @@ fieldset.field>legend.field-label+* { clear:both; }
    Smart Match RESULT card (photo + Vouches + tappable location map). Result state only -
    uses the existing tokens; nothing above this block was changed.
    ========================================================================== */
-/* Header: a 76px square image with the text column aligned to it - name at the top, details in the
-   middle, Vouches + halal tag along the bottom edge. */
-.result-head { display:flex; align-items:stretch; gap:12px; margin-bottom:14px; }
+/* Header: a compact square image with the text column aligned to it - name at the top, category +
+   distance in the middle, Vouches + dietary tags along the bottom edge. The thumbnail scales with
+   the viewport so the whole result still fits a short screen. */
+.result-head { display:flex; align-items:stretch; gap:var(--space-3); margin-bottom:var(--space-2); }
 /* Square thumbnail: the photo always fills the square via object-fit:cover (cropped, never stretched). */
-.result-photo { position:relative; flex:0 0 76px; width:76px; aspect-ratio:1 / 1; align-self:flex-start; border-radius:16px; overflow:hidden; background:var(--nets-blue-soft); }
+.result-photo { position:relative; flex:0 0 var(--result-thumb); width:var(--result-thumb); aspect-ratio:1 / 1; align-self:flex-start; border-radius:16px; overflow:hidden; background:var(--nets-blue-soft); }
 .result-photo img { display:block; width:100%; height:100%; object-fit:cover; object-position:center; }
-.result-photo-fallback { display:none; position:absolute; inset:0; place-items:center; color:var(--nets-navy); font-size:30px; font-weight:750; }
+.result-photo-fallback { display:none; position:absolute; inset:0; place-items:center; color:var(--nets-navy); font-size:28px; font-weight:750; }
 .result-photo.is-empty .result-photo-fallback { display:grid; }
-.result-info { flex:1; min-width:0; min-height:76px; display:flex; flex-direction:column; justify-content:space-between; gap:3px; }
-.result-info h2 { margin:0; font-size:17px; line-height:1.22; letter-spacing:-.3px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; }
-.result-meta { display:flex; align-items:center; min-width:0; margin:0; font-size:13px; line-height:1.3; color:var(--text-2); white-space:nowrap; }
-.result-lead { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.result-info { flex:1; min-width:0; min-height:var(--result-thumb); display:flex; flex-direction:column; justify-content:space-between; gap:3px; }
+/* The merchant's full name is always readable: it wraps over as many lines as it needs (a name with
+   no convenient break points breaks anywhere rather than overflowing sideways) and the identity
+   block grows with it. A name long enough to outgrow the screen makes the result scroll, which is
+   handled by the result-screen rules further down - it is never truncated to fit. */
+.result-info h2 { margin:0; font-size:17px; line-height:1.2; letter-spacing:-.3px; overflow-wrap:anywhere; }
+.result-meta { display:flex; flex-wrap:wrap; align-items:center; min-width:0; margin:0; font-size:13px; line-height:1.3; color:var(--text-2); }
+.result-meta>* { white-space:nowrap; }
+.result-lead { min-width:0; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
 .result-distance { flex-shrink:0; }
-.result-lead+.result-distance::before { content:'·'; margin:0 6px; color:var(--text-3); }
-/* Vouches + halal tag always share ONE line; on very narrow screens the tag text shortens with an
-   ellipsis instead of wrapping. */
-.result-tags { display:flex; flex-wrap:nowrap; align-items:center; gap:6px; min-width:0; margin:0; white-space:nowrap; }
-.result-tags>* { min-width:0; }
-.result-tags .match-diet { flex-shrink:1; overflow:hidden; text-overflow:ellipsis; padding:3px 8px; font-size:11.5px; }
+.result-lead+.result-distance::before { content:'\00b7'; margin:0 6px; color:var(--text-3); }
+/* Vouches + dietary tags always share ONE line; on very narrow screens the tag text shortens with
+   an ellipsis instead of wrapping. */
+.result-tags { display:flex; flex-wrap:wrap; align-items:center; gap:5px 6px; min-width:0; margin:0; }
+.result-tags>* { min-width:0; white-space:nowrap; }
+.result-tags .match-diet { padding:3px 8px; font-size:11.5px; }
 .result-vouches { flex-shrink:0; display:inline-flex; align-items:center; gap:4px; font-size:12.5px; font-weight:650; color:var(--success); }
 .result-vouches svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
-.halal-tag { display:block; flex-shrink:1; overflow:hidden; text-overflow:ellipsis; padding:3px 8px; border-radius:var(--r-pill); font-size:11px; font-weight:700; line-height:1.3; }
+/* A dietary warning is never shortened: it wraps to its own line rather than losing words. */
+.halal-tag { display:block; flex-shrink:0; padding:3px 8px; border-radius:var(--r-pill); font-size:11px; font-weight:700; line-height:1.3; }
 .halal-tag--halal { background:var(--success-bg); color:var(--success); }
 .halal-tag--non-halal { background:#fff1e6; color:#b45309; }
 .halal-tag--unknown { background:var(--surface-2); color:var(--text-2); font-weight:600; }
-.result-photo-credit { margin:-6px 0 12px; font-size:10.5px; color:var(--text-3); }
+/* One compact facts row: the merchant's own dish + price, and the demo-location notice, share a
+   single line instead of two stacked blocks. The price never wraps away. */
+.result-facts { display:flex; align-items:baseline; gap:8px; margin:0 0 var(--space-2); font-size:12.5px; line-height:1.35; color:var(--text); }
+/* The dish NAME may shorten with an ellipsis on a narrow screen; its PRICE never does. */
+.result-dish { display:flex; align-items:baseline; gap:6px; min-width:0; font-weight:600; }
+.result-dish-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.result-dish-price { flex-shrink:0; }
+.result-dish-name+.result-dish-price::before { content:'\00b7'; margin-right:6px; color:var(--text-3); font-weight:500; }
+.result-note { flex-shrink:0; margin-left:auto; padding:2px 8px; border-radius:var(--r-pill); background:var(--surface-2); color:var(--text-3); font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.6px; }
+/* On the map the notice is a non-interactive badge, so it never covers the directions control. */
+.result-photo-credit { margin:var(--space-2) 0 0; font-size:10.5px; color:var(--text-3); overflow-wrap:anywhere; }
 .result-photo-credit a { color:inherit; }
-/* Location map (existing map, back in the middle of the card); tapping anywhere on it opens
-   Google Maps walking directions. */
-.match-map-wrap { position:relative; margin:0 0 14px; }
-.match-map-wrap .match-map { height:170px; margin:0; }
-.match-map-open { position:absolute; inset:0; z-index:1000; display:flex; align-items:flex-end; justify-content:flex-end; padding:10px; border-radius:var(--r-md); text-decoration:none; }
+/* Location map (existing map, in the middle of the card); tapping anywhere on it opens Google Maps
+   walking directions. Responsive height so a short screen keeps every action in view. */
+.match-map-wrap { position:relative; margin:0 0 var(--space-3); }
+.match-map-wrap .match-map { height:var(--result-map-h); margin:0; }
+.match-map-open { position:absolute; inset:0; z-index:1000; display:flex; align-items:flex-end; justify-content:flex-end; padding:8px; border-radius:var(--r-md); text-decoration:none; }
 .match-map-open:focus-visible { outline:3px solid var(--focus); outline-offset:2px; }
-.match-map-hint { display:inline-flex; align-items:center; gap:4px; padding:6px 10px; border-radius:var(--r-pill); background:rgba(255,255,255,.94); box-shadow:var(--shadow-sm); color:var(--nets-navy); font-size:12px; font-weight:650; }
-.match-map-hint svg { width:14px; height:14px; fill:none; stroke:var(--nets-red); stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round; }
+.match-map-hint { display:inline-flex; align-items:center; gap:4px; padding:5px 9px; border-radius:var(--r-pill); background:rgba(255,255,255,.94); box-shadow:var(--shadow-sm); color:var(--nets-navy); font-size:11.5px; font-weight:650; }
+.match-map-hint svg { width:13px; height:13px; fill:none; stroke:var(--nets-red); stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round; }
+/* "Why this match": one concise sentence, clamped to two lines. The full text is kept in the title
+   attribute, so nothing is lost when the visible line is shortened. */
+.result-why { display:grid; gap:1px; margin:0 0 var(--space-3); }
+/* The label line also carries the demo-location notice, so that notice needs no row of its own and
+   never overlaps the map's directions control. */
+.result-why-head { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:4px 8px; min-width:0; }
+.result-why-head .result-why-label { min-width:0; }
+.result-why-head .result-note { margin-left:0; }
+.result-why-label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.9px; color:var(--text-3); }
+.result-why-text { font-size:13px; line-height:1.4; font-weight:500; color:var(--text); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; }
+
+/* ---------- Result actions: primary button, then two secondary controls on one row ---------- */
+.result-secondary { display:flex; flex-wrap:wrap; align-items:stretch; gap:var(--space-2); margin-top:var(--space-2); }
+.result-secondary .sheet-host { flex:1 1 120px; min-width:0; }
+.sheet-trigger { list-style:none; display:flex; align-items:center; justify-content:center; width:100%; min-width:0; min-height:44px; padding:10px 12px; border:1px solid var(--border); border-radius:var(--r-md); background:var(--surface); color:var(--text-2); font-size:13.5px; font-weight:650; cursor:pointer; text-align:center; }
+.sheet-trigger::-webkit-details-marker { display:none; }
+.sheet-trigger:hover { background:var(--surface-2); }
+.sheet-trigger--quiet { border-color:transparent; background:var(--surface-2); }
+details[open]>.sheet-trigger { color:var(--nets-red); border-color:var(--nets-red); }
+.refine-prefs .refine-edit { color:inherit; }
+
+/* Bottom sheet: the filter and feedback panels overlay the result instead of adding height to it.
+   Closed, they cost only their trigger. The panel is positioned against the phone shell, so it is
+   not clipped by the scrolling screen and rises OVER the bottom navigation (with a backdrop and a
+   Close control) rather than being trapped behind it. */
+/* Above the Leaflet map, whose own panes and the full-size directions link sit at z-index 1000. */
+.result-sheet { position:absolute; inset:0; z-index:2000; }
+.result-sheet-backdrop { position:absolute; inset:0; background:rgba(13,29,46,.42); animation:fade .18s ease both; }
+.result-sheet-panel { position:absolute; left:0; right:0; bottom:0; max-height:88%; overflow-y:auto; overscroll-behavior:contain;
+  padding:var(--space-4) var(--space-5) calc(var(--space-5) + env(safe-area-inset-bottom));
+  background:var(--surface); border-radius:var(--r-xl) var(--r-xl) 0 0; box-shadow:0 -10px 40px rgba(13,29,46,.22);
+  animation:sheet-up .22s cubic-bezier(.2,.9,.3,1) both; text-align:left; }
+.result-sheet-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:var(--space-3); }
+.result-sheet-head h3 { flex:1; min-width:0; margin:0; font-size:16px; }
+.result-sheet-head .sheet-close { flex-shrink:0; }
+.sheet-close { min-height:40px; padding:8px 14px; border:0; border-radius:var(--r-pill); background:var(--surface-2); color:var(--text-2); font-size:13px; font-weight:650; cursor:pointer; }
+.sheet-close:hover { background:var(--border); }
+@keyframes sheet-up { from { transform:translateY(14px); opacity:.6; } to { transform:none; opacity:1; } }
+@keyframes fade { from { opacity:0; } to { opacity:1; } }
 .visually-hidden { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+
+/* ==========================================================================
+   One-screen Smart Match result. Scoped with :has() so ONLY the screen showing a result card gets
+   the tighter spacing; every other screen, and the loading/empty states, keep their own rhythm.
+   A browser without :has() simply keeps the roomier spacing and scrolls - nothing breaks.
+   100cqh is the phone shell's own height, so the map scales the same way inside the desktop device
+   frame as it does full-screen on a real phone. Scrolling is never disabled: anything taller than
+   the screen (text enlargement, a very long name or reward) still scrolls normally.
+   ========================================================================== */
+/* 100cqh is the phone shell's height; the subtraction is the shell chrome above and below the
+   screen (status bar + header + navigation), which differs between the desktop device frame and a
+   real phone, so each mode states its own offset instead of guessing one average. */
+.screen:has(.match-card) { --result-map-h:clamp(110px,calc((100cqh - 216px) * .26),185px); padding:12px 20px 0; }
+/* The card uses the screen height it is given instead of leaving a dead zone above the navigation:
+   the result column stretches, and the MAP takes the spare height (between its own floor and
+   ceiling) rather than any text or control growing. The screen's own bottom padding is the only
+   thing between the card and the navigation, so that gap is explicit and never an overlap. */
+.screen:has(.match-card) { display:flex; flex-direction:column; }
+/* The gap above the navigation is the result column's own bottom margin, not the scroll container's
+   padding: a flex child's margin is part of the scrollable extent, so the last control keeps the
+   same clear space whether the result fits or has been scrolled to the end. */
+.screen:has(.match-card) #smart-match { flex:1 1 auto; min-height:0; margin-bottom:16px; display:flex; flex-direction:column; }
+.screen:has(.match-card) [data-match-region] { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
+.screen:has(.match-card) .match-card { flex:1 0 auto; display:flex; }
+/* Inside the card this controls WIDTH (the card is a row), so it must still shrink - otherwise a
+   long unbroken name would push the card wider than the screen. */
+.screen:has(.match-card) .match-copy { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+/* Spare height goes to the map first (the 50:1 growth split), and only what is left once the map
+   reaches its ceiling becomes breathing room above the reward - so the actions stay by the thumb
+   and no gap is left under the card. */
+.screen:has(.match-card) .match-map-wrap { flex:50 1 var(--result-map-h); min-height:var(--result-map-min); max-height:var(--result-map-max); }
+/* The Leaflet canvas follows the flexed wrapper instead of keeping the basis height. */
+.screen:has(.match-card) .match-map-wrap .match-map { height:100%; }
+/* On a tall screen the map reaches its ceiling with height to spare. The reward strip takes that
+   next - it simply breathes, which suits the card's most important promise - and only what neither
+   can use stays as a small gap. */
+.screen:has(.match-card) .match-card .reward { flex:4 1 auto; max-height:150px; align-content:center; }
+.result-flex-gap { display:none; }
+.screen:has(.match-card) .result-flex-gap { display:block; flex:1 1 0; min-height:0; }
+/* The greeting keeps its original wording, personalisation and time awareness (getHomeGreeting +
+   the signed-in demo user) and stays visible at every supported size. Only its scale is eased back
+   a little on the result screen, where the card is the main event. */
+.screen:has(.match-card) .greeting { margin:0 0 var(--space-3); }
+.screen:has(.match-card) .greeting p { margin-bottom:2px; font-size:14.5px; }
+.screen:has(.match-card) .greeting h1 { font-size:25px; line-height:1.15; letter-spacing:-.6px; }
+/* "Your Smart Match" would be a second heading competing with the greeting directly above it, and
+   the card beneath is unmistakable - so the result screen shows the greeting alone. */
+.screen:has(.match-card) #smart-match>.eyebrow { display:none; }
+/* Up to three lines of explanation; anything longer than the screen can hold simply scrolls. */
+.screen:has(.match-card) .result-why-text { -webkit-line-clamp:3; }
+.match-card .match-copy { padding:var(--space-4); }
+/* Short screens (the desktop device frame, or a phone with browser UI showing) tighten further
+   before anything is allowed to overflow. */
+/* A real phone runs full-screen: no status bar and a shorter navigation, so the same shell height
+   leaves more room for the screen than the desktop device frame does. Declared after the default so
+   it wins at equal specificity. */
+@media (max-width:560px) {
+  .screen:has(.match-card) { --result-map-h:clamp(110px,calc((100cqh - 120px) * .25),185px);
+    --result-map-min:150px; --result-map-max:clamp(185px,calc((100cqh - 120px) * .25),215px);
+    padding:12px 16px 0; }
+}
+/* A short shell (the desktop device frame) recovers its last few pixels from vertical GAPS only -
+   never from the greeting, the card's content, text sizes or touch targets. */
+@container (max-height: 840px) {
+  .screen:has(.match-card) { --result-thumb:56px; padding-top:6px; }
+  .screen:has(.match-card) .greeting { margin-bottom:6px; }
+  .match-card .match-copy { padding:10px 12px; }
+  .screen:has(.match-card) .result-info { gap:2px; }
+  .screen:has(.match-card) .result-head,
+  .screen:has(.match-card) .result-facts { margin-bottom:4px; }
+  .screen:has(.match-card) .result-secondary { margin-top:4px; }
+  .screen:has(.match-card) .match-card .reward { padding:8px 12px; }
+  .screen:has(.match-card) .match-map-wrap,
+  .screen:has(.match-card) .result-why,
+  .screen:has(.match-card) .match-card .reward { margin-bottom:6px; }
+}
+/* A genuinely short shell also tightens the thumbnail. The greeting is never hidden: at every
+   supported size it stays on screen above the card. */
+@container (max-height: 700px) {
+  .screen:has(.match-card) { --result-thumb:60px; padding-top:6px; }
+  .match-card .match-copy { padding:var(--space-3); }
+}
 
 /* ---------- Business Report page ---------- */
 .report-link { margin-bottom:16px; }

@@ -173,7 +173,10 @@ test('Smart Match recommends a merchant, keeps feedback and hands off to Scan', 
   const first = await match(v);
   // Neutral ranking: the nearest affordable demo merchant, with its real item and price.
   assert.match(first.html, /data-merchant-id="woodlands-noodle-bar"/);
-  assert.match(first.html, /Try: Mushroom Noodles · \$6\.80/);
+  // The dish name and its price are separate spans so the price can never be the part that a
+  // narrow screen shortens; the visible separator between them is a CSS ::before.
+  assert.match(first.html, /<span class="result-dish-name">Try: Mushroom Noodles<\/span>/);
+  assert.match(first.html, /<span class="result-dish-price">\$6\.80<\/span>/);
   assert.match(first.html, /Choose this/);
   assert.ok(!first.html.includes('Go there'));
   assert.ok(!first.html.includes('after collection'));
@@ -707,13 +710,20 @@ test('Task 5 — merchant results tab shows Shared Vouch conversion rate', async
   assert.match(page.html, /Shared Vouch conversion/);
 });
 
-test('Task 4 — smart-match-card no longer shows a Why this match section (removed from the result design)', async function() {
+test('Task 4 — the result card carries ONE compact "Why this match" line, not the old panel', async function() {
   const v = visitor();
   await v.request('/home');
   const result = await v.request('/smart-match/result');
   assert.equal(result.status, 200);
   assert.match(result.html, /data-merchant-id="[^"]+"/);
-  assert.ok(!/Why this match|class="why"/.test(result.html));
+  // The old full-width `.why` panel stays gone; the one-screen card states the reason in a single
+  // clamped line instead of a boxed section.
+  assert.ok(!/class="why"/.test(result.html));
+  assert.match(result.html, /<span class="result-why-label">Why this match<\/span>/);
+  const lines = result.html.match(/class="result-why-text"/g) || [];
+  assert.equal(lines.length, 1, 'exactly one reason line');
+  assert.match(result.html, /class="result-why-text" title="[^"]+"/,
+    'the full reason stays available even when the visible line is clamped');
 });
 
 test('merchant results tab shows channel attribution chart', async function() {

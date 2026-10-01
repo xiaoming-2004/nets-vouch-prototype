@@ -316,9 +316,15 @@ test('HEADER: no "Your match"/"AI Matched" line; name, details and tags sit besi
   assert.match(html, /<p class="result-meta"><span class="result-lead">Noodle Shop<\/span><span class="result-distance">\d+ m away<\/span><\/p>/);
   assert.match(html, /<p class="result-tags"><span class="result-vouches"/);
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'style.css'), 'utf8');
-  assert.match(css, /\.result-photo \{[^}]*flex:0 0 76px; width:76px; aspect-ratio:1 \/ 1;/);
-  assert.match(css, /\.result-info \{[^}]*min-height:76px; display:flex; flex-direction:column; justify-content:space-between;/);
-  assert.match(css, /-webkit-line-clamp:2/, 'long names are clamped to two lines');
+  // The thumbnail is a square sized from one token (so it can scale with the screen) rather than a
+  // hardcoded pixel value; the text column matches its height.
+  assert.match(css, /\.result-photo \{[^}]*flex:0 0 var\(--result-thumb\); width:var\(--result-thumb\); aspect-ratio:1 \/ 1;/);
+  assert.match(css, /\.result-info \{[^}]*min-height:var\(--result-thumb\); display:flex; flex-direction:column; justify-content:space-between;/);
+  assert.match(css, /--result-thumb:\d+px/, 'the thumbnail size is a design token');
+  // A long name is never clipped: it wraps over as many lines as it needs, breaking inside a word
+  // only when there is no other break point, and the result scrolls rather than truncating it.
+  assert.match(css, /\.result-info h2 \{[^}]*overflow-wrap:anywhere; \}/);
+  assert.ok(!/\.result-info h2 \{[^}]*line-clamp/.test(css), 'the merchant name is not line-clamped');
 });
 
 test('HALAL: curated merchants use their own records - green Halal / orange Non-halal', async function() {

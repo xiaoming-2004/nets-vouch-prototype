@@ -1,0 +1,6 @@
+<%- include('partials/start', { title: 'Dietary restrictions' }) %>
+<a class="back" href="/profile" aria-label="Back to Profile">← Profile</a><h1>Dietary restrictions</h1><p>Set requirements Smart Match must follow.</p>
+<% if (saved) { %><p class="badge badge--verified" role="status">✓ Saved. Smart Match will follow this from your next search.</p><% } %>
+<% if (settingsError) { %><p class="error" role="status">Please choose a valid dietary restriction.</p><% } %>
+<form method="POST" action="/profile/dietary" class="preferences-form form-stack"><div class="field"><span class="field-label" id="dietaryLabel">Dietary restriction</span><div class="mood-grid mood-grid--2" role="radiogroup" aria-labelledby="dietaryLabel"><% dietaryPreferenceOptions.forEach(function(option) { %><label class="mood-chip"><input type="radio" name="dietaryPreference" value="<%= option.value %>" <%= profile.dietaryPreference === option.value ? 'checked' : '' %>><span><%= option.label %></span></label><% }); %></div></div><p class="field-hint">Smart Match only suggests a place for an active restriction when real evidence confirms it. Craving, mood, budget and walking distance stay with your current search on Home.</p><button class="button" type="submit">Save dietary restriction</button></form>
+<%- include('partials/end', { active: 'profile' }) %>
