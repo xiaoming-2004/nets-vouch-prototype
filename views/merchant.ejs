@@ -1,6 +1,7 @@
 <%- include('partials/start', { title: 'Merchant demo', mode: 'merchant' }) %>
 <p class="eyebrow">Merchant demo</p><h1><%= merchant.merchantName %></h1>
 <form method="GET" action="/merchant" class="merchant-picker"><input type="hidden" name="tab" value="<%= tab %>"><label class="field">Merchant<select name="merchantId"><% merchants.forEach(function(item) { %><option value="<%= item.id %>" <%= item.id === merchant.id ? 'selected' : '' %>><%= item.merchantName %></option><% }); %></select></label><button class="text-button" type="submit">Switch</button></form>
+
 <% if (tab === 'campaign') { %>
 <p class="reward"><%= availability.title %></p><p><%= Math.max(0, campaign.maxRewardedPaymentsPerDay - campaign.redemptionsToday) %> rewarded payments remaining today · $<%= Math.max(0, campaign.maxRewardBudgetPerDay - campaign.rewardBudgetSpentToday).toFixed(2) %> reward budget remaining today</p>
 <% if (error) { %><p class="error">Check the campaign values and try again.</p><% } %>
@@ -32,6 +33,7 @@
 </dl>
 <small>Referral rewards are included within the reward budget. NETS success fee: $<%= campaign.platformFeePerAttributedPayment.toFixed(2) %> per Smart Match or Shared Vouch payment. Illustrative prototype pricing only.</small>
 </section>
+
 <% } else { %>
 <p class="eyebrow">Illustrative Prototype Data · sample history, not Open House activity</p>
 <% if (illustrativeMetrics && illustrativeMetrics.dailyPayments.length) { %>
@@ -44,6 +46,7 @@
 <small>Sample: <%= illustrativeMetrics.payments %> payments · $<%= (illustrativeMetrics.smartMatchSales + illustrativeMetrics.sharedVouchSales + illustrativeMetrics.directScanSales).toFixed(2) %> gross purchase sales · $<%= illustrativeMetrics.rewardCost.toFixed(2) %> merchant-funded rewards.</small>
 </section>
 <% } %>
+
 <p class="eyebrow">Live demo activity · since last reset</p>
 <% var _totalSales = campaign.metrics.smartMatchSales + campaign.metrics.sharedVouchSales + campaign.metrics.directScanSales; %>
 <section class="card roi-summary">
@@ -52,15 +55,111 @@
 <div class="roi-stat"><small>Merchant reward spend</small><b>$<%= campaign.metrics.rewardCost.toFixed(2) %></b></div>
 <div class="roi-stat"><small>Illustrative success fees</small><b>$<%= campaign.platformFeeAccrued.toFixed(2) %></b></div>
 </section>
-<% var _maxP = Math.max(campaign.metrics.smartMatchPayments, campaign.metrics.sharedVouchPayments, campaign.metrics.directScanPayments, 1); %>
-<section class="card channel-chart">
-<p class="eyebrow">Payments by channel</p>
-<div class="chart-bars">
-<div class="chart-row"><div class="chart-label-row"><b>Smart Match</b><small><%= campaign.metrics.smartMatchPayments %> payments · $<%= campaign.metrics.smartMatchSales.toFixed(2) %></small></div><div class="chart-track"><div class="chart-fill chart-fill--smart" style="width:<%= Math.round(100 * campaign.metrics.smartMatchPayments / _maxP) %>%"></div></div></div>
-<div class="chart-row"><div class="chart-label-row"><b>Shared Vouch</b><small><%= campaign.metrics.sharedVouchPayments %> payments · $<%= campaign.metrics.sharedVouchSales.toFixed(2) %></small></div><div class="chart-track"><div class="chart-fill chart-fill--vouch" style="width:<%= Math.round(100 * campaign.metrics.sharedVouchPayments / _maxP) %>%"></div></div></div>
-<div class="chart-row"><div class="chart-label-row"><b>Direct Scan</b><small><%= campaign.metrics.directScanPayments %> payments · $<%= campaign.metrics.directScanSales.toFixed(2) %></small></div><div class="chart-track"><div class="chart-fill chart-fill--direct" style="width:<%= Math.round(100 * campaign.metrics.directScanPayments / _maxP) %>%"></div></div></div>
-</div>
+
+<!-- Visual Dashboard Graphs -->
+<%
+  var m = campaign.metrics;
+  var smP = m.smartMatchPayments || 0;
+  var svP = m.sharedVouchPayments || 0;
+  var dsP = m.directScanPayments || 0;
+  var totalP = (smP + svP + dsP) || 1;
+  
+  var smPct = Math.round((smP / totalP) * 100);
+  var svPct = Math.round((svP / totalP) * 100);
+  var dsPct = 100 - smPct - svPct;
+%>
+<section class="card" style="margin-bottom: 16px;">
+  <h2 style="font-size: 15px; margin-bottom: 12px; font-weight: 800; color: var(--navy);">Channel Attribution</h2>
+  <div style="height: 16px; width: 100%; display: flex; border-radius: 999px; overflow: hidden; background: #e3e8ec; margin-bottom: 14px;">
+    <div style="width: <%= smPct %>%; background: #092c49;" title="Smart Match"></div>
+    <div style="width: <%= svPct %>%; background: #15704c;" title="Shared Vouch"></div>
+    <div style="width: <%= dsPct %>%; background: #9aa6af;" title="Direct Walk-in"></div>
+  </div>
+  <div style="display: grid; gap: 8px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
+      <span style="display: flex; align-items: center; gap: 6px;">
+        <span style="width: 10px; height: 10px; border-radius: 50%; background: #092c49; display: inline-block;"></span>
+        <strong>Smart Match (AI)</strong>
+      </span>
+      <span><b><%= smPct %>%</b> (<%= smP %>)</span>
+    </div>
+    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
+      <span style="display: flex; align-items: center; gap: 6px;">
+        <span style="width: 10px; height: 10px; border-radius: 50%; background: #15704c; display: inline-block;"></span>
+        <strong>Shared Vouch</strong>
+      </span>
+      <span><b><%= svPct %>%</b> (<%= svP %>)</span>
+    </div>
+    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
+      <span style="display: flex; align-items: center; gap: 6px;">
+        <span style="width: 10px; height: 10px; border-radius: 50%; background: #9aa6af; display: inline-block;"></span>
+        <strong style="color: var(--muted);">Direct Scan</strong>
+      </span>
+      <span><b><%= dsPct %>%</b> (<%= dsP %>)</span>
+    </div>
+  </div>
 </section>
+
+<%
+  var shown = m.smartMatchShown || 0;
+  var accepted = m.smartMatchAccepted || 0;
+  var paid = m.smartMatchPayments || 0;
+  var accPct = shown ? Math.round((accepted / shown) * 100) : 0;
+  var paidPct = shown ? Math.round((paid / shown) * 100) : 0;
+%>
+<div class="card" style="margin-bottom: 16px;">
+  <h2 style="font-size: 15px; margin-bottom: 14px; font-weight: 800; color: var(--navy);">Smart Match Funnel</h2>
+  <div style="display: grid; gap: 10px;">
+    <div>
+      <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+        <span>1. Recommended by AI</span>
+        <strong><%= shown %></strong>
+      </div>
+      <div style="height: 8px; width: 100%; background: var(--line); border-radius: 999px; overflow: hidden;">
+        <div style="height: 100%; width: 100%; background: var(--navy); border-radius: 999px;"></div>
+      </div>
+    </div>
+    <div>
+      <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+        <span>2. Accepted by Student</span>
+        <strong><%= accepted %> <small style="color: var(--muted);">(<%= accPct %>%)</small></strong>
+      </div>
+      <div style="height: 8px; width: 100%; background: var(--line); border-radius: 999px; overflow: hidden;">
+        <div style="height: 100%; width: <%= accPct %>%; background: #165585; border-radius: 999px;"></div>
+      </div>
+    </div>
+    <div>
+      <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+        <span>3. Terminal Payment Settled</span>
+        <strong><%= paid %> <small style="color: var(--green); font-weight: 700;">(<%= paidPct %>%)</small></strong>
+      </div>
+      <div style="height: 8px; width: 100%; background: var(--line); border-radius: 999px; overflow: hidden;">
+        <div style="height: 100%; width: <%= paidPct %>%; background: var(--green); border-radius: 999px;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Detailed Raw Metrics Section -->
+<h2 style="font-size: 15px; margin: 24px 0 12px; font-weight: 800; color: var(--navy);">Detailed Metrics</h2>
+<dl class="receipt-lines card">
+  <div><dt>Smart Match shown</dt><dd><%= campaign.metrics.smartMatchShown %></dd></div>
+  <div><dt>Smart Match accepted</dt><dd><%= campaign.metrics.smartMatchAccepted %></dd></div>
+  <div><dt>Smart Match payments</dt><dd><%= campaign.metrics.smartMatchPayments %></dd></div>
+  <div><dt>Smart Match sales</dt><dd>$<%= campaign.metrics.smartMatchSales.toFixed(2) %></dd></div>
+  <div><dt>Shared Vouch claims</dt><dd><%= campaign.metrics.sharedVouchClaims %></dd></div>
+  <div><dt>Shared Vouch payments</dt><dd><%= campaign.metrics.sharedVouchPayments %></dd></div>
+  <div><dt>Shared Vouch sales</dt><dd>$<%= campaign.metrics.sharedVouchSales.toFixed(2) %></dd></div>
+  <div><dt>Shared Vouch conversion</dt><dd><%= campaign.metrics.sharedVouchClaims ? Math.round(100 * campaign.metrics.sharedVouchPayments / campaign.metrics.sharedVouchClaims) : 0 %>%</dd></div>
+  <div><dt>Direct Scan payments</dt><dd><%= campaign.metrics.directScanPayments %></dd></div>
+  <div><dt>Direct Scan sales</dt><dd>$<%= campaign.metrics.directScanSales.toFixed(2) %></dd></div>
+  <div><dt>QR scans</dt><dd><%= campaign.metrics.scans %></dd></div>
+  <div><dt>Completed payments</dt><dd><%= campaign.metrics.payments %></dd></div>
+  <div><dt>Merchant reward spend</dt><dd>$<%= campaign.metrics.rewardCost.toFixed(2) %></dd></div>
+  <div><dt>Illustrative success fees accrued</dt><dd>$<%= campaign.platformFeeAccrued.toFixed(2) %></dd></div>
+  <div><dt>Smart Match conversion</dt><dd><%= campaign.metrics.smartMatchShown ? Math.round(100 * campaign.metrics.smartMatchPayments / campaign.metrics.smartMatchShown) : 0 %>%</dd></div>
+</dl>
+
 <% if (recentPayments && recentPayments.length) { %>
 <section class="card">
 <p class="eyebrow">Recent live payments · NETS paid</p>
@@ -69,6 +168,65 @@
 </div>
 </section>
 <% } %>
-<dl class="receipt-lines card"><div><dt>Smart Match shown</dt><dd><%= campaign.metrics.smartMatchShown %></dd></div><div><dt>Smart Match accepted</dt><dd><%= campaign.metrics.smartMatchAccepted %></dd></div><div><dt>Smart Match payments</dt><dd><%= campaign.metrics.smartMatchPayments %></dd></div><div><dt>Smart Match sales</dt><dd>$<%= campaign.metrics.smartMatchSales.toFixed(2) %></dd></div><div><dt>Shared Vouch claims</dt><dd><%= campaign.metrics.sharedVouchClaims %></dd></div><div><dt>Shared Vouch payments</dt><dd><%= campaign.metrics.sharedVouchPayments %></dd></div><div><dt>Shared Vouch sales</dt><dd>$<%= campaign.metrics.sharedVouchSales.toFixed(2) %></dd></div><div><dt>Shared Vouch conversion</dt><dd><%= campaign.metrics.sharedVouchClaims ? Math.round(100 * campaign.metrics.sharedVouchPayments / campaign.metrics.sharedVouchClaims) : 0 %>%</dd></div><div><dt>Direct Scan payments</dt><dd><%= campaign.metrics.directScanPayments %></dd></div><div><dt>Direct Scan sales</dt><dd>$<%= campaign.metrics.directScanSales.toFixed(2) %></dd></div><div><dt>QR scans</dt><dd><%= campaign.metrics.scans %></dd></div><div><dt>Completed payments</dt><dd><%= campaign.metrics.payments %></dd></div><div><dt>Merchant reward spend</dt><dd>$<%= campaign.metrics.rewardCost.toFixed(2) %></dd></div><div><dt>Illustrative success fees accrued</dt><dd>$<%= campaign.platformFeeAccrued.toFixed(2) %></dd></div><div><dt>Smart Match conversion</dt><dd><%= campaign.metrics.smartMatchShown ? Math.round(100 * campaign.metrics.smartMatchPayments / campaign.metrics.smartMatchShown) : 0 %>%</dd></div></dl>
+
+<!-- START: PDPA-Compliant Export & Print Controls -->
+<!-- Load SheetJS for native client-side Excel generation (Zero server-side data leakage) -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+<div style="display: flex; gap: 8px; margin: 20px 0;">
+  <button type="button" class="button" onclick="window.print()" style="background: var(--navy); flex: 1; min-height: 44px; font-size: 13px; padding: 0 8px;">
+    🖨️ Print
+  </button>
+  <button type="button" class="button" onclick="exportCSV()" style="background: var(--muted); flex: 1; min-height: 44px; font-size: 13px; padding: 0 8px;">
+    📊 CSV
+  </button>
+  <button type="button" class="button" onclick="exportExcel()" style="background: #107c41; flex: 1; min-height: 44px; font-size: 13px; padding: 0 8px;">
+    📗 Excel
+  </button>
+</div>
+
+<script>
+// Grab the server-rendered payments feed securely
+const payments = <%- JSON.stringify(typeof recentPayments !== 'undefined' ? recentPayments : []) %>;
+const merchantFilename = "<%= typeof merchant !== 'undefined' && merchant ? merchant.id : 'merchant' %>_transactions";
+
+function exportCSV() {
+  // PDPA COMPLIANCE GUARD: Only financial metadata, zero user PII.
+  const rows = [["Date", "Time", "Amount", "Acquisition Source", "Item/Category"]];
+  
+  payments.forEach(function(p) {
+    rows.push([p.date, p.time, p.displayAmount, p.source, p.itemName || 'N/A']);
+  });
+  
+  const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.join(",")).join("\n");
+  const encodedUri = encodeURI(csvContent);
+  const link = document.createElement("a");
+  link.setAttribute("href", encodedUri);
+  link.setAttribute("download", merchantFilename + ".csv");
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+function exportExcel() {
+  // Transform data for Excel formatting
+  const exportData = payments.map(p => ({
+    "Date": p.date,
+    "Time": p.time,
+    "Amount": p.displayAmount,
+    "Acquisition Source": p.source,
+    "Item/Category": p.itemName || 'N/A'
+  }));
+
+  // Generate an Excel workbook strictly in the browser
+  const worksheet = XLSX.utils.json_to_sheet(exportData);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Transactions");
+
+  // Trigger native .xlsx download
+  XLSX.writeFile(workbook, merchantFilename + ".xlsx");
+}
+</script>
+<!-- END: PDPA-Compliant Export & Print Controls -->
 <% } %><a class="text-button" href="/home">Return to Jia</a>
 <%- include('partials/end', { active: tab, merchantNav: { merchantId: merchant.id } }) %>

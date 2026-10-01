@@ -106,8 +106,17 @@ function requestCurrentPosition() {
   return new Promise(function(resolve) {
     if (!navigator.geolocation) { smartMatchDebug('geolocation unsupported'); return resolve(null); }
     navigator.geolocation.getCurrentPosition(function(position) {
-      smartMatchDebug('geolocation success');
+      
+      // HACKATHON FIX: Laptops use IP triangulation (often 10km+ inaccurate in SG).
+      // If accuracy is worse than 1000m, reject it to prevent routing users to the wrong side of the country.
+      if (position.coords.accuracy > 1000) {
+        smartMatchDebug('geolocation accuracy too low (' + Math.round(position.coords.accuracy) + 'm). Rejecting.');
+        return resolve(null);
+      }
+      
+      smartMatchDebug('geolocation success (accuracy: ' + Math.round(position.coords.accuracy) + 'm)');
       resolve({ latitude: position.coords.latitude, longitude: position.coords.longitude });
+      
     }, function() { smartMatchDebug('geolocation denied/failed'); resolve(null); }, {
       enableHighAccuracy: true, maximumAge: 0, timeout: 10000
     });
