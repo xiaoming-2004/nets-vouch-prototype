@@ -1,6 +1,20 @@
 <%- include('partials/start', { title: 'Merchant demo', mode: 'merchant' }) %>
 <p class="eyebrow">Merchant demo</p><h1><%= merchant.merchantName %></h1>
-<form method="GET" action="/merchant" class="merchant-picker"><input type="hidden" name="tab" value="<%= tab %>"><label class="field">Merchant<select name="merchantId"><% merchants.forEach(function(item) { %><option value="<%= item.id %>" <%= item.id === merchant.id ? 'selected' : '' %>><%= item.merchantName %></option><% }); %></select></label><button class="text-button" type="submit">Switch</button></form>
+<form method="GET" action="/merchant" class="merchant-picker" data-auto-submit><input type="hidden" name="tab" value="<%= tab %>"><label class="field">Merchant<select name="merchantId"><% merchants.forEach(function(item) { %><option value="<%= item.id %>" <%= item.id === merchant.id ? 'selected' : '' %>><%= item.merchantName %></option><% }); %></select></label><button class="text-button" type="submit">Switch</button></form>
+<% if (error === 'dietary') { %><p class="error">That merchant could not be found, so no dietary options were changed.</p><% } %>
+<form method="POST" action="/merchant/dietary" class="card dietary-card">
+<input type="hidden" name="merchantId" value="<%= merchant.id %>">
+<input type="hidden" name="tab" value="<%= tab %>">
+<fieldset class="dietary-fieldset">
+<legend class="dietary-legend">Dietary options you offer</legend>
+<div class="dietary-checks">
+<% merchantDietaryOptions.forEach(function(opt) { %><label class="dietary-check"><input type="checkbox" name="<%= opt.value %>" <%= dietaryCapabilities[opt.value] ? 'checked' : '' %>><span><%= opt.label %></span></label><% }); %>
+</div>
+<small class="dietary-hint">Tick everything that applies. Customers see these as information you provided — NETS Vouch does not verify them on your behalf.</small>
+</fieldset>
+<button class="button dietary-save" type="submit">Save dietary options</button>
+<% if (dietarySaved) { %><small class="dietary-hint" role="status">Dietary options saved.</small><% } %>
+</form>
 
 <% if (tab === 'campaign') { %>
 <div class="campaign-status-row">

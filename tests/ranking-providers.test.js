@@ -1,7 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { app, createInitialDemo, getNearbyMerchants, getSmartRecommendation, clearDiscoveryCache,
-  clearMerchantResearchCache, resetMerchantCampaigns, safeAIReason, getMatchReasons } = require('../app');
+const { app, createInitialDemo, getNearbyMerchants, getSmartRecommendation, clearDiscoveryCache, resetMerchantCampaigns, safeAIReason, getMatchReasons } = require('../app');
 
 // Final Smart Match ranking: Groq primary -> OpenAI fallback -> deterministic rules. Candidates are
 // prepared by mocked Google discovery (so they are real normalised, campaign-registered merchants);
@@ -20,7 +19,6 @@ test.after(function() {
 test.beforeEach(function() {
   resetMerchantCampaigns();
   clearDiscoveryCache();
-  clearMerchantResearchCache();
   trackedKeys.forEach(function(key) { delete process.env[key]; });
   global.fetch = originalFetch;
 });
@@ -318,10 +316,8 @@ function reasonProfile(extra) {
 function checkReason(reason, merchant, profile) {
   return safeAIReason({ relevance: 'high', reason: reason }, merchant || reasonMerchant(), profile || reasonProfile());
 }
-const researchedBurger = { vegan: { identified: true, status: 'UNKNOWN', evidence: '',
-  matchingItems: [{ name: 'Spicy Chicken Burger', price: 8.9 }] } };
-const verifiedVegetarian = { vegetarian: { identified: true, status: 'SUITABLE', evidence: 'Vegetarian menu section.',
-  matchingItems: [{ name: 'Veggie Wrap', price: null }] } };
+// A REGISTERED merchant that listed vegetarian options; dietary state comes only from that.
+const listedVegetarian = { id: 'woodlands-noodle-bar', source: 'local-fallback' };
 
 test('REASON A: a safe craving + walking-range reason is preserved', function() {
   const reason = 'Strong match for your spicy chicken craving and still within your walking range.';
@@ -338,9 +334,10 @@ test('REASON D: a supplied factual distance is allowed', function() {
   assert.equal(checkReason(reason), reason);
 });
 
-test('REASON E: a researched menu item may be cited', function() {
-  const reason = 'Offers a researched Spicy Chicken Burger that matches your craving.';
-  assert.equal(checkReason(reason, reasonMerchant({ research: researchedBurger })), reason);
+test('REASON E: a dish the provider actually supplied may be cited', function() {
+  const reason = 'Its menu dish Spicy Chicken Burger matches your craving.';
+  assert.equal(checkReason(reason, reasonMerchant({ itemName: 'Spicy Chicken Burger' })), reason);
+  assert.equal(checkReason(reason, reasonMerchant()), null, 'with no supplied dish the claim is dropped');
 });
 
 test('REASON F: an unsupplied "famous" menu claim is dropped', function() {
@@ -348,11 +345,12 @@ test('REASON F: an unsupplied "famous" menu claim is dropped', function() {
   assert.equal(checkReason('Known for its spicy chicken dishes.'), null);
 });
 
-test('REASON G/H: a dietary reason survives only with verified suitability', function() {
-  const reason = 'Verified for your vegetarian preference and still within your walking range.';
+test('REASON G/H: a dietary reason survives only when the merchant listed that option', function() {
+  const reason = 'Suits your vegetarian preference and still within your walking range.';
   const profile = reasonProfile({ dietaryPreference: 'vegetarian' });
-  assert.equal(checkReason(reason, reasonMerchant({ research: verifiedVegetarian }), profile), reason);
-  assert.equal(checkReason(reason, reasonMerchant(), profile), null, 'no dietary evidence -> dropped');
+  assert.equal(checkReason(reason, reasonMerchant(listedVegetarian), profile), reason);
+  assert.equal(checkReason(reason, reasonMerchant(), profile), null,
+    'an external merchant has listed nothing -> dropped');
 });
 
 test('REASON I/J: a dropped reason keeps the AI merchant choice and provider behaviour', async function() {
@@ -382,12 +380,14 @@ test('SERVER REASONS: useful factual fallback lines, never fabricated', function
   assert.deepEqual(getMatchReasons(reasonProfile({ craving: 'chicken' }), within, [], null),
     ['Matches your current craving', 'Within your walking range']);
   assert.deepEqual(getMatchReasons(reasonProfile({ craving: '', dietaryPreference: 'vegetarian' }),
-    reasonMerchant({ research: verifiedVegetarian }), [], null),
-  ['Verified for your dietary preference', 'Within your walking range']);
-  assert.deepEqual(getMatchReasons(reasonProfile({ craving: '' }), reasonMerchant({ research: researchedBurger }), [], null),
-    ['A researched menu option fits your budget', 'Within your walking range']);
-  assert.deepEqual(getMatchReasons(reasonProfile({ craving: '', budget: 5 }), reasonMerchant({ research: researchedBurger }), [], null),
-    ['Within your walking range'], 'an $8.90 item never counts as fitting a $5 budget');
+    reasonMerchant(listedVegetarian), [], null),
+  ['Vegetarian — listed by the merchant', 'Within your walking range']);
+  assert.deepEqual(getMatchReasons(reasonProfile({ craving: '', dietaryPreference: 'vegetarian' }),
+    reasonMerchant(), [], null),
+  ['This merchant has not listed this dietary option.', 'Within your walking range'],
+    'an external merchant is described honestly, never as suitable');
+  assert.deepEqual(getMatchReasons(reasonProfile({ craving: '', budget: 5 }), reasonMerchant({ price: 8.9 }), [], null),
+    ['Within your walking range'], 'an $8.90 dish never counts as fitting a $5 budget');
   assert.deepEqual(getMatchReasons(reasonProfile({ craving: '', maxDistanceMinutes: 5 }), within, [], null),
     ['Best available match from the eligible nearby options']);
 });

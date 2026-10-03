@@ -639,10 +639,6 @@ fieldset.field>legend.field-label+* { clear:both; }
 .result-vouches { flex-shrink:0; display:inline-flex; align-items:center; gap:4px; font-size:12.5px; font-weight:650; color:var(--success); }
 .result-vouches svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
 /* A dietary warning is never shortened: it wraps to its own line rather than losing words. */
-.halal-tag { display:block; flex-shrink:0; padding:3px 8px; border-radius:var(--r-pill); font-size:11px; font-weight:700; line-height:1.3; }
-.halal-tag--halal { background:var(--success-bg); color:var(--success); }
-.halal-tag--non-halal { background:#fff1e6; color:#b45309; }
-.halal-tag--unknown { background:var(--surface-2); color:var(--text-2); font-weight:600; }
 /* One compact facts row: the merchant's own dish + price, and the demo-location notice, share a
    single line instead of two stacked blocks. The price never wraps away. */
 .result-facts { display:flex; align-items:baseline; gap:8px; margin:0 0 var(--space-2); font-size:12.5px; line-height:1.35; color:var(--text); }
@@ -877,3 +873,34 @@ details[open]>.sheet-trigger { color:var(--nets-red); border-color:var(--nets-re
 .report-empty { font-size:12.5px; line-height:1.5; color:var(--text-2); margin:10px 0 0; }
 .card.is-illustrative { border-left:3px solid var(--warn); }
 .card.is-illustrative>.eyebrow { color:var(--warn); }
+
+/* Dietary badges: what the registered merchant itself listed. No verification language, so no
+   green "verified" treatment either - informational tones only. */
+.diet-tag { display:block; flex-shrink:0; padding:3px 8px; border-radius:var(--r-pill); font-size:11px; font-weight:700; line-height:1.3; }
+.diet-tag--halal { background:#e0f2fe; color:#075985; }
+.diet-tag--vegetarian { background:#dcfce7; color:#166534; }
+.diet-tag--vegan { background:#ecfccb; color:#3f6212; }
+.result-diet-note { margin:6px 0 0; font-size:11px; color:var(--text-2); }
+/* Merchant settings: the three independent dietary checkboxes. */
+/* Merchant dietary settings. The card has its own class so NOTHING here relies on, or alters, the
+   global .field input rule (width:100%; min-height:48px; padding:12px 14px) - which is what made
+   these checkboxes render as full-width boxes. Native checkboxes are kept for semantics and
+   keyboard focus; only their size and accent are overridden, tightly scoped to this card. */
+.dietary-card { display:grid; gap:10px; padding:14px; }
+.dietary-fieldset { border:0; margin:0; padding:0; min-width:0; }
+.dietary-legend { padding:0; font-size:12px; font-weight:700; color:var(--text-2); letter-spacing:.01em; }
+.dietary-checks { display:grid; gap:8px; margin-top:8px; }
+/* Each option: checkbox left, label immediately beside it, tappable row height, no wrapping until
+   the viewport is genuinely narrow. */
+.dietary-check { display:flex; align-items:center; gap:10px; min-height:44px; font-size:14px; line-height:1.3; cursor:pointer; }
+.dietary-check > span { min-width:0; overflow-wrap:anywhere; }
+.dietary-card .dietary-check input[type="checkbox"] {
+  flex:0 0 20px; width:20px; height:20px; min-height:0; min-width:20px; padding:0; margin:0;
+  border-radius:4px; accent-color:var(--nets-red);
+}
+.dietary-card .dietary-check input[type="checkbox"]:focus-visible {
+  outline:2px solid var(--nets-red); outline-offset:2px; box-shadow:none;
+}
+.dietary-hint { display:block; margin-top:2px; font-size:11.5px; line-height:1.45; color:var(--text-2); }
+.dietary-card .dietary-save { min-height:46px; padding:0 16px; font-size:14px; }
+@media (max-width:360px) { .dietary-check { font-size:13px; } }

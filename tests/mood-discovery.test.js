@@ -1,11 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { app, createInitialDemo, getNearbyMerchants, getSmartRecommendation, getMoodMatchState,
+  getMerchantCampaigns,
   getDietaryMatchState, MATCH_STATE, moodCuisineOptions, normaliseMoodCuisine,
-  buildRankingMessagesForTest, clearDiscoveryCache, clearMerchantResearchCache,
+  buildRankingMessagesForTest, clearDiscoveryCache,
   clearSearchIntentCache, resetMerchantCampaigns } = require('../app');
-const researchStore = require('../research-store');
-
 // "Mood today": the staple the user feels like eating. It steers Smart Match DISCOVERY (one
 // mood-targeted provider search inside the existing call budget) and RANKING, and nothing else -
 // it is never an eligibility rule, never menu proof and never dietary proof.
@@ -29,14 +28,11 @@ test.after(function() {
     if (originalEnv[key] === undefined) delete process.env[key];
     else process.env[key] = originalEnv[key];
   });
-  researchStore.setSharedClient(null);
 });
 test.beforeEach(function() {
   resetMerchantCampaigns();
   clearDiscoveryCache();
-  clearMerchantResearchCache();
   clearSearchIntentCache();
-  researchStore.setSharedClient(null);
   trackedKeys.forEach(function(key) { delete process.env[key]; });
   global.fetch = originalFetch;
 });
@@ -296,14 +292,18 @@ test('MOOD 8: mood + dietary composes ONE query and keeps strict dietary verific
   assert.equal(getDietaryMatchState(h1, 'halal'), MATCH_STATE.UNKNOWN,
     'a mood search can never prove Halal, vegetarian or vegan');
 
-  // No research provider: an unverified merchant is never shown as suitable for the restriction.
+  // An external merchant is never suitable for the restriction: only a registered merchant that
+  // listed the option can be. Clear every listing so nothing nearby qualifies.
+  getMerchantCampaigns().forEach(function(c) {
+    c.dietaryCapabilities = { halal: false, vegetarian: false, vegan: false };
+  });
   const demo = createInitialDemo('jia');
   demo.profile.dietaryPreference = 'halal';
   demo.profile.moodCuisine = 'rice';
   demo.profile.maxDistanceMinutes = 30;
   const result = await getSmartRecommendation(demo.profile, nearby.merchants, [], [], demo, []);
   assert.equal(result.merchant, null);
-  assert.equal(result.researchUnavailable, true);
+  assert.equal(result.noDeclaredDietary, true);
 });
 
 test('MOOD 8b: craving + dietary + mood spends both calls on dietary safety and the raw craving', async function() {
@@ -315,7 +315,10 @@ test('MOOD 8b: craving + dietary + mood spends both calls on dietary safety and 
   const nearby = await getNearbyMerchants(ORIGIN, 'jia', 'crispy chicken', 30, 'halal', 'rice');
   assert.deepEqual(calls.text, ['crispy chicken', 'halal crispy chicken'],
     'the broad mood hint is dropped from discovery; dietary and the craving take priority');
-  assert.equal(calls.nearby, 0, 'no third provider call');
+  // With an active dietary restriction the third call is the general nearby pool: most certified or
+  // Muslim-owned outlets are not labelled halal by the provider, so they must stay researchable.
+  // The broad MOOD hint is still dropped - it is only a ranking signal.
+  assert.equal(calls.nearby, 1, 'the third call is the general nearby pool, not a mood search');
   assert.ok(nearby.merchants.every(function(m) { return !m.fromMoodSearch; }));
 });
 

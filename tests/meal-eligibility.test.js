@@ -1,7 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createInitialDemo, getNearbyMerchants, getSmartRecommendation, isMealMerchant, clearDiscoveryCache,
-  clearMerchantResearchCache, clearSearchIntentCache, resetMerchantCampaigns } = require('../app');
+const { createInitialDemo, getNearbyMerchants, getSmartRecommendation, isMealMerchant, clearDiscoveryCache, clearSearchIntentCache, resetMerchantCampaigns } = require('../app');
 
 // Meal-merchant eligibility: Smart Match recommends a proper meal, so a place whose PRIMARY provider
 // type/category is coffee, tea, drinks, bakery, dessert or snacks never reaches ranking. Decided from
@@ -20,7 +19,6 @@ test.after(function() {
 test.beforeEach(function() {
   resetMerchantCampaigns();
   clearDiscoveryCache();
-  clearMerchantResearchCache();
   clearSearchIntentCache();
   trackedKeys.forEach(function(key) { delete process.env[key]; });
   global.fetch = originalFetch;

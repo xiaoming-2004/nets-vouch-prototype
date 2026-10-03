@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { app, clearDiscoveryCache, clearMerchantResearchCache, clearSearchIntentCache,
+const { app, clearDiscoveryCache, clearSearchIntentCache,
   resetMerchantCampaigns } = require('../app');
 const result = require('../smart-match-result');
 
@@ -32,7 +32,6 @@ test.after(function() {
 test.beforeEach(function() {
   resetMerchantCampaigns();
   clearDiscoveryCache();
-  clearMerchantResearchCache();
   clearSearchIntentCache();
   result.clearMerchantPhotoCache();
   trackedKeys.forEach(function(key) { delete process.env[key]; });
@@ -327,53 +326,35 @@ test('HEADER: no "Your match"/"AI Matched" line; name, details and tags sit besi
   assert.ok(!/\.result-info h2 \{[^}]*line-clamp/.test(css), 'the merchant name is not line-clamped');
 });
 
-test('HALAL: curated merchants use their own records - green Halal / orange Non-halal', async function() {
+test('DIET BADGE: the badge states only what the registered merchant listed', async function() {
+  const v = visitor();
+  await v.request('/home');
+  await v.request('/profile', { dietaryPreference: 'halal', budget: '10', maxDistanceMinutes: '10', craving: '', moodCuisine: 'any' });
+  await v.request('/smart-match/location', { status: 'fallback' });
+  const halal = (await v.request('/smart-match/result')).html;
+  // The shipped demo data lists Halal for this merchant, so the badge is simply "Halal".
+  assert.match(halal, /<span class="diet-tag diet-tag--halal">Halal<\/span>/);
+  assert.match(halal, /Dietary information provided by the merchant\./);
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'style.css'), 'utf8');
+  assert.match(css, /\.diet-tag--halal \{/, 'the badge has its own informational style');
+  assert.ok(!/halal-tag/.test(css), 'the old verification badge styles are gone');
+});
+
+test('DIET BADGE: no verification language survives anywhere in the result card', async function() {
+  const card = fs.readFileSync(path.join(__dirname, '..', 'views', 'smart-match-card.ejs'), 'utf8');
+  assert.ok(!/MUIS|Muslim-owned|halal-tag|Check on MUIS|Copy name|result-evidence/i.test(card),
+    'no MUIS, Muslim-owned, evidence or verification controls remain on the card');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  assert.ok(!/Halal verified|MUIS-certified|certification not verified|Potential Halal option/i.test(source),
+    'and none of the removed labels remain in the server either');
+});
+
+test('DIET BADGE: with no dietary preference the card shows no dietary badge and no lookup', async function() {
   const v = visitor();
   await v.request('/home');
   await v.request('/profile', { dietaryPreference: 'none', budget: '10', maxDistanceMinutes: '10', craving: '', moodCuisine: 'any' });
   await v.request('/smart-match/location', { status: 'fallback' });
   const html = (await v.request('/smart-match/result')).html;
-  assert.match(html, /data-merchant-id="woodlands-noodle-bar"/);
-  assert.match(html, /<span class="halal-tag halal-tag--non-halal">Non-halal<\/span>/);
-  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'style.css'), 'utf8');
-  assert.match(css, /\.halal-tag--halal \{ background:var\(--success-bg\); color:var\(--success\); \}/, 'halal is green');
-  assert.match(css, /\.halal-tag--non-halal \{ background:#fff1e6; color:#b45309; \}/, 'non-halal is orange');
-  await v.request('/recommendation/reject', { merchantId: 'woodlands-noodle-bar', reason: 'not-in-mood' });
-  await v.request('/profile', { dietaryPreference: 'halal', budget: '10', maxDistanceMinutes: '10', craving: '', moodCuisine: 'any' });
-  const halal = (await v.request('/smart-match/result')).html;
-  assert.match(halal, /<span class="halal-tag halal-tag--halal">Halal<\/span>/);
-});
-
-test('HALAL: the tag is final when the card appears - no pending state, never guessed', async function() {
-  mockGoogle({ photos: [] });
-  const { html } = await matched();
-  // No Tavily key -> no evidence -> honest "not verified" (not "Non-halal", not "Halal"), already in the card.
-  assert.match(html, /<span class="halal-tag halal-tag--unknown">Halal not verified<\/span>/);
-  assert.ok(!/Checking halal|data-halal-url/.test(html));
-  const script = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'script.js'), 'utf8');
-  assert.ok(!/halal/i.test(script), 'no client-side delayed halal fetch');
-});
-
-test('HALAL: a no-diet match never starts badge-only halal research', async function() {
-  process.env.TAVILY_API_KEY = 'test-tavily';
-  process.env.GROQ_API_KEY = 'test-groq';
-  mockGoogle({ photos: [] });
-  const googleFetch = global.fetch;
-  let tavilyCalls = 0;
-  global.fetch = function(url, init) {
-    if (new URL(String(url)).hostname === 'api.tavily.com') tavilyCalls += 1;
-    return googleFetch(url, init);
-  };
-  const started = Date.now();
-  const { html } = await matched();
-  assert.equal(tavilyCalls, 0, 'the badge only reads existing evidence');
-  assert.ok(Date.now() - started < 2000);
-  assert.match(html, /<span class="halal-tag halal-tag--unknown">Halal not verified<\/span>/);
-});
-
-test('HALAL: the tag is display-only and never read by ranking', function() {
-  const source = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
-  assert.equal(source.split('resultHalalTag(').length - 1, 2, 'definition + display helper only');
-  const ranking = source.slice(source.indexOf('async function getSmartRecommendation'), source.indexOf('function getMatchReasons'));
-  assert.ok(!/resultHalalTag|halal-tag/.test(ranking));
+  assert.match(html, /data-merchant-id="/);
+  assert.ok(!/diet-tag/.test(html), 'no dietary badge without an active preference');
 });

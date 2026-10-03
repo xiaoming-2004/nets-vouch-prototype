@@ -19,7 +19,7 @@ var whyText = locals.matchExplanation || '';
 // category (or the parent venue) next to the distance. Nothing is invented when neither is known.
 var metaLead = recommendation.parentVenueName || recommendation.categoryLabel || '';
 %><p class="result-meta"><% if (metaLead) { %><span class="result-lead"><%= metaLead %></span><% } %><span class="result-distance"><%= recommendation.distanceLabel || recommendation.distanceMinutes + ' min away' %></span></p>
-<p class="result-tags"><% if (display.demoVouches) { %><span class="result-vouches" data-demo-sample="true"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m7.5 12.3 3 3 6-6.3"/></svg><%= display.demoVouches %> Vouches</span><% } %><% if (display.halal) { %><span class="halal-tag halal-tag--<%= display.halal.tone %>"><%= display.halal.label %></span><% } %><% if (dietaryTagLabel && dietaryTagLabel !== 'Halal') { %><span class="match-diet"><%= dietaryTagLabel %></span><% } %></p>
+<p class="result-tags"><% if (display.demoVouches) { %><span class="result-vouches" data-demo-sample="true"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m7.5 12.3 3 3 6-6.3"/></svg><%= display.demoVouches %> Vouches</span><% } %><% if (display.dietary) { %><span class="diet-tag diet-tag--<%= display.dietary.tone %>"><%= display.dietary.label %></span><% } %><% if (dietaryTagLabel && dietaryTagLabel !== 'Halal') { %><span class="match-diet"><%= dietaryTagLabel %></span><% } %></p>
 </div>
 </div>
 <%
@@ -38,6 +38,7 @@ var noteInRow = locationNotice && !whyText;
 </div>
 <% } %>
 <% if (whyText) { %><p class="result-why"><span class="result-why-head"><span class="result-why-label">Why this match</span><% if (locationNotice) { %><span class="result-note">Using demo location</span><% } %></span><span class="result-why-text" title="<%= whyText %>"><%= whyText %></span></p><% } %>
+<% if (display.dietary) { %><p class="result-diet-note"><%= display.dietary.note %></p><% } %>
 <span class="result-flex-gap" aria-hidden="true"></span>
 <% if (campaign && dailyRewardEarned) { %><p class="reward earned">Today's <%= rewardCreditText(campaign.rewardAmount, campaign.rewardLabel) %> earned ✓<small>You can still use your available <%= recommendation.merchantName %> Vouch Credit.</small></p><% } else if (campaign) { %><p class="reward"><%= rewardCreditText(campaign.rewardAmount, campaign.rewardLabel) %> <small>Once daily · Spend $<%= campaign.minimumEligibleSpend.toFixed(2) %>+ · Pay with NETS · Credit usable only at <%= recommendation.merchantName %>.</small></p><% } else { %><p class="reward reward--ended" role="status">This offer has ended. Choose another spot.</p><% } %>
 <% if (campaign && !recommendationAccepted) { %><form method="POST" action="/recommendation/accept" data-single-submit><input type="hidden" name="merchantId" value="<%= recommendation.id %>"><button class="button" type="submit">Choose this</button></form><% } %>

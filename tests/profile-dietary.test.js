@@ -1,9 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { app, demoStore, getDietaryMatchState, MATCH_STATE, RESEARCH_STATUS, clearDiscoveryCache,
-  clearMerchantResearchCache, clearSearchIntentCache, resetMerchantCampaigns } = require('../app');
-const researchStore = require('../research-store');
-
+const { app, demoStore, getDietaryMatchState, MATCH_STATE, getMerchantCampaigns, clearDiscoveryCache, clearSearchIntentCache, resetMerchantCampaigns } = require('../app');
 // Dietary restrictions are a SAVED Profile setting: never asked during onboarding, managed only
 // from Profile, and saved without disturbing any other profile value or session state.
 const originalFetch = global.fetch;
@@ -26,14 +23,11 @@ test.after(function() {
     if (originalEnv[key] === undefined) delete process.env[key];
     else process.env[key] = originalEnv[key];
   });
-  researchStore.setSharedClient(null);
 });
 test.beforeEach(function() {
   resetMerchantCampaigns();
   clearDiscoveryCache();
-  clearMerchantResearchCache();
   clearSearchIntentCache();
-  researchStore.setSharedClient(null);
   trackedKeys.forEach(function(key) { delete process.env[key]; });
   global.fetch = originalFetch;
 });
@@ -118,10 +112,18 @@ function mockProviders(options) {
       return { ok: true, json: async function() {
         return { choices: [{ message: { content: JSON.stringify({ results: merchants.map(function(m) {
           const status = options.verdict ? options.verdict(m.name) : 'UNKNOWN';
-          const src = m.sources[0];
-          return { merchantId: m.merchantId, identified: true, status: status,
+          // A real analyser cites the sources that actually identify the outlet, so the mock cites
+          // every source it was given; the server-side validator decides which ones qualify.
+          const cited = m.sources.map(function(src) {
+            return { title: src.title, url: src.url, sourceType: 'certification' };
+          });
+          return { merchantId: m.merchantId, identified: true, outletMatched: true, status: status,
+            // The analyser must now also classify the evidence and say who the claim is about.
+            evidenceClass: options.evidenceClass || (status === 'SUITABLE' ? 'CERTIFIED_HALAL' : 'NONE'),
+            claimSubject: options.claimSubject || 'merchant', conflict: Boolean(options.conflict),
+            evidenceDate: options.evidenceDate || null, outletSignalsUsed: [],
             evidence: status === 'UNKNOWN' ? '' : 'Listed as MUIS halal certified.',
-            matchingItems: [], sources: [{ title: src.title, url: src.url, sourceType: 'certification' }] };
+            matchingItems: [], sources: cited };
         }) }) } }] };
       } };
     }
@@ -263,8 +265,10 @@ test('SAVE 2: saving dietary preserves payments, Vouches, rewards and location s
   assert.equal(demo.paymentVerifiedVouches.length, beforeDemo.paymentVerifiedVouches.length);
   assert.equal(demo.vouchCredits[merchantId], 1.25);
   assert.deepEqual(demo.discoveryLocation, beforeDemo.discoveryLocation);
-  assert.deepEqual(demo.shownMerchantIds, beforeDemo.shownMerchantIds,
-    'shown history survives a filter change, as it does for every other edit');
+  // Changing the restriction restarts matching under the new filter, so the "already shown" list is
+  // cleared - while rejections and all payment/Vouch/reward state above are untouched.
+  assert.deepEqual(demo.shownMerchantIds, [], 'the shown history restarts under the new filter');
+  assert.deepEqual(demo.rejectedMerchantIds, beforeDemo.rejectedMerchantIds, 'rejections survive');
   assert.equal((await v.request('/profile/vouches')).status, 200);
   assert.equal((await v.request('/profile/activity')).status, 200);
 });
@@ -314,12 +318,13 @@ test('SAVE 5: changing the restriction clears a stale recommendation instead of 
 
 test('SAVE 6: the next Smart Match search uses the newly saved restriction', async function() {
   process.env.GOOGLE_PLACES_API_KEY = 'test-google';
-  process.env.TAVILY_API_KEY = 'test-tavily';
-  process.env.GROQ_API_KEY = 'test-groq';
   const calls = mockProviders({
     nearby: [place('plain', 'Plain Eatery', 120)],
-    text: { 'halal food': [place('cert', 'Certified Halal Kitchen', 240)] },
-    verdict: function(name) { return name === 'Certified Halal Kitchen' ? RESEARCH_STATUS.SUITABLE : 'UNKNOWN'; }
+    text: { 'halal food': [place('ext', 'External Stall', 240)] }
+  });
+  // One registered merchant lists Halal; the external results never can.
+  getMerchantCampaigns().forEach(function(c) {
+    c.dietaryCapabilities = { halal: c.merchantId === 'felicia-chicken-rice', vegetarian: false, vegan: false };
   });
   const v = visitor();
   await v.request('/home');
@@ -331,32 +336,34 @@ test('SAVE 6: the next Smart Match search uses the newly saved restriction', asy
   await v.request('/profile/dietary', { dietaryPreference: 'halal' });
   const result = await v.request('/smart-match/result');
   assert.deepEqual(calls.text, ['halal food'], 'the saved restriction drives the next discovery');
-  assert.match(result.html, /data-merchant-id="google-cert"/, 'only the verified outlet can be shown');
+  assert.match(result.html, /data-merchant-id="felicia-chicken-rice"/,
+    'only a merchant that listed Halal can be shown');
+  assert.ok(!result.html.includes('data-merchant-id="google-ext"'));
   assert.ok(!result.html.includes('data-merchant-id="google-plain"'));
-  assert.ok(calls.search.length > 0, 'suitability still comes from evidence research');
+  assert.equal(calls.search.length, 0, 'and no dietary research of any kind runs');
 });
 
-test('SAVE 7: an unverified merchant is never presented as suitable after the change', async function() {
+test('SAVE 7: an unlisted merchant is never presented as suitable, whatever it is called', async function() {
   process.env.GOOGLE_PLACES_API_KEY = 'test-google';
-  process.env.TAVILY_API_KEY = 'test-tavily';
-  process.env.GROQ_API_KEY = 'test-groq';
-  // Everything the provider returns is named and queried as halal, yet nothing is verified.
+  // Everything the provider returns is named and queried as halal, yet nobody has listed anything.
   mockProviders({ nearby: [place('a', 'Halal Food Paradise', 120)],
-    text: { 'halal food': [place('b', 'Super Halal Kitchen', 200)] },
-    verdict: function() { return 'UNKNOWN'; } });
+    text: { 'halal food': [place('b', 'Super Halal Kitchen', 200)] } });
+  getMerchantCampaigns().forEach(function(c) {
+    c.dietaryCapabilities = { halal: false, vegetarian: false, vegan: false };
+  });
   const v = visitor();
   await v.request('/home');
   await v.request('/profile/dietary', { dietaryPreference: 'halal' });
   await v.request('/smart-match/location', ORIGIN);
   const result = await v.request('/smart-match/result');
   assert.equal(result.status, 200);
-  assert.ok(!/data-merchant-id=/.test(result.html), 'no merchant is offered without evidence');
-  assert.match(result.html, /halal/i);
+  assert.ok(!/data-merchant-id=/.test(result.html),
+    'a halal-sounding NAME, category or search query is never a dietary signal');
+  assert.match(result.html, /No nearby merchants have listed this dietary option yet\./);
   // The provider query words and the merchant names are not evidence.
-  assert.equal(getDietaryMatchState({ merchantName: 'Super Halal Kitchen', source: 'GOOGLE', dietary: [],
-    research: {} }, 'halal'), MATCH_STATE.UNKNOWN);
+  assert.equal(getDietaryMatchState({ id: 'google-b', merchantName: 'Super Halal Kitchen', source: 'GOOGLE',
+    dietary: [] }, 'halal'), MATCH_STATE.UNKNOWN);
 });
-
 // DIETARY UI 6 ---------------------------------------------------------------------------------
 test('REFINE: the Smart Match refine form shows the restriction read-only and links to Profile', async function() {
   const v = visitor();

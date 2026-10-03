@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { app, demoStore, createInitialDemo, buildMatchExplanation, getMerchantCampaigns,
-  resetMerchantCampaigns, clearDiscoveryCache, clearMerchantResearchCache, clearSearchIntentCache,
+  resetMerchantCampaigns, clearDiscoveryCache, clearSearchIntentCache,
   RESEARCH_STATUS } = require('../app');
 
 // The normal Smart Match result has to fit one mobile screen. Pixel heights belong in the browser
@@ -14,7 +14,6 @@ const { app, demoStore, createInitialDemo, buildMatchExplanation, getMerchantCam
 const originalFetch = global.fetch;
 const trackedKeys = ['GOOGLE_PLACES_API_KEY', 'FOURSQUARE_API_KEY', 'PLACES_PROVIDER',
   'OPENAI_API_KEY', 'TAVILY_API_KEY', 'GROQ_API_KEY'];
-const researchStore = require('../research-store');
 const originalEnv = {};
 trackedKeys.forEach(function(key) { originalEnv[key] = process.env[key]; });
 let server;
@@ -36,9 +35,7 @@ test.after(function() {
 test.beforeEach(function() {
   resetMerchantCampaigns();
   clearDiscoveryCache();
-  clearMerchantResearchCache();
   clearSearchIntentCache();
-  researchStore.setSharedClient(null);
   trackedKeys.forEach(function(key) { delete process.env[key]; });
   global.fetch = originalFetch;
 });
@@ -97,7 +94,9 @@ test('LAYOUT 1: the one-screen card still carries every essential fact and actio
   // Merchant name, distance, dietary badge, reward value + conditions, both actions, filters, map.
   assert.match(html, /<h2 title="Woodlands Noodle Bar">Woodlands Noodle Bar<\/h2>/);
   assert.match(html, /<span class="result-distance">\d+ min away<\/span>/);
-  assert.match(html, /class="halal-tag halal-tag--/, 'the dietary/verification badge is kept');
+  // Without an active dietary preference there is no dietary badge to show (the badge states only
+  // what a registered merchant listed for the customer's own restriction).
+  assert.ok(!/class="diet-tag/.test(html), 'no dietary badge without a preference');
   assert.match(html, /<span class="result-why-label">Why this match<\/span>/);
   assert.match(html, /class="result-why-text" title="[^"]+"/);
   assert.match(html, /class="reward"/);
@@ -160,10 +159,12 @@ test('WHY 2: without an AI reason it composes up to three facts the data support
   assert.equal(
     buildMatchExplanation(profileFor({ moodCuisine: 'noodles' }), placesMerchant(), campaign, null, null),
     'Matches your noodles mood, 179 m away and has a Vouch Credit today.');
-  const verified = placesMerchant({ research: { halal: { status: RESEARCH_STATUS.SUITABLE } } });
+  // A registered merchant that listed Halal: the clause says the merchant listed it, never that it
+  // was verified. ('felicia-chicken-rice' lists Halal in the shipped demo data.)
+  const listed = placesMerchant({ id: 'felicia-chicken-rice', source: 'local-fallback' });
   assert.equal(
-    buildMatchExplanation(profileFor({ dietaryPreference: 'halal', craving: 'bee hoon' }), verified, null, null, 'high'),
-    'Verified Halal, matches your bee hoon craving and 179 m away.');
+    buildMatchExplanation(profileFor({ dietaryPreference: 'halal', craving: 'bee hoon' }), listed, null, null, 'high'),
+    'Listed as halal by the merchant, matches your bee hoon craving and 179 m away.');
 });
 
 test('WHY 3: it never states anything the recommendation data does not support', function() {
@@ -339,15 +340,14 @@ test('LAYOUT 3c: an exceptionally long name scrolls the result instead of being 
 });
 
 // LAYOUT 3d ------------------------------------------------------------------------------------
-// A REAL provider result: Google photo + owner attribution, a full Singapore address, verified
-// Halal evidence, the composed explanation, long reward copy and both secondary actions. This is
-// the shape that produced the horizontal clipping, so it is pinned here.
-const RESEARCH_MARKER = 'You verify ONE dietary requirement';
+// A REAL provider result: Google photo + owner attribution, a full Singapore address, the composed
+// explanation, long reward copy and both secondary actions. This is the shape that produced the
+// horizontal clipping, so it is pinned here.
 const PLACE_ID = 'ChIJq6qq6jQX2jERPondokAngah';
 const PROVIDER_NAME = 'Pondok Angah Nasi Padang';
 const PROVIDER_ADDRESS = '1 Woodlands Square, #B1-K12 Causeway Point Food Junction, Singapore 738099';
 
-function mockVerifiedHalalProvider(name) {
+function mockRealProvider(name) {
   const place = {
     id: PLACE_ID, displayName: { text: name }, primaryType: 'indonesian_restaurant',
     types: ['indonesian_restaurant', 'restaurant', 'food', 'point_of_interest', 'establishment'],
@@ -361,38 +361,23 @@ function mockVerifiedHalalProvider(name) {
   global.fetch = async function (url, init) {
     const target = String(url);
     const host = new URL(target).hostname;
-    const body = init && init.body ? JSON.parse(init.body) : {};
     if (host === '127.0.0.1') return originalFetch(url, init);
     if (target.endsWith(':searchText') || target.endsWith(':searchNearby')) {
       return { ok: true, status: 200, json: async () => ({ places: [place] }) };
     }
     if (host === 'places.googleapis.com') return { ok: true, status: 200, json: async () => ({ photos: place.photos }) };
-    if (host === 'api.tavily.com') {
-      if (target.endsWith('/search')) {
-        return { ok: true, json: async () => ({ results: [{ title: body.query + ' - MUIS halal certificate',
-          url: 'https://www.muis.gov.sg/halal/pondok', content: body.query + ' is MUIS halal certified.' }] }) };
-      }
-      return { ok: true, json: async () => ({ results: body.urls.map(u => ({ url: u,
-        raw_content: 'Certified halal outlet. ' + 'Details about the stall. '.repeat(40) })) }) };
-    }
-    if (host === 'api.groq.com' && String(body.messages[0].content).indexOf(RESEARCH_MARKER) === 0) {
-      const merchants = JSON.parse(body.messages[1].content.slice(body.messages[1].content.indexOf('[')));
-      return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({
-        results: merchants.map(m => ({ merchantId: m.merchantId, identified: true, status: 'SUITABLE',
-          evidence: 'Listed as MUIS halal certified.', matchingItems: [],
-          sources: [{ title: m.sources[0].title, url: m.sources[0].url, sourceType: 'certification' }] })) }) } }] }) };
-    }
     return { ok: false, status: 404 };
   };
 }
 
+// An external provider result is never a dietary match (nobody has listed anything about it), so
+// this layout fixture runs with no dietary preference - the long name, photo, address and actions
+// are what it pins.
 async function providerCard(v, name) {
   process.env.GOOGLE_PLACES_API_KEY = 'test-google';
-  process.env.TAVILY_API_KEY = 'test-tavily';
-  process.env.GROQ_API_KEY = 'test-groq';
-  mockVerifiedHalalProvider(name);
+  mockRealProvider(name);
   await v.request('/home');
-  await v.request('/profile/dietary', { dietaryPreference: 'halal' });
+  await v.request('/profile', { dietaryPreference: 'none', budget: '30', maxDistanceMinutes: '30', craving: '', moodCuisine: 'any' });
   await v.request('/smart-match/location', { latitude: 1.4428, longitude: 103.7854 });
   await v.request('/smart-match/result');          // warms the one photo lookup
   const result = await v.request('/smart-match/result');
@@ -400,15 +385,15 @@ async function providerCard(v, name) {
   return result.html;
 }
 
-test('LAYOUT 3d: a real verified-Halal provider result keeps every part inside the card', async function() {
+test('LAYOUT 3d: a real provider result keeps every part inside the card', async function() {
   const html = await providerCard(visitor(), PROVIDER_NAME);
   // Everything the provider supplies is present and whole.
   assert.ok(html.includes('>' + PROVIDER_NAME + '</h2>'));
-  assert.match(html, /class="halal-tag halal-tag--halal">Halal</);
+  assert.ok(!/diet-tag/.test(html), 'no dietary badge without an active preference');
   assert.match(html, /class="result-photo-credit">Photo: <a/, 'owner attribution is rendered');
   assert.match(html, /<img src="\/smart-match\/photo\//, 'the provider photo is rendered');
   assert.ok(html.includes('data-address="' + PROVIDER_ADDRESS + '"'), 'the full address reaches the map');
-  assert.match(html, /class="result-why-text" title="Verified Halal[^"]*"/);
+  assert.match(html, /class="result-why-text" title="[^"]+"/, 'the composed explanation is rendered');
   assert.match(html, /Pay with NETS · Credit usable only at /);
   assert.match(html, /Choose this/);
   assert.match(html, /Not for me/);

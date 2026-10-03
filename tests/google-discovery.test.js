@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { app, createInitialDemo, getNearbyMerchants, getSmartRecommendation, getDietaryMatchState,
-  MATCH_STATE, clearDiscoveryCache, clearMerchantResearchCache, resetMerchantCampaigns } = require('../app');
+  MATCH_STATE, clearDiscoveryCache, resetMerchantCampaigns } = require('../app');
 
 const originalFetch = global.fetch;
 const trackedKeys = ['GOOGLE_PLACES_API_KEY', 'FOURSQUARE_API_KEY', 'PLACES_PROVIDER', 'OPENAI_API_KEY',
@@ -30,7 +30,6 @@ test.after(function() {
 test.beforeEach(function() {
   resetMerchantCampaigns();
   clearDiscoveryCache();
-  clearMerchantResearchCache();
   trackedKeys.forEach(function(key) { delete process.env[key]; });
   process.env.GOOGLE_PLACES_API_KEY = 'test-google-key';
   global.fetch = originalFetch;

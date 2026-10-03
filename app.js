@@ -8,7 +8,6 @@ const { Redis } = require('@upstash/redis');
 const smartMatchResult = require('./smart-match-result');
 // Smart Match request deadline (AsyncLocalStorage) and the shared dietary-evidence store.
 const requestBudget = require('./request-budget');
-const researchStore = require('./research-store');
 
 // Load local environment variables when a .env file exists (Node.js 22+).
 try {
@@ -31,9 +30,6 @@ function envMs(name, fallback) {
 }
 // No dietary restriction: discovery + ranking only (typical warm run ~1-2 s).
 const SMART_MATCH_DEADLINE_MS = envMs('SMART_MATCH_DEADLINE_MS', 6000);
-// Active dietary restriction: cold outlet research (Tavily search + extract + Groq/OpenAI analysis)
-// needs several seconds; cached verdicts return far sooner. Measured live - see handover.md.
-const SMART_MATCH_DIETARY_DEADLINE_MS = envMs('SMART_MATCH_DIETARY_DEADLINE_MS', 15000);
 const PLACES_REQUEST_TIMEOUT_MS = envMs('PLACES_REQUEST_TIMEOUT_MS', 3000);
 // One shared budget for final ranking: Groq first, OpenAI only with the time that is left, then rules.
 const AI_RANKING_TIMEOUT_MS = envMs('SMART_MATCH_RANKING_MS', 2500);
@@ -85,7 +81,6 @@ function createUpstashClient() {
   return url && token ? new Redis({ url, token }) : null;
 }
 const upstashRedis = createUpstashClient();
-researchStore.setSharedClient(upstashRedis);
 
 // Use Upstash Redis when env vars are present (Vercel multi-instance), fall back to MemoryStore locally.
 function buildSessionStore() {
@@ -680,11 +675,29 @@ function validateRewardLabel(rawLabel) {
 }
 
 // The illustrative baseline is displayed separately; live metrics start at zero.
+// The curated demo merchants ship with their own dietary list; it becomes their starting
+// declaration. Only the three declarable options are read - any other tag (e.g. "non-halal") is
+// ignored, because this build never records a negative claim about a merchant.
+function seedDietaryCapabilities(merchantId) {
+  const merchant = findMerchantById(fallbackMerchants, merchantId);
+  const listed = merchant && Array.isArray(merchant.dietary) ? merchant.dietary : [];
+  const capabilities = { halal: false, vegetarian: false, vegan: false };
+  listed.forEach(function(entry) {
+    if (Object.prototype.hasOwnProperty.call(capabilities, entry)) capabilities[entry] = true;
+  });
+  return capabilities;
+}
+
 function createDemoCampaign(merchantId, participationMode) {
   const reward = getRewardConfig(merchantId);
   return {
       id: merchantId + '-campaign', merchantId: merchantId,
       participationMode: participationMode,
+      // What this merchant declares it can serve, saved in this same per-merchant settings record -
+      // never a second source of truth. Only honoured for merchants registered on the platform (see
+      // merchantDietaryCapabilities). Seeded from the curated demo merchant's own dietary list so the
+      // shipped Open House data keeps working; a merchant can change it in its settings at any time.
+      dietaryCapabilities: seedDietaryCapabilities(merchantId),
       rewardAmount: reward.rewardAmount, rewardLabel: reward.rewardLabel, minimumEligibleSpend: reward.minimumEligibleSpend,
       maxRewardedPaymentsPerDay: 20, maxRewardBudgetPerDay: 10.00,
       startTime: '00:00', endTime: '23:59',
@@ -1054,6 +1067,14 @@ function normaliseDietaryPreference(value) {
   return isValidDietaryPreference(value) ? value : 'none';
 }
 
+// The capabilities a platform merchant can declare, as independent checkboxes. All off by default -
+// an unchecked box means the merchant has said nothing, never an implied negative.
+const merchantDietaryOptions = [
+  { value: 'halal', label: 'Halal' },
+  { value: 'vegetarian', label: 'Vegetarian options available' },
+  { value: 'vegan', label: 'Vegan options available' }
+];
+
 function getDietaryPreferenceLabel(preference) {
   for (let i = 0; i < dietaryPreferenceOptions.length; i++) {
     if (dietaryPreferenceOptions[i].value === preference) {
@@ -1383,10 +1404,6 @@ function parseGooglePlaces(places, origin) {
   return { merchants: merchants, containersRemoved: suppressed.length };
 }
 
-// Both Places providers feed the same research, dietary and ranking pipeline.
-function isPlacesMerchant(merchant) {
-  return merchant.source === 'GOOGLE' || merchant.source === 'FOURSQUARE';
-}
 
 // ---------------------------------------------------------------------------
 // Meal-merchant eligibility. Smart Match recommends somewhere to eat a proper meal, so a place whose
@@ -1952,6 +1969,25 @@ async function discoverWithGoogle(searchLocation, craving, maxMetres, restrictio
   let expandedSearchUsed = false;
   let dietarySearchUsed = false;
   let moodSearchUsed = false;
+  let generalSearchUsed = false;
+  // With an active dietary restriction the broad Nearby Search is ALWAYS merged in - not only when
+  // the targeted pool is small. Most certified or Muslim-owned outlets are NOT labelled halal by
+  // Google, so general nearby meal merchants have to stay available for outlet-level research.
+  // Bounded: at most ONE extra Google call, only while a restriction is active (3 calls worst case).
+  const generalNearby = async function() {
+    generalSearchUsed = true;
+    const nearby = await fetchGooglePlaces('nearby', searchLocation, nearbyRadius);
+    if (!nearby.ok) logDiscovery('General nearby pool search failed: ' + nearby.note);
+    return { ok: nearby.ok, merchants: nearby.ok ? nearby.merchants : [] };
+  };
+  // General nearby merchants are merged AFTER the targeted ones, so the user's craving and the
+  // dietary-targeted results keep their priority. Retrieval breadth only: being in the general pool
+  // proves nothing about any diet.
+  const mergeGeneralPool = function(targeted, general) {
+    const known = new Set(targeted.map(function(m) { return m.providerPlaceId; }));
+    general.merchants.forEach(function(m) { if (!known.has(m.providerPlaceId)) m.fromGeneralSearch = true; });
+    return mergeByProviderPlaceId(targeted, general.merchants);
+  };
   // ONE mood-targeted Text Search. Retrieval relevance only: being returned by it never proves the
   // merchant serves that staple, and never proves anything dietary.
   const moodSearch = async function() {
@@ -1981,17 +2017,15 @@ async function discoverWithGoogle(searchLocation, craving, maxMetres, restrictio
   };
   if (!specificCraving) {
     if (dietaryQuery) {
-      // Active restriction, no craving: search for the diet near the user first, then (only if that
-      // leaves too few usable merchants) the ONE broad Nearby Search. Max 2 Google calls.
-      pool = await dietarySearch();
-      if (countUsable(pool) < MIN_CRAVING_POOL_SIZE) {
-        nearbyFallbackUsed = true;
-        const nearby = await fetchGooglePlaces('nearby', searchLocation, nearbyRadius);
-        if (nearby.ok) pool = mergeByProviderPlaceId(pool, nearby.merchants);
-        else if (!pool.length) {
-          logDiscovery('Google Places unavailable: ' + nearby.note);
-          return null;
-        }
+      // Active restriction, no craving: the diet-targeted Text Search and the broad Nearby Search run
+      // TOGETHER (two Google calls, in parallel, ~one call's latency). The general nearby pool is
+      // always kept, because most certified outlets are not labelled halal by Google - but it costs
+      // no extra wall-clock time on the critical path.
+      const [dietaryMerchants, general] = await Promise.all([dietarySearch(), generalNearby()]);
+      pool = mergeGeneralPool(dietaryMerchants, general);
+      if (!general.ok && !pool.length) {
+        logDiscovery('Google Places unavailable: dietary and general searches both failed');
+        return null;
       }
     } else if (moodQuery) {
       // Mood with no craving and no restriction: search for the staple itself instead of only the
@@ -2027,8 +2061,9 @@ async function discoverWithGoogle(searchLocation, craving, maxMetres, restrictio
     const rawUsable = countUsable(pool);
     logDiscovery('Raw craving search usable merchants: ' + rawUsable);
     if (dietaryQuery) {
-      // Active restriction: ONE dietary-targeted search ("<diet> <craving>") merged AFTER the raw
-      // results. It replaces craving expansion / Nearby fallback, so still max 2 Google calls.
+      // Active restriction + craving: the raw craving results (already fetched and authoritative) plus
+      // ONE dietary-targeted search. Two Google calls total. The general meal merchants researched
+      // later are the ones these two searches already returned - no third call.
       pool = mergeByProviderPlaceId(pool, await dietarySearch());
     } else if (moodQuery) {
       // Craving + mood: the raw craving results are kept as they are, and ONE mood-targeted search
@@ -2057,6 +2092,12 @@ async function discoverWithGoogle(searchLocation, craving, maxMetres, restrictio
         else logDiscovery('Google Nearby fallback failed: ' + nearby.note);
       }
     }
+    // A craving that already names the diet ("halal chicken") leaves dietaryQuery null, so the second
+    // call is the broad Nearby Search instead: the craving search alone cannot surface the certified
+    // outlets Google does not label. Still two Google calls.
+    if (isActiveRestriction(restriction) && !generalSearchUsed && !nearbyFallbackUsed && !expandedSearchUsed) {
+      pool = mergeGeneralPool(pool, await generalNearby());
+    }
   }
   pool = dedupeMerchantPool(pool);
   const states = pool.map(classifyMealEligibility);
@@ -2067,6 +2108,7 @@ async function discoverWithGoogle(searchLocation, craving, maxMetres, restrictio
     '\nMood search: ' + (moodSearchUsed ? '"' + moodQuery + '"' : 'no') +
     '\nExpanded craving search used: ' + (expandedSearchUsed ? 'yes' : 'no') +
     '\nNearby fallback used: ' + (nearbyFallbackUsed ? 'yes' : 'no') +
+    '\nGeneral nearby pool (dietary breadth): ' + (generalSearchUsed ? 'yes' : 'no') +
     '\nGoogle raw merchants: ' + pool.length + '\nMeal: ' + count(MEAL_ELIGIBILITY.MEAL) +
     ' | Uncertain: ' + count(MEAL_ELIGIBILITY.UNCERTAIN) + ' | Non-meal excluded: ' + nonMeal.length +
     (nonMeal.length ? ' (' + Array.from(new Set(nonMeal.map(function(m) { return m.primaryType || 'unknown'; }))).join(', ') + ')' : '') +
@@ -2103,47 +2145,57 @@ async function discoverWithFoursquare(searchLocation, craving, restriction, maxM
   }
 
   let apiMerchants = dedupeMerchantPool(primary.merchants);
-  let fallbackUsed = false;
-  let fallbackRawCount = 0;
   let containersRemoved = primary.containersRemoved;
-  const secondQuery = specificCraving && dietaryQuery ? dietaryQuery :
-    specificCraving && moodQuery ? moodQuery :
-    (!dietaryQuery && primaryQuery !== 'food' && apiMerchants.length < MIN_CRAVING_POOL_SIZE ? 'food' : null);
-  let dietaryResultIds = primaryQuery === dietaryQuery
-    ? new Set(primary.results.map(function(place) { return place && place.fsq_place_id; })) : new Set();
   const moodComposedIntoDietary = dietarySearchIncludesMood(restriction, craving, mood);
+  const placeIds = function(results) {
+    return new Set(results.map(function(place) { return place && place.fsq_place_id; }));
+  };
+  // Extra queries, in priority order and still bounded: the craving's dietary/mood companion or the
+  // broad "food" fallback, plus - with an active restriction - ONE general "food" pool, because most
+  // certified or Muslim-owned outlets are not labelled by the provider either. Max 3 calls, and only
+  // the dietary path ever reaches 3.
+  const extraQueries = [];
+  if (specificCraving && dietaryQuery) extraQueries.push(dietaryQuery);
+  else if (specificCraving && moodQuery) extraQueries.push(moodQuery);
+  else if (!dietaryQuery && primaryQuery !== 'food' && apiMerchants.length < MIN_CRAVING_POOL_SIZE) extraQueries.push('food');
+  // Two Foursquare calls at most: the general "food" pool is only added when the second call is still
+  // free (no craving + dietary pair already using it).
+  if (isActiveRestriction(restriction) && primaryQuery !== 'food' && !extraQueries.length) {
+    extraQueries.push('food');
+  }
+  let dietaryResultIds = primaryQuery === dietaryQuery ? placeIds(primary.results) : new Set();
   let moodResultIds = (moodQuery && primaryQuery === moodQuery) ||
-    (moodComposedIntoDietary && primaryQuery === dietaryQuery)
-    ? new Set(primary.results.map(function(place) { return place && place.fsq_place_id; })) : new Set();
-  if (secondQuery) {
-    const fallback = await fetchFoursquarePlaces(searchLocation, secondQuery, maxMetres);
-    if (fallback.ok && secondQuery === dietaryQuery) {
-      dietaryResultIds = new Set(fallback.results.map(function(place) { return place && place.fsq_place_id; }));
-    }
-    if (fallback.ok && secondQuery === moodQuery) {
-      moodResultIds = new Set(fallback.results.map(function(place) { return place && place.fsq_place_id; }));
-    }
-    fallbackUsed = true;
-    if (fallback.ok) {
-      fallbackRawCount = fallback.rawCount;
-      // Container suppression must see BOTH responses: a parent returned only by one query is
-      // still a container if its child stall was returned by the other. Merge the raw places
-      // (first occurrence wins) and parse once, rather than merging two finalised pools.
-      const seenPlaceIds = new Set();
-      const combinedResults = primary.results.concat(fallback.results).filter(function(place) {
-        const id = place && place.fsq_place_id;
-        if (typeof id !== 'string' || seenPlaceIds.has(id)) return false;
-        seenPlaceIds.add(id);
-        return true;
-      });
-      const combined = parseFoursquareNearbyPlaces(combinedResults, searchLocation);
-      containersRemoved = combined.containersRemoved;
-      apiMerchants = dedupeMerchantPool(combined.merchants);
-    }
+    (moodComposedIntoDietary && primaryQuery === dietaryQuery) ? placeIds(primary.results) : new Set();
+  let generalResultIds = primaryQuery === 'food' ? placeIds(primary.results) : new Set();
+  const extraNotes = [];
+  let rawResults = primary.results;
+  for (const query of extraQueries) {
+    const extra = await fetchFoursquarePlaces(searchLocation, query, maxMetres);
+    extraNotes.push('"' + query + '" (' + (extra.ok ? extra.rawCount + ' raw' : 'failed: ' + extra.note) + ')');
+    if (!extra.ok) continue;
+    if (query === dietaryQuery) dietaryResultIds = placeIds(extra.results);
+    if (query === moodQuery) moodResultIds = placeIds(extra.results);
+    if (query === 'food') generalResultIds = placeIds(extra.results);
+    rawResults = rawResults.concat(extra.results);
+  }
+  if (rawResults !== primary.results) {
+    // Container suppression must see EVERY response: a parent returned by only one query is still a
+    // container if its child stall was returned by another. Merge the raw places (first occurrence
+    // wins) and parse once, rather than merging finalised pools.
+    const seenPlaceIds = new Set();
+    const combinedResults = rawResults.filter(function(place) {
+      const id = place && place.fsq_place_id;
+      if (typeof id !== 'string' || seenPlaceIds.has(id)) return false;
+      seenPlaceIds.add(id);
+      return true;
+    });
+    const combined = parseFoursquareNearbyPlaces(combinedResults, searchLocation);
+    containersRemoved = combined.containersRemoved;
+    apiMerchants = dedupeMerchantPool(combined.merchants);
   }
 
   logDiscovery('FOURSQUARE DISCOVERY\nQuery: ' + primaryQuery + '\nPrimary raw results: ' + primary.rawCount +
-    '\nSecond query: ' + (fallbackUsed ? '"' + secondQuery + '" (' + fallbackRawCount + ' raw)' : 'no') +
+    '\nExtra queries: ' + (extraNotes.length ? extraNotes.join(', ') : 'no') +
     '\ncontainer venues removed: ' + containersRemoved +
     '\nMerchant pool: ' + apiMerchants.length);
   if (apiMerchants.length === 0) {
@@ -2159,6 +2211,10 @@ async function discoverWithFoursquare(searchLocation, craving, restriction, maxM
     });
   }
   apiMerchants.forEach(function(m) { if (dietaryResultIds.has(m.providerPlaceId)) m.fromDietarySearch = true; });
+  // General nearby pool membership: retrieval breadth only, never dietary evidence.
+  apiMerchants.forEach(function(m) {
+    if (generalResultIds.has(m.providerPlaceId) && !m.fromDietarySearch && !m.fromCravingSearch) m.fromGeneralSearch = true;
+  });
   // Retrieval relevance only - never evidence of a menu item or of dietary suitability.
   apiMerchants.forEach(function(m) { if (moodResultIds.has(m.providerPlaceId)) m.fromMoodSearch = true; });
   return apiMerchants;
@@ -2198,15 +2254,52 @@ async function getNearbyMerchants(location, sessionLabel, craving, maxDistanceMi
     if (!apiMerchants) continue;
     apiMerchants.forEach(registerDemoMerchant);
     logDiscovery('Smart Match merchant source: ' + providers[i].toUpperCase());
+    // Platform merchants that DECLARED the active restriction are merged in alongside the live
+    // results: without this a merchant that declared Halal in its own settings could never reach
+    // Smart Match, because live provider results otherwise replace the platform list entirely. Only
+    // merchants whose saved declaration matches are added - never the whole curated list, and never
+    // anything for a search with no dietary restriction.
+    const declared = declaredMerchantAccounts(dietaryPreference, usingDemoLocation ? null : searchLocation, maxMetres);
+    if (declared.length) logDiscovery('Merchant accounts listing ' + dietaryPreference + ': ' + declared.length);
+    // A declared account may also come back from the provider: keep one entry per merchant, the
+    // declared copy first so its settings-derived distance and flags win.
+    const declaredIds = new Set(declared.map(function(m) { return m.id; }));
+    const freshResults = apiMerchants.filter(function(m) { return !declaredIds.has(m.id); });
     return {
       // ONLY use the real API merchants if they exist. Prevent fake Woodlands merchants from hijacking the AI.
-      merchants: apiMerchants.length > 0 ? apiMerchants : copyObjects(fallbackMerchants),
+      merchants: apiMerchants.length > 0 ? declared.concat(freshResults) : copyObjects(fallbackMerchants),
       source: providers[i], demoFallback: usingDemoLocation && apiMerchants.length === 0
     };
   }
   logDiscovery('Smart Match merchant source: DEMO' +
     (usingDemoLocation ? '' : ' (live discovery failed at the real browser location)'));
   return { merchants: copyObjects(fallbackMerchants), source: 'local-fallback', demoFallback: true };
+}
+
+// Every merchant ACCOUNT that listed the active restriction - registered demo merchants and
+// previously discovered Google/Foursquare merchants alike - merged into the discovery pool so a
+// declaration is honoured even when this request's provider call does not return that merchant
+// again. Copies, like every other pool entry. When the visitor has real coordinates the real
+// distance is computed and anything beyond their walking limit is dropped here, so a declared
+// merchant is never shown as nearby when it is not.
+function declaredMerchantAccounts(dietaryPreference, origin, maxMetres) {
+  if (!isActiveRestriction(dietaryPreference)) return [];
+  const accounts = fallbackMerchants.concat(Array.from(discoveredMerchants.values()));
+  const declared = copyObjects(accounts.filter(function(merchant) {
+    return merchantDeclaresDiet(merchant, dietaryPreference);
+  }));
+  const usable = [];
+  declared.forEach(function(merchant) {
+    if (origin && merchant.coordinates && validCoordinates(merchant.coordinates.latitude, merchant.coordinates.longitude)) {
+      const metres = calculateDistanceMetres(merchant.coordinates.latitude, merchant.coordinates.longitude, origin);
+      merchant.distanceMetres = metres;
+      merchant.distanceMinutes = Math.max(1, Math.round(metres / WALKING_METRES_PER_MINUTE));
+      merchant.distanceLabel = metres < 1000 ? metres + ' m away' : (metres / 1000).toFixed(1) + ' km away';
+      if (maxMetres !== null && metres > maxMetres) return;
+    }
+    usable.push(merchant);
+  });
+  return usable;
 }
 
 // Called at most once per recommendation cycle when the current nearby batch is exhausted.
@@ -2307,9 +2400,9 @@ function aiReasonClaimsUnsupportedFacts(reason, merchant, profile) {
   })) return true;
   if ((textHasTerm(text, 'dietary') || textHasTerm(text, 'diet')) &&
       (!profile || profile.dietaryPreference === 'none' || isDietaryUnverified(merchant, profile))) return true;
-  if (merchant.price === null && !hasResearchedPrices(merchant) &&
+  if (merchant.price === null &&
       /\$\s?\d|\b(cheap|cheapest|affordable|inexpensive|budget|pric(e|ed|es|ey)|value for money)\b/i.test(reason)) return true;
-  if (!merchant.itemName && !hasResearchedMenu(merchant) &&
+  if (!merchant.itemName &&
       /\b(menu|serves?|serving|signature|famous for|known for|speciali[sz]es in|dish(es)?)\b/i.test(reason)) return true;
   return /\b(rated|ratings?|reviews?|popular|best[- ]?sell(er|ers|ing)|must[- ]try|award(s|-winning)?|famous|favou?rites?|well[- ]known)\b/i.test(reason);
 }
@@ -2325,347 +2418,77 @@ function safeAIReason(ranking, merchant, profile) {
 }
 
 // ---------------------------------------------------------------------------
-// Merchant research (dietary verification): for an active restriction, Tavily Search looks for the
-// exact outlet's pages about THAT requirement, the strongest 1-2 pages are fetched with Tavily
-// Extract (batched), and one common analysis request - Groq primary, OpenAI fallback - reads that
-// real page content and answers one question per merchant: does this exact merchant offer at least
-// one option suitable for the requested diet? ONE validator checks the answer whichever provider
-// produced it. No Tavily evidence means no analysis at all, so nothing is answered from model
-// memory. Verdicts are cached per place + restriction and reused by every visitor.
+// Dietary capabilities (merchant-declared)
+//
+// Dietary suitability comes from ONE place: what a registered NETS Vouch merchant has declared in
+// its own settings (campaign.dietaryCapabilities). There is no web research, no AI dietary analysis,
+// no certification evidence and no external lookup - those were removed deliberately.
+//
+// An EXTERNAL Places merchant can never be a dietary match: nobody has declared anything about it,
+// and a merchant name, cuisine, Google category or search query is never a declaration.
 // ---------------------------------------------------------------------------
-const RESEARCH_STATUS = { SUITABLE: 'SUITABLE', UNKNOWN: 'UNKNOWN', UNSUITABLE: 'UNSUITABLE' };
-const RESEARCH_DIETS = ['vegan', 'vegetarian', 'halal'];
-const RESEARCH_SOURCE_TYPES = ['certification', 'official', 'social', 'delivery', 'listing', 'community', 'other'];
-// Batches of 3 keep each analysis request well inside Groq's free-tier token limit. Research runs in
-// WAVES of up to RESEARCH_CONCURRENCY batches: Tavily evidence for a wave is gathered in parallel,
-// then analysed batch by batch (so a Groq 429 still stops Groq for the rest of the request). Research
-// stops as soon as ONE merchant is verified (a usable verified result is never delayed to find a
-// second), after RESEARCH_MAX_MERCHANTS merchants, or when the request deadline leaves too little
-// time - the rest stay "unchecked" (verification incomplete), never "unsuitable".
-const RESEARCH_BATCH_SIZE = 3;
-const RESEARCH_CONCURRENCY = envMs('RESEARCH_CONCURRENCY', 2);
-const RESEARCH_MAX_MERCHANTS = envMs('RESEARCH_MAX_MERCHANTS', 12);
-// Time kept back for final ranking while research runs, time kept back for the analysis step while
-// Tavily gathers evidence (so evidence is never gathered and then left unanalysed), and the minimum
-// time a new wave needs. Live Tavily timings (Sep 2026, Singapore): search ~3-4 s, extract ~6-8 s.
-const RESEARCH_RANKING_RESERVE_MS = 1500;
-const RESEARCH_ANALYSIS_RESERVE_MS = 2500;
-const RESEARCH_MIN_WAVE_MS = 5000;
-// Page extraction runs only with clearly enough time left; otherwise the strongest search snippets
-// are analysed instead (marked weak evidence - the same strict validator applies).
-const RESEARCH_EXTRACT_MIN_MS = 7000;
-const RESEARCH_ADVANCED_EXTRACT_MIN_MS = 12000;
-const RESEARCH_MATCHING_ITEM_LIMIT = 5;
-const RESEARCH_EVIDENCE_CHARS = 240;
-const TAVILY_TIMEOUT_MS = 15000;
-const TAVILY_EXTRACT_TIMEOUT_MS = 25000;
-const TAVILY_SEARCH_RESULTS = 5;
-// Per merchant: the strongest pages are extracted; their cleaned content is size-limited before
-// analysis. If every extraction fails, the strongest search snippets are sent instead (marked weak).
-const RESEARCH_EXTRACT_URLS_PER_MERCHANT = 2;
-const RESEARCH_EXTRACT_CHARS = 1500;
-const RESEARCH_EXTRACT_MIN_USEFUL_CHARS = 200;
-const RESEARCH_SNIPPET_SOURCES = 3;
-const RESEARCH_SNIPPET_CHARS = 300;
-// Retrieval intent only (what pages to look for) - never used to judge suitability.
-const RESEARCH_QUERY_TERMS = { vegetarian: 'vegetarian menu', vegan: 'vegan menu', halal: 'halal MUIS' };
-// Both reasoning providers speak the OpenAI-compatible chat completions API, so one caller serves
-// both. Order is priority: the next provider is only tried when the previous one is unavailable,
-// errors, or returns output that fails validation. Models are overridable without a code change.
-const RESEARCH_PROVIDERS = [
-  { id: 'groq', label: 'Groq', keyEnv: 'GROQ_API_KEY', url: 'https://api.groq.com/openai/v1/chat/completions',
-    model: function() { return process.env.GROQ_RESEARCH_MODEL || 'openai/gpt-oss-20b'; },
-    extra: { reasoning_effort: 'low', max_tokens: 1500 } },
-  { id: 'openai', label: 'OpenAI', keyEnv: 'OPENAI_API_KEY', url: 'https://api.openai.com/v1/chat/completions',
-    model: function() { return process.env.OPENAI_RESEARCH_MODEL || 'gpt-4o-mini'; },
-    extra: { max_tokens: 1500 } }
-];
-const RESEARCH_ANALYSIS_TIMEOUT_MS = 30000;
+const DIETARY_CAPABILITY_KEYS = ['halal', 'vegetarian', 'vegan'];
+// Timeout cap for the remaining AI calls (craving search intent and final ranking size their own).
+const AI_CALL_TIMEOUT_MS = envMs('AI_CALL_TIMEOUT_MS', 30000);
 
-// Clears this process's research layer (tests / Reset helpers). The shared store is not touched.
-function clearMerchantResearchCache() {
-  researchStore.clearMemory();
-}
-
-// One verdict per provider + stable place identity + restriction (see research-store.js) -
-// vegetarian-targeted research is never reused as vegan or halal verification.
-function merchantResearchKey(merchant, restriction) {
-  const placeId = merchant.externalPlaceId || merchant.providerPlaceId || merchant.id;
-  return researchStore.researchKey(merchant.source, placeId, restriction);
-}
-
-// Stores a validated verdict (memory + shared store) and returns the stamped copy with expiry.
-async function cacheMerchantResearch(merchant, research) {
-  return researchStore.put(merchantResearchKey(merchant, research.restriction), researchStore.stampVerdict(research));
-}
-
-// Loads fresh evidence for these merchants from the research store (memory, then ONE shared MGET).
-// A merchant keeps its own session copy only while that copy is still fresh (current schema and
-// unexpired); stale or old-format evidence is dropped. A store miss never erases fresh evidence.
-async function hydrateMerchantResearch(merchants, restrictions) {
-  const places = merchants.filter(isPlacesMerchant);
-  if (!places.length) return;
-  const diets = restrictions || RESEARCH_DIETS;
-  const keys = [];
-  places.forEach(function(m) { diets.forEach(function(diet) { keys.push(merchantResearchKey(m, diet)); }); });
-  const found = await researchStore.getMany(keys);
-  places.forEach(function(m) {
-    const current = m.research && typeof m.research === 'object' ? m.research : {};
-    const research = {};
-    RESEARCH_DIETS.forEach(function(diet) {
-      const stored = diets.indexOf(diet) !== -1 ? found.get(merchantResearchKey(m, diet)) : null;
-      if (stored) research[diet] = stored;
-      else if (researchStore.isFreshVerdict(current[diet])) research[diet] = current[diet];
-    });
-    m.research = research;
-  });
-}
-
-// Menu items that research actually evidenced for this merchant (from any restriction's verdict).
-function merchantResearchedItems(merchant) {
-  const items = [];
-  if (!merchant.research) return items;
-  RESEARCH_DIETS.forEach(function(diet) {
-    const verdict = merchant.research[diet];
-    if (verdict && verdict.identified) {
-      verdict.matchingItems.forEach(function(item) {
-        if (!items.some(function(existing) { return existing.name === item.name; })) items.push(item);
-      });
-    }
-  });
-  return items;
-}
-
-function hasResearchedMenu(merchant) {
-  return merchantResearchedItems(merchant).length > 0;
-}
-
-function hasResearchedPrices(merchant) {
-  return merchantResearchedItems(merchant).some(function(item) { return item.price !== null; });
-}
-
-function formatResearchedMenuItem(item) {
-  return item.name + (item.price !== null ? ' $' + item.price.toFixed(2) : '');
-}
-
-// Researched facts shown to the craving ranker: evidenced items plus the active diet's evidence.
-function researchSummaryForRanking(merchant, dietaryPreference) {
-  const items = merchantResearchedItems(merchant);
-  const verdict = dietaryPreference !== 'none' && merchant.research ? merchant.research[dietaryPreference] : null;
-  if (!items.length && !(verdict && verdict.identified)) return null;
-  return { menu: items.map(formatResearchedMenuItem), dietaryEvidence: verdict && verdict.identified ? verdict.evidence : null };
-}
-
-function emptyMerchantResearch(restriction, provider, evidenceStrength) {
-  return { restriction: restriction, identified: false, status: RESEARCH_STATUS.UNKNOWN, evidence: '',
-    matchingItems: [], sources: [], evidenceStrength: evidenceStrength || 'none',
-    researchedAt: Date.now(), researchProvider: provider, method: 'tavily' };
-}
-
-function parseHttpUrl(value) {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' || url.protocol === 'http:' ? url : null;
-  } catch (error) { return null; }
-}
-
-function urlKey(url) {
-  return url.hostname.replace(/^www\./, '') + url.pathname.replace(/\/+$/, '');
-}
-
-// Exact identity plus the active requirement's retrieval intent.
-function researchSearchQuery(merchant, restriction) {
-  const identity = [merchant.merchantName, merchant.parentVenueName, merchant.address, 'Singapore']
-    .filter(Boolean).join(' ');
-  return (identity.slice(0, 340) + ' ' + RESEARCH_QUERY_TERMS[restriction]).trim();
-}
-
-async function tavilyRequest(pathname, body, timeoutMs) {
-  // Sized from the request deadline, keeping time back for analysis + ranking; too little time = no call.
-  const allowedMs = requestBudget.callTimeout(timeoutMs, RESEARCH_RANKING_RESERVE_MS + RESEARCH_ANALYSIS_RESERVE_MS);
-  if (allowedMs < MIN_CALL_MS) {
-    requestBudget.markDeadlineHit('tavily ' + pathname + ' skipped');
-    throw new Error('deadline');
+// Normalises whatever is stored on the merchant's settings record into the three flags. Also accepts
+// the single-value `dietaryDeclaration` written by the previous build, so an existing declaration is
+// migrated in place rather than silently dropped (one source of truth, read through here).
+function normaliseDietaryCapabilities(record) {
+  const stored = record && record.dietaryCapabilities;
+  if (stored && typeof stored === 'object') {
+    const capabilities = {};
+    DIETARY_CAPABILITY_KEYS.forEach(function(key) { capabilities[key] = stored[key] === true; });
+    return capabilities;
   }
-  const controller = new AbortController();
-  const timeout = setTimeout(function() { controller.abort(); }, allowedMs);
-  const startedAt = Date.now();
-  let callOk = false;
-  try {
-    const response = await fetch('https://api.tavily.com/' + pathname, {
-      method: 'POST',
-      signal: requestBudget.withBudgetSignal(controller.signal),
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + process.env.TAVILY_API_KEY },
-      body: JSON.stringify(body)
-    });
-    if (!response.ok) throw new Error('Tavily ' + pathname + ' returned ' + response.status);
-    const data = await response.json();
-    callOk = true;
-    return data;
-  } catch (error) {
-    throw new Error(controller.signal.aborted || (error && error.name === 'AbortError') ? 'timeout' : error.message);
-  } finally {
-    clearTimeout(timeout);
-    requestBudget.recordProviderCall('tavily-' + pathname, startedAt, callOk);
-  }
+  const legacy = record && record.dietaryDeclaration;
+  const capabilities = { halal: false, vegetarian: false, vegan: false };
+  if (DIETARY_CAPABILITY_KEYS.indexOf(legacy) !== -1) capabilities[legacy] = true;
+  return capabilities;
 }
 
-// One Tavily search. Returns cleaned {title, url, content} results; throws on any failure.
-async function tavilySearch(query) {
-  const data = await tavilyRequest('search', { query: query, search_depth: 'basic', max_results: TAVILY_SEARCH_RESULTS },
-    TAVILY_TIMEOUT_MS);
-  if (!data || !Array.isArray(data.results)) throw new Error('malformed Tavily response');
-  return data.results.map(function(r) {
-    const url = r && typeof r.url === 'string' ? parseHttpUrl(r.url) : null;
-    if (!url) return null;
-    return { title: typeof r.title === 'string' ? r.title.replace(/\s+/g, ' ').trim().slice(0, 160) : url.hostname,
-      url: url.href, content: typeof r.content === 'string' ? r.content.replace(/\s+/g, ' ').trim() : '' };
-  }).filter(Boolean);
+// The capabilities a merchant has declared in its own settings. In this prototype an externally
+// discovered Google/Foursquare merchant is a manageable merchant account too, so it can declare for
+// itself exactly like a registered one. Nothing is ever inferred: a merchant that has saved nothing
+// comes back all-false, whatever it is called or however it was found.
+function merchantDietaryCapabilities(merchant) {
+  if (!merchant) return { halal: false, vegetarian: false, vegan: false };
+  return normaliseDietaryCapabilities(findCampaign(null, merchant.id));
 }
 
-// One batched Tavily Extract call. Returns Map(urlKey -> raw page content) for pages it returned;
-// an HTTP/transport failure yields an empty Map (callers fall back to other evidence).
-async function tavilyExtract(urls, depth) {
-  const pages = new Map();
-  if (!urls.length) return pages;
-  try {
-    const data = await tavilyRequest('extract', { urls: urls, extract_depth: depth }, TAVILY_EXTRACT_TIMEOUT_MS);
-    (data && Array.isArray(data.results) ? data.results : []).forEach(function(r) {
-      const url = r && typeof r.url === 'string' ? parseHttpUrl(r.url) : null;
-      if (url && typeof r.raw_content === 'string') pages.set(urlKey(url), r.raw_content);
-    });
-  } catch (error) {
-    logDiscovery('Merchant research: Tavily extract (' + depth + ') failed (' + error.message + ')');
-  }
-  return pages;
+// Customer matching rules:
+//   halal      -> halal declared
+//   vegetarian -> vegetarian OR vegan declared (a vegan kitchen satisfies a vegetarian diner)
+//   vegan      -> vegan declared
+function capabilitiesSatisfy(capabilities, dietaryPreference) {
+  if (dietaryPreference === 'halal') return capabilities.halal === true;
+  if (dietaryPreference === 'vegetarian') return capabilities.vegetarian === true || capabilities.vegan === true;
+  if (dietaryPreference === 'vegan') return capabilities.vegan === true;
+  return false;
 }
 
-// Generic page-text clean-up and size limiting. Markdown images/links and bare URLs are removed and
-// whitespace collapsed. A long page keeps its head; when the requested requirement's own name
-// first appears beyond the head, a window around it is kept too. This only chooses WHICH part of a
-// long page is sent - suitability is always judged by the reasoning provider, never here.
-function cleanExtractedContent(raw, restriction) {
-  const text = String(raw || '').replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/https?:\/\/\S+/g, ' ').replace(/[<>]/g, ' ').replace(/\s+/g, ' ').trim();
-  if (text.length <= RESEARCH_EXTRACT_CHARS) return text;
-  const head = Math.floor(RESEARCH_EXTRACT_CHARS / 2);
-  const index = text.toLowerCase().indexOf(restriction, head);
-  if (index === -1) return text.slice(0, RESEARCH_EXTRACT_CHARS);
-  const windowStart = Math.max(head, index - Math.floor(head / 3));
-  return text.slice(0, head) + ' … ' + text.slice(windowStart, windowStart + RESEARCH_EXTRACT_CHARS - head);
+function merchantDeclaresDiet(merchant, dietaryPreference) {
+  if (!isActiveRestriction(dietaryPreference)) return false;
+  return capabilitiesSatisfy(merchantDietaryCapabilities(merchant), dietaryPreference);
 }
 
-// Generic source-quality tiers (lower is stronger) - never merchant-specific domains:
-// government/certification, the merchant's own site, its social page, delivery menus, food
-// listings, other, then community forums last.
-const DELIVERY_HOST_PATTERN = /(^|\.)(grab\.com|foodpanda\.[a-z.]+|deliveroo\.[a-z.]+)$/;
-const LISTING_HOST_PATTERN = /(^|\.)(tripadvisor\.[a-z.]+|burpple\.com|yelp\.[a-z.]+|sethlui\.com|eatbook\.sg|hungrygowhere\.com|chope\.co|quandoo\.[a-z.]+|google\.[a-z.]+)$/;
-const SOCIAL_HOST_PATTERN = /(^|\.)(facebook\.com|instagram\.com|tiktok\.com)$/;
-const COMMUNITY_HOST_PATTERN = /(^|\.)(reddit\.com|quora\.com|hardwarezone\.com\.sg|forums?\.[a-z.]+)$/;
-const SOURCE_TIER_TYPES = ['certification', 'official', 'social', 'delivery', 'listing', 'other', 'community'];
-
-function compactName(value) {
-  return String(value || '').toLowerCase().normalize('NFD').replace(/[^a-z0-9]/g, '');
-}
-
-function tavilySourceTier(result, merchant) {
-  const url = new URL(result.url);
-  const host = url.hostname.replace(/^www\./, '');
-  const name = compactName(merchant.merchantName).slice(0, 12);
-  const website = merchant.website ? parseHttpUrl(merchant.website) : null;
-  const ownsHost = (website && website.hostname.replace(/^www\./, '') === host) ||
-    (name.length >= 5 && compactName(host.split('.')[0]).indexOf(name) !== -1);
-  if (/\.gov(\.[a-z]{2})?$/.test(host)) return 0;
-  if (ownsHost) return 1;
-  if (SOCIAL_HOST_PATTERN.test(host) && name.length >= 5 && compactName(url.pathname).indexOf(name) !== -1) return 2;
-  if (DELIVERY_HOST_PATTERN.test(host)) return 3;
-  if (LISTING_HOST_PATTERN.test(host)) return 4;
-  if (COMMUNITY_HOST_PATTERN.test(host)) return 6;
-  return 5;
-}
-
-// Likely about this merchant: its name appears in the source's title, URL or text.
-function resultMentionsMerchant(result, merchant) {
-  const name = compactName(merchant.merchantName).slice(0, 12);
-  return name.length > 0 && compactName(result.title + ' ' + result.url + ' ' + result.content).indexOf(name) !== -1;
-}
-
-// Outlet identity for VERDICTS (stricter than the ordering check above). A cited source must contain
-// the merchant's FULL brand name - never just a prefix of it - and, for halal (certified per outlet),
-// at least one outlet signal when the merchant has any: its postal code, its branch/venue name
-// (the part after "@", " - ", "|" or "(") or its parent venue. So a page about another branch of the
-// same brand, or another shop sharing a name prefix, can never verify this outlet.
-function merchantBrandParts(merchant) {
-  const name = String(merchant.merchantName || '');
-  const split = name.split(/\s+@\s*|\s+[-–—|]\s+|\s*\(/);
-  const brand = compactName(split[0]);
-  const branch = compactName(split.slice(1).join(' '));
-  return { brand: brand.length >= 4 ? brand : compactName(name), branch: branch.length >= 4 ? branch : '' };
-}
-
-function outletSignals(merchant) {
-  const signals = [];
-  const parts = merchantBrandParts(merchant);
-  if (parts.branch) signals.push(parts.branch);
-  const venue = compactName(merchant.parentVenueName);
-  if (venue.length >= 4) signals.push(venue);
-  (String(merchant.address || '').match(/\b\d{6}\b/g) || []).forEach(function(postal) { signals.push(postal); });
-  return signals;
-}
-
-function sourceIdentifiesOutlet(source, merchant, restriction) {
-  const text = compactName(source.title + ' ' + source.url + ' ' + (source.content || ''));
-  const parts = merchantBrandParts(merchant);
-  if (!parts.brand || text.indexOf(parts.brand) === -1) return false;
-  if (restriction !== 'halal') return true;
-  const signals = outletSignals(merchant);
-  return !signals.length || signals.some(function(signal) { return text.indexOf(signal) !== -1; });
-}
-
-// Results ordered by exact-merchant relevance, then source quality, then Tavily's own order.
-function rankSearchResults(results, merchant) {
-  return results.map(function(result, index) {
-    return { result: result, relevant: resultMentionsMerchant(result, merchant) ? 0 : 1,
-      tier: tavilySourceTier(result, merchant), index: index };
-  }).sort(function(a, b) { return (a.relevant - b.relevant) || (a.tier - b.tier) || (a.index - b.index); });
-}
-
-function researchAnalysisMessages(evidence, restriction) {
-  const label = getDietaryPreferenceLabel(restriction).toLowerCase();
-  const definitions = {
-    vegetarian: 'SUITABLE when the sources establish at least one real menu item that is vegetarian - explicitly marked vegetarian, or an official menu description/ingredients that clearly make it vegetarian.',
-    vegan: 'SUITABLE when the sources establish at least one genuinely vegan item - explicitly marked vegan, or official ingredients that clearly make it vegan (no meat, fish, egg, dairy or honey). A vegetarian item is NOT vegan unless the sources establish that. If sauces/dairy/egg cannot be established, UNKNOWN. Never invent ingredients.',
-    halal: 'SUITABLE only with explicit outlet-level evidence: MUIS/official halal certification, an official merchant/outlet halal statement, or a reliable current source explicitly confirming this outlet is halal. A pork-free menu, cuisine or owner name is NOT enough.'
-  };
-  const system = [
-    'You verify ONE dietary requirement (' + label + ') for real Singapore food merchants for the NETS Vouch app.',
-    'Use ONLY the supplied sources (extracted web page content, or search snippets when evidenceStrength is "snippets"). Never use your own memory or knowledge of any merchant.',
-    'For each merchant answer: based only on these sources, does THIS exact merchant currently offer at least one menu option suitable for ' + label + '?',
-    'A mixed menu is fine: other items containing meat or other ingredients do not matter. Do not require the whole restaurant to be ' + label + '.',
-    definitions[restriction],
-    'identified=true only when the sources clearly concern this exact merchant/outlet (a chain\'s official menu counts for its outlets). With snippets-only evidence be conservative.',
-    'UNSUITABLE only when reliable evidence explicitly shows no suitable option (e.g. explicitly non-halal). Otherwise, when evidence is insufficient, UNKNOWN.',
-    'Source priority: certification authority, official merchant site/menu, official social/menu page, delivery menu, reputable listing, community sources last. Conflicting strong evidence means UNKNOWN.',
-    'matchingItems: up to ' + RESEARCH_MATCHING_ITEM_LIMIT + ' suitable items exactly as a source names them; price as a number (e.g. 8.9) only when shown, else null; sourceUrl = the source URL it came from.',
-    'Every URL you output MUST be copied exactly from that merchant\'s sources. evidence: one short sentence (max 25 words), "" when UNKNOWN with nothing to say.',
-    'Return one entry per merchant, as valid JSON only:',
-    '{"results":[{"merchantId":"<exact id>","identified":true,"status":"SUITABLE|UNKNOWN|UNSUITABLE","evidence":"...","matchingItems":[{"name":"...","price":8.9,"sourceUrl":"https://..."}],"sources":[{"title":"...","url":"https://...","sourceType":"certification|official|social|delivery|listing|community|other"}]}]}'
-  ].join('\n');
-  const merchants = evidence.map(function(e) {
-    const m = e.merchant;
-    return { merchantId: m.id, name: m.merchantName, categories: merchantCategoryNames(m),
-      parentVenue: m.parentVenueName || null, address: m.address || null, website: m.website || null,
-      evidenceStrength: e.strength, sources: e.sources };
-  });
-  return [{ role: 'system', content: system },
-    { role: 'user', content: 'Dietary requirement: ' + label + '\nMerchants:\n' + JSON.stringify(merchants) }];
+// The dietary gate, applied to the deterministically-constrained candidates BEFORE ranking: with an
+// active restriction only merchants that declared the matching capability survive. No provider call
+// of any kind is made here.
+function applyDietaryPolicy(candidates, restriction) {
+  if (!isActiveRestriction(restriction)) return { candidates: candidates, noDeclaredMatch: false };
+  const declared = candidates.filter(function(merchant) { return merchantDeclaresDiet(merchant, restriction); });
+  logDiscovery(getDietaryPreferenceLabel(restriction) + ' declared by ' + declared.length + ' of ' +
+    candidates.length + ' eligible merchant(s) (merchant declarations only - no research)');
+  return { candidates: declared, noDeclaredMatch: declared.length === 0 };
 }
 
 // One OpenAI-compatible chat completions call returning the raw JSON text; throws on any failure.
-// Shared by merchant research (default 30 s) and final Smart Match ranking (shorter timeout).
+// Shared by the craving search-intent call and the final Smart Match ranking - the only two AI uses
+// left. Nothing here decides dietary suitability: that comes solely from merchant declarations.
 async function callResearchProvider(provider, messages, timeoutMs) {
   const controller = new AbortController();
-  const timeout = setTimeout(function() { controller.abort(); }, timeoutMs || RESEARCH_ANALYSIS_TIMEOUT_MS);
+  const timeout = setTimeout(function() { controller.abort(); }, timeoutMs || AI_CALL_TIMEOUT_MS);
   const startedAt = Date.now();
   let callOk = false;
   try {
@@ -2691,365 +2514,7 @@ async function callResearchProvider(provider, messages, timeoutMs) {
   }
 }
 
-// Safe text normalisation: collapse whitespace/newlines, drop angle brackets and quote-only
-// filler, cap the length.
-function normaliseResearchText(value, max) {
-  if (typeof value !== 'string') return '';
-  const text = value.replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().replace(/^["'\s]+$/, '');
-  return text.length > max ? text.slice(0, max - 1).trim() + '…' : text;
-}
 
-// The ONE validator for every provider, applied at three levels:
-//  - whole response (throws, so the next provider is tried): non-JSON, no results array, a
-//    merchantId outside the batch or duplicated, or any URL that was not one of the sources
-//    supplied for that merchant (source injection);
-//  - per merchant: an unusable entry (not an object / no boolean identified) is dropped on its
-//    own - not cached, retried later - without affecting the rest of the batch;
-//  - per field: a bad status becomes UNKNOWN, a bad item is dropped, a bad price becomes null.
-//    SUITABLE/UNSUITABLE need evidence and a cited source that names this merchant (exact
-//    outlet); a vegetarian/vegan SUITABLE also needs at least one evidenced matching item.
-// Returns { profiles: Map(merchantId -> verdict), stats: { valid, partial, failed } }.
-function validateResearchAnalysis(content, evidence, restriction, providerId) {
-  // identityUrls below: only sources that identify THIS outlet (sourceIdentifiesOutlet) can back a verdict.
-  const text = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-  const parsed = JSON.parse(text);
-  if (!parsed || !Array.isArray(parsed.results)) throw new Error('missing results');
-  const allowedUrls = new Map();
-  const identityUrls = new Map();
-  const strengths = new Map();
-  evidence.forEach(function(e) {
-    allowedUrls.set(e.merchant.id, new Set(e.sources.map(function(s) { return urlKey(parseHttpUrl(s.url)); })));
-    identityUrls.set(e.merchant.id, new Set(e.sources.filter(function(s) { return sourceIdentifiesOutlet(s, e.merchant, restriction); })
-      .map(function(s) { return urlKey(parseHttpUrl(s.url)); })));
-    strengths.set(e.merchant.id, e.strength);
-  });
-  const seenIds = new Set();
-  parsed.results.forEach(function(item) {
-    const id = item && typeof item === 'object' ? item.merchantId : null;
-    if (typeof id === 'string' && (!allowedUrls.has(id) || seenIds.has(id))) throw new Error('unexpected merchantId');
-    if (typeof id === 'string') seenIds.add(id);
-  });
-  const suppliedUrl = function(merchantId, value) {
-    if (value === null || value === undefined || value === '') return null;
-    const url = typeof value === 'string' ? parseHttpUrl(value) : null;
-    if (!url || !allowedUrls.get(merchantId).has(urlKey(url))) throw new Error('URL not from supplied sources');
-    return url.href;
-  };
-  const statuses = Object.keys(RESEARCH_STATUS).map(function(k) { return RESEARCH_STATUS[k]; });
-  const profiles = new Map();
-  const stats = { valid: 0, partial: 0, failed: 0 };
-  parsed.results.forEach(function(item) {
-    if (!item || typeof item !== 'object' || typeof item.merchantId !== 'string' || typeof item.identified !== 'boolean') {
-      stats.failed += 1;
-      return;
-    }
-    const id = item.merchantId;
-    let partial = false;
-    const verdict = emptyMerchantResearch(restriction, providerId, strengths.get(id));
-    const sources = (Array.isArray(item.sources) ? item.sources : []).slice(0, 5).map(function(src) {
-      if (!src || typeof src !== 'object') { partial = true; return null; }
-      const url = suppliedUrl(id, src.url);
-      if (!url) { partial = true; return null; }
-      return { title: normaliseResearchText(src.title, 120) || new URL(url).hostname, url: url,
-        sourceType: RESEARCH_SOURCE_TYPES.indexOf(src.sourceType) !== -1 ? src.sourceType : 'other' };
-    }).filter(Boolean);
-    const matchingItems = (Array.isArray(item.matchingItems) ? item.matchingItems : []).slice(0, RESEARCH_MATCHING_ITEM_LIMIT)
-      .map(function(m) {
-        const name = m && typeof m === 'object' ? normaliseResearchText(m.name, 80) : '';
-        if (!name) { partial = true; return null; }
-        const priceValid = typeof m.price === 'number' && Number.isFinite(m.price) && m.price >= 0 && m.price < 1000;
-        if (m.price !== null && m.price !== undefined && !priceValid) partial = true;
-        return { name: name, price: priceValid ? m.price : null, sourceUrl: suppliedUrl(id, m.sourceUrl) };
-      }).filter(Boolean);
-    let status = statuses.indexOf(item.status) !== -1 ? item.status : null;
-    const evidenceText = normaliseResearchText(item.evidence, RESEARCH_EVIDENCE_CHARS);
-    if (!status) { partial = true; status = RESEARCH_STATUS.UNKNOWN; }
-    const needsItems = restriction !== 'halal' && status === RESEARCH_STATUS.SUITABLE;
-    // Exact-outlet identity: a verdict must cite at least one source that actually names this
-    // merchant, so a page about a different outlet nearby can never verify it.
-    const namesMerchant = sources.some(function(src) { return identityUrls.get(id).has(urlKey(parseHttpUrl(src.url))); });
-    if (status !== RESEARCH_STATUS.UNKNOWN &&
-        (!evidenceText || !sources.length || !namesMerchant || (needsItems && !matchingItems.length))) {
-      partial = true;
-      status = RESEARCH_STATUS.UNKNOWN;
-    }
-    if (item.identified && sources.length) {
-      verdict.identified = true;
-      verdict.status = status;
-      verdict.evidence = status === RESEARCH_STATUS.UNKNOWN && !evidenceText ? '' : evidenceText;
-      verdict.matchingItems = matchingItems;
-      verdict.sources = sources;
-    }
-    stats[partial ? 'partial' : 'valid'] += 1;
-    profiles.set(id, verdict);
-  });
-  return { profiles: profiles, stats: stats };
-}
-
-// Providers still usable in this Smart Match request (configured, and not rate-limited earlier in it).
-function usableResearchProviders(state) {
-  return RESEARCH_PROVIDERS.filter(function(p) { return Boolean(process.env[p.keyEnv]) && !state.blocked[p.id]; });
-}
-
-// Common analysis: providers in priority order; the first VALID response wins, so OpenAI is never
-// called when Groq succeeded. A 429 blocks that provider for the rest of this Smart Match request
-// (no hammering) and the SAME evidence goes straight to the next provider. Returns an empty Map
-// when no provider is usable or all fail.
-async function analyseMerchantResearch(evidence, restriction, state) {
-  const messages = researchAnalysisMessages(evidence, restriction);
-  const available = usableResearchProviders(state);
-  if (!available.length) {
-    logDiscovery('Merchant research: AI analysis unavailable (no usable Groq/OpenAI provider)');
-    return new Map();
-  }
-  for (let i = 0; i < available.length; i++) {
-    const provider = available[i];
-    const next = available[i + 1];
-    try {
-      const timeoutMs = requestBudget.callTimeout(RESEARCH_ANALYSIS_TIMEOUT_MS, RESEARCH_RANKING_RESERVE_MS);
-      if (timeoutMs < MIN_CALL_MS) {
-        requestBudget.markDeadlineHit('research analysis skipped');
-        return new Map();
-      }
-      const outcome = validateResearchAnalysis(await callResearchProvider(provider, messages, timeoutMs),
-        evidence, restriction, provider.id);
-      logDiscovery(provider.label + ' research: ' + outcome.stats.valid + ' valid, ' + outcome.stats.partial +
-        ' partial, ' + outcome.stats.failed + ' failed');
-      return outcome.profiles;
-    } catch (error) {
-      if (error.message === 'HTTP 429') {
-        state.blocked[provider.id] = true;
-        logDiscovery(provider.label + ' 429 — stopping ' + provider.label + ' for this request');
-      } else {
-        logDiscovery('Merchant research: ' + provider.label + ' failed (' + error.message + ')');
-      }
-      logDiscovery(next ? 'Using ' + next.label + ' fallback for the same evidence' : 'Research fallback: unavailable');
-    }
-  }
-  return new Map();
-}
-
-// Researches one batch for one restriction:
-//  1. a targeted Tavily search per merchant (in parallel);
-//  2. the strongest RESEARCH_EXTRACT_URLS_PER_MERCHANT pages per merchant are fetched in ONE
-//     batched basic Tavily Extract call; strong (certification/official/social) pages that came
-//     back unusable get one batched advanced retry;
-//  3. merchants with no usable extracted page fall back to their strongest snippets (weak);
-//  4. one common analysis request over the whole batch.
-// Returns Map(merchantId -> verdict). A merchant whose search failed is absent (not cached,
-// retried later); one whose search found nothing gets a cached UNKNOWN without any LLM call.
-// Research time left in the current Smart Match request (Infinity outside a request budget).
-function researchTimeLeft() {
-  const budget = requestBudget.currentBudget();
-  return budget ? budget.remaining() - RESEARCH_RANKING_RESERVE_MS : Infinity;
-}
-
-async function researchMerchants(batch, restriction, state) {
-  const gathered = await gatherResearchEvidence(batch, restriction);
-  if (gathered.evidence.length) {
-    (await analyseMerchantResearch(gathered.evidence, restriction, state)).forEach(function(profile, id) {
-      gathered.profiles.set(id, profile);
-    });
-  }
-  return gathered.profiles;
-}
-
-// Steps 1-3 above (Tavily only). Returns { profiles: UNKNOWN verdicts for merchants whose search
-// found nothing, evidence: analysis input for the rest }. Merchants whose search failed or ran out
-// of time are in neither (not cached, retried later).
-async function gatherResearchEvidence(batch, restriction) {
-  const profiles = new Map();
-  if (!batch.length) return { profiles: profiles, evidence: [] };
-  if (!process.env.TAVILY_API_KEY) {
-    logDiscovery('Merchant research unavailable: Tavily not configured (no web evidence, no AI guessing)');
-    return { profiles: profiles, evidence: [] };
-  }
-  logDiscovery('Merchant research batch (' + restriction + '): ' + batch.length + ' merchants');
-  const searched = await Promise.all(batch.map(async function(merchant) {
-    try {
-      return { merchant: merchant, ranked: rankSearchResults(await tavilySearch(researchSearchQuery(merchant, restriction)), merchant) };
-    } catch (error) {
-      logDiscovery('Merchant research: Tavily search failed for ' + merchant.id + ' (' + error.message + ')');
-      return null;
-    }
-  }));
-  const withResults = [];
-  searched.forEach(function(entry) {
-    if (!entry) return;
-    if (entry.ranked.length) withResults.push(entry);
-    else profiles.set(entry.merchant.id, emptyMerchantResearch(restriction, 'none'));
-  });
-  if (!withResults.length) return { profiles: profiles, evidence: [] };
-
-  const picks = withResults.map(function(entry) { return entry.ranked.slice(0, RESEARCH_EXTRACT_URLS_PER_MERCHANT); });
-  const uniqueUrls = function(list) {
-    return list.map(function(p) { return p.result.url; }).filter(function(url, i, all) { return all.indexOf(url) === i; });
-  };
-  // Short on time: skip extraction and analyse the strongest snippets (marked weak -> conservative).
-  const pages = researchTimeLeft() >= RESEARCH_EXTRACT_MIN_MS
-    ? await tavilyExtract(uniqueUrls([].concat.apply([], picks)), 'basic') : new Map();
-  if (!pages.size) requestBudget.traceNote('extraction skipped or failed - analysing snippets');
-  const usable = function(pick) {
-    const raw = pages.get(urlKey(parseHttpUrl(pick.result.url)));
-    return typeof raw === 'string' && cleanExtractedContent(raw, restriction).length >= RESEARCH_EXTRACT_MIN_USEFUL_CHARS;
-  };
-  const retry = [].concat.apply([], picks).filter(function(pick) { return pick.tier <= 2 && !usable(pick); });
-  if (retry.length && researchTimeLeft() >= RESEARCH_ADVANCED_EXTRACT_MIN_MS) {
-    (await tavilyExtract(uniqueUrls(retry), 'advanced')).forEach(function(raw, key) { pages.set(key, raw); });
-  }
-
-  const evidence = withResults.map(function(entry, i) {
-    const extracted = picks[i].filter(usable).map(function(pick) {
-      return { title: pick.result.title, url: pick.result.url, sourceType: SOURCE_TIER_TYPES[pick.tier],
-        content: cleanExtractedContent(pages.get(urlKey(parseHttpUrl(pick.result.url))), restriction) };
-    });
-    const strength = extracted.length ? 'extracted' : 'snippets';
-    const sources = extracted.length ? extracted : entry.ranked.slice(0, RESEARCH_SNIPPET_SOURCES).map(function(pick) {
-      return { title: pick.result.title, url: pick.result.url, sourceType: SOURCE_TIER_TYPES[pick.tier],
-        content: pick.result.content.slice(0, RESEARCH_SNIPPET_CHARS) };
-    });
-    logDiscovery('Research ' + entry.merchant.merchantName + ': ' + entry.ranked.length + ' search results, ' +
-      extracted.length + '/' + picks[i].length + ' pages extracted (' + strength + ')');
-    return { merchant: entry.merchant, strength: strength, sources: sources };
-  });
-  return { profiles: profiles, evidence: evidence };
-}
-
-// One research WAVE for up to RESEARCH_BATCH_SIZE * RESEARCH_CONCURRENCY merchants. De-duplicated:
-// a merchant already being researched by another request in this process is awaited, not repeated;
-// with a shared store, one held by another instance is awaited via the shared cache. Evidence for
-// all batches is gathered in parallel (Tavily), then analysed batch by batch. Only validated verdicts
-// are cached; failures and timeouts are not. Returns Map(merchantId -> stamped verdict).
-async function researchWave(merchants, restriction, state) {
-  const results = new Map();
-  const own = [];
-  const waits = [];
-  const budget = requestBudget.currentBudget();
-  const waitUntil = budget ? budget.deadline - RESEARCH_RANKING_RESERVE_MS : Date.now() + 20000;
-  // Claim every outlet synchronously first (no await in between), so one request owns the whole
-  // wave and concurrent requests wait for it instead of splitting it into single-merchant batches.
-  const claims = merchants.map(function(merchant) {
-    const key = merchantResearchKey(merchant, restriction);
-    return { merchant: merchant, key: key, claim: researchStore.claim(key) };
-  });
-  for (const entry of claims) {
-    const merchant = entry.merchant;
-    const key = entry.key;
-    const claim = entry.claim;
-    if (!claim.owner) {
-      if (budget) budget.trace.research.dedupedWaits += 1;
-      waits.push(claim.promise.then(function(verdict) { if (verdict) results.set(merchant.id, verdict); }));
-      continue;
-    }
-    if (!(await researchStore.tryLock(key))) {
-      if (budget) budget.trace.research.dedupedWaits += 1;
-      waits.push(researchStore.waitForShared(key, waitUntil).then(function(verdict) {
-        claim.settle(verdict);
-        if (verdict) results.set(merchant.id, verdict);
-      }));
-      continue;
-    }
-    own.push({ merchant: merchant, key: key, claim: claim });
-  }
-  const batches = [];
-  for (let i = 0; i < own.length; i += RESEARCH_BATCH_SIZE) batches.push(own.slice(i, i + RESEARCH_BATCH_SIZE));
-  try {
-    const gathered = await Promise.all(batches.map(function(batch) {
-      return gatherResearchEvidence(batch.map(function(o) { return o.merchant; }), restriction);
-    }));
-    for (let i = 0; i < batches.length; i++) {
-      const verdicts = new Map(gathered[i].profiles);
-      if (gathered[i].evidence.length) {
-        (await analyseMerchantResearch(gathered[i].evidence, restriction, state)).forEach(function(v, id) { verdicts.set(id, v); });
-      }
-      for (const o of batches[i]) {
-        const verdict = verdicts.get(o.merchant.id);
-        if (!verdict) continue; // failed / timed out: not cached, retried by a later request
-        const stamped = await cacheMerchantResearch(o.merchant, verdict);
-        results.set(o.merchant.id, stamped);
-      }
-    }
-  } finally {
-    own.forEach(function(o) {
-      o.claim.settle(results.get(o.merchant.id) || null);
-      researchStore.unlock(o.key);
-    });
-  }
-  await Promise.all(waits);
-  return results;
-}
-
-// Runs after every deterministic rule. Fresh verdicts (shared store / memory / fresh session copies)
-// are attached to every Places candidate first. With an active restriction:
-//  - a fresh cached VERIFIED candidate is used immediately, with no new research;
-//  - otherwise unchecked candidates are researched in waves - dietary-search results first, then
-//    nearest - stopping at the first verified merchant, RESEARCH_MAX_MERCHANTS, or the deadline;
-//  - no Tavily call is made at all when no analysis provider (Groq/OpenAI) is usable.
-// Only research-verified SUITABLE merchants are returned. The outcome distinguishes:
-//  researchUnavailable     - research was needed but no provider could produce any verdict;
-//  verificationIncomplete  - some candidates are still unchecked (time / per-request limit);
-//  (neither)               - every candidate was checked and none verified.
-async function applyMerchantResearch(candidates, restriction) {
-  await hydrateMerchantResearch(candidates);
-  if (!isActiveRestriction(restriction)) return { candidates: candidates, researchUnavailable: false };
-  const budget = requestBudget.currentBudget();
-  const isVerified = function(m) { return getDietaryMatchState(m, restriction) === MATCH_STATE.MATCH; };
-  const needsCheck = function(m) { return isPlacesMerchant(m) && !(m.research && m.research[restriction]); };
-  const cachedVerified = candidates.filter(isVerified);
-  if (cachedVerified.length) {
-    logDiscovery(getDietaryPreferenceLabel(restriction) + ' verified from fresh evidence: ' + cachedVerified.length +
-      ' of ' + candidates.length + ' (no new research)');
-    return { candidates: cachedVerified, researchUnavailable: false, verificationIncomplete: false,
-      stats: { researched: 0, unchecked: candidates.filter(needsCheck).length } };
-  }
-  const pending = candidates.filter(needsCheck).sort(function(a, b) {
-    return ((b.fromDietarySearch ? 1 : 0) - (a.fromDietarySearch ? 1 : 0)) ||
-      (merchantDistanceMetres(a) - merchantDistanceMetres(b));
-  });
-  const state = { blocked: {} };
-  let attempted = 0;
-  let obtained = 0;
-  let providerStop = false;
-  let deadlineStop = false;
-  if (pending.length && (!process.env.TAVILY_API_KEY || !usableResearchProviders(state).length)) {
-    providerStop = true;
-    logDiscovery('Merchant research unavailable: ' + (!process.env.TAVILY_API_KEY ? 'Tavily not configured' :
-      'no usable Groq/OpenAI analysis provider') + ' - no Tavily calls made');
-  }
-  while (!providerStop && pending.length && attempted < RESEARCH_MAX_MERCHANTS) {
-    if (researchTimeLeft() < RESEARCH_MIN_WAVE_MS) {
-      deadlineStop = true;
-      requestBudget.markDeadlineHit('research wave not started (' + pending.length + ' unchecked)');
-      break;
-    }
-    if (!usableResearchProviders(state).length) { providerStop = true; break; }
-    const wave = pending.splice(0, Math.min(RESEARCH_MAX_MERCHANTS - attempted, RESEARCH_BATCH_SIZE * RESEARCH_CONCURRENCY));
-    attempted += wave.length;
-    if (budget) budget.trace.research.waves += 1;
-    const researched = await researchWave(wave, restriction, state);
-    wave.forEach(function(merchant) {
-      const verdict = researched.get(merchant.id);
-      if (!verdict) return;
-      obtained += 1;
-      merchant.research[restriction] = verdict;
-    });
-    if (candidates.some(isVerified)) break; // never delay a usable verified result for a second one
-  }
-  const verified = candidates.filter(isVerified);
-  const unchecked = candidates.filter(needsCheck).length;
-  const timedOut = deadlineStop || Boolean(budget && (budget.trace.deadlineHit || researchTimeLeft() <= 0));
-  const researchUnavailable = verified.length === 0 && !timedOut && obtained === 0 && (providerStop || attempted > 0);
-  const verificationIncomplete = verified.length === 0 && !researchUnavailable && unchecked > 0;
-  if (budget) {
-    budget.trace.research.researched += attempted;
-    budget.trace.research.unchecked = unchecked;
-  }
-  logDiscovery(getDietaryPreferenceLabel(restriction) + ' verified: ' + verified.length + ' of ' + candidates.length +
-    ' | researched now: ' + attempted + ' (' + obtained + ' verdicts) | still unchecked: ' + unchecked +
-    (timedOut ? ' | deadline reached' : '') + (providerStop ? ' | provider unavailable' : ''));
-  return { candidates: verified, researchUnavailable: researchUnavailable, verificationIncomplete: verificationIncomplete,
-    stats: { researched: attempted, unchecked: unchecked } };
-}
 
 function buildRankingMessages(profile, eligible, feedbackItems, demo) {
   const merchantSummaries = eligible.map(function(m) {
@@ -3067,7 +2532,6 @@ function buildRankingMessages(profile, eligible, feedbackItems, demo) {
       dietaryStatus: profile.dietaryPreference === 'none' ? 'no restriction' :
         getDietaryMatchState(m, profile.dietaryPreference) === MATCH_STATE.MATCH ? 'verified' : 'unknown',
       // Menu items evidenced by validated web research (cached per merchant + diet), when available.
-      research: researchSummaryForRanking(m, profile.dietaryPreference),
       matchesCurrentMood: merchantMatchesMood(m, profile.moodCuisine),
       // "MEAL" = provider types confirm a meal place; "UNCERTAIN" = types do not confirm it.
       mealEligibility: classifyMealEligibility(m),
@@ -3289,23 +2753,18 @@ function getMoodMatchState(merchant, moodCuisine) {
 // Curated local demo merchants (the offline/no-key Open House fallback) carry complete records.
 function getDietaryMatchState(merchant, dietaryPreference) {
   if (!dietaryPreference || dietaryPreference === 'none') return MATCH_STATE.UNKNOWN;
-  if (isPlacesMerchant(merchant)) {
-    const verdict = merchant.research && merchant.research[dietaryPreference];
-    if (verdict && verdict.status === RESEARCH_STATUS.SUITABLE) return MATCH_STATE.MATCH;
-    if (verdict && verdict.status === RESEARCH_STATUS.UNSUITABLE) return MATCH_STATE.NON_MATCH;
-    return MATCH_STATE.UNKNOWN;
-  }
-  const dietary = merchant.dietary || [];
-  if (dietary.indexOf(dietaryPreference) !== -1 ||
-      (dietaryPreference === 'vegetarian' && dietary.indexOf('vegan') !== -1)) return MATCH_STATE.MATCH;
-  return dietary.length > 0 ? MATCH_STATE.NON_MATCH : MATCH_STATE.UNKNOWN;
+  // A registered merchant's own declaration is the only thing that can satisfy a restriction.
+  if (merchantDeclaresDiet(merchant, dietaryPreference)) return MATCH_STATE.MATCH;
+  // Everything else is UNKNOWN - never a confirmed mismatch. Nobody has declared anything about an
+  // external listing, and a name, cuisine or category is not a declaration.
+  return MATCH_STATE.UNKNOWN;
 }
 
 function isDietaryUnverified(merchant, profile) {
   return profile.dietaryPreference !== 'none' &&
     getDietaryMatchState(merchant, profile.dietaryPreference) !== MATCH_STATE.MATCH;
 }
-const DIETARY_UNVERIFIED_NOTE = 'Dietary suitability has not been verified.';
+const DIETARY_UNVERIFIED_NOTE = 'This merchant has not listed this dietary option.';
 
 // Kept for the "Why this match" copy, which only needs a yes/no.
 function merchantMatchesMood(merchant, moodCuisine) {
@@ -3458,14 +2917,14 @@ async function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchant
   if (constraint.candidates.length === 0) return { merchant: null, reason: null, noCloserMatch: constraint.noCloserMatch };
   // Merchant research runs before craving ranking: with a dietary restriction only
   // research-verified SUITABLE merchants reach the AI.
-  const research = await applyMerchantResearch(constraint.candidates, profile.dietaryPreference);
-  const candidates = research.candidates;
+  // Dietary gate BEFORE ranking: with an active restriction only merchants that declared the
+  // matching capability survive. No provider call, so this costs nothing and never delays the card.
+  const dietary = applyDietaryPolicy(constraint.candidates, profile.dietaryPreference);
+  const candidates = dietary.candidates;
   logSmartMatchDebug(profile, feedbackItems, candidates, constraint.noCloserMatch, excludedIds.length, recycled);
   if (candidates.length === 0) {
     return { merchant: null, reason: null, noCloserMatch: false,
-      noVerifiedDietary: !research.researchUnavailable && !research.verificationIncomplete,
-      researchUnavailable: research.researchUnavailable,
-      verificationIncomplete: Boolean(research.verificationIncomplete), researchStats: research.stats || null };
+      noDeclaredDietary: dietary.noDeclaredMatch };
   }
 
   // Step 13/14: AI only ever sees the deterministically-constrained subset, and its choice is
@@ -3480,7 +2939,7 @@ async function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchant
         logDiscovery('Selection source: ' + ranking.provider + ' -> ' + aiMerchant.merchantName +
           ' (relevance: ' + ranking.relevance + ')');
         // A budget verdict needs a real price behind it.
-        const budgetFit = aiMerchant.price === null && !hasResearchedPrices(aiMerchant) ? 'unknown' : ranking.budgetFit;
+        const budgetFit = aiMerchant.price === null ? 'unknown' : ranking.budgetFit;
         return { merchant: aiMerchant, reason: safeAIReason(ranking, aiMerchant, profile), budgetFit: budgetFit,
           relevance: ranking.relevance, noCloserMatch: false };
       }
@@ -3518,7 +2977,8 @@ function buildMatchExplanation(profile, merchant, campaign, aiReason, aiRelevanc
   const parts = [];
   if (profile.dietaryPreference !== 'none' &&
       getDietaryMatchState(merchant, profile.dietaryPreference) === MATCH_STATE.MATCH) {
-    parts.push('verified ' + getDietaryPreferenceLabel(profile.dietaryPreference));
+    // The merchant listed this option itself; the wording says so rather than claiming a check.
+    parts.push('listed as ' + getDietaryPreferenceLabel(profile.dietaryPreference).toLowerCase() + ' by the merchant');
   }
   if (isSpecificCraving(profile.craving)) {
     if (aiRelevance === 'high' || merchantMentionsCraving(merchant, profile.craving)) {
@@ -3559,14 +3019,11 @@ function getMatchReasons(profile, merchant, feedbackItems, aiRelevance) {
     }
   }
   if (profile.dietaryPreference !== 'none') {
-    reasons.push(isDietaryUnverified(merchant, profile) ? DIETARY_UNVERIFIED_NOTE : 'Verified for your dietary preference');
+    reasons.push(isDietaryUnverified(merchant, profile) ? DIETARY_UNVERIFIED_NOTE
+      : getDietaryPreferenceLabel(profile.dietaryPreference) + ' — listed by the merchant');
   }
   if (merchant.price !== null && merchant.price <= profile.budget) {
     reasons.push('Within your budget');
-  } else if (merchant.price === null && merchantResearchedItems(merchant).some(function(item) {
-    return item.price !== null && item.price <= profile.budget;
-  })) {
-    reasons.push('A researched menu option fits your budget');
   }
   if (merchantMatchesMood(merchant, profile.moodCuisine)) {
     reasons.push('Matches your mood today');
@@ -3856,16 +3313,13 @@ function setVouchDecision(demo, transaction, decision) {
   }
 }
 
+// Legacy chip retained for curated demo records that carry their own dietary list. A merchant
+// declaration is already shown by the dietary badge, so it is never repeated here.
 function getResearchDietaryTagLabel(merchant, profile) {
   if (!merchant || profile.dietaryPreference === 'none') return null;
+  if (merchantDeclaresDiet(merchant, profile.dietaryPreference)) return null;
   if (merchant.dietary && merchant.dietary.length) {
     return getDietaryPreferenceLabel(merchant.dietary[merchant.dietary.length - 1]);
-  }
-  if (merchant.research) {
-    const verdict = merchant.research[profile.dietaryPreference];
-    if (verdict && verdict.status === RESEARCH_STATUS.SUITABLE) {
-      return getDietaryPreferenceLabel(profile.dietaryPreference);
-    }
   }
   return null;
 }
@@ -3902,7 +3356,11 @@ function matchView(demo, recommendation) {
 function smartMatchResultDisplay(demo, recommendation) {
   const photo = smartMatchResult.getCachedMerchantPhoto(recommendation);
   return {
-    halal: resultHalalTag(recommendation) || { tone: 'unknown', label: 'Halal not verified' },
+    // What the registered merchant itself listed for the customer's active restriction, plus every
+    // option it listed. Display only - the dietary gate already ran before ranking, and no lookup
+    // of any kind happens here.
+    dietary: resultDietaryTag(recommendation, demo.profile.dietaryPreference),
+    dietaryBadges: merchantDietaryBadges(recommendation),
     demoVouches: smartMatchResult.demoVouchCount(recommendation.id) + countVouches(demo, recommendation.id),
     photo: photo ? { src: '/smart-match/photo/' + encodeURIComponent(recommendation.id), attributions: photo.attributions } : null,
     // Tapping the result map opens Google Maps walking directions. Origin is the visitor's real
@@ -3960,7 +3418,6 @@ app.get('/health', async function(req, res) {
     app: 'ok',
     foursquare: 'unknown',
     openai: process.env.OPENAI_API_KEY ? 'configured' : 'missing',
-    tavily: process.env.TAVILY_API_KEY ? 'configured' : 'missing',
     foursquareKey: process.env.FOURSQUARE_API_KEY ? 'configured' : 'missing'
   };
   // Lightweight Foursquare ping — uses a known-good Singapore location.
@@ -4057,23 +3514,16 @@ function logMatchDiagnostics(budget, outcome) {
     const p = budget.trace.providers[name];
     return name + ' ' + p.calls + 'x/' + p.ms + 'ms' + (p.failed ? ' (' + p.failed + ' failed)' : '');
   }).join(', ') || 'none';
-  const c = budget.trace.cache;
-  const r = budget.trace.research;
   logDiscovery('SMART MATCH REQUEST ' + budget.elapsed() + 'ms of ' + budget.totalMs + 'ms budget' +
     '\nOutcome: ' + outcome +
     '\nProvider calls: ' + providers +
-    '\nResearch cache: ' + c.hits + ' memory hits, ' + c.sharedHits + ' shared hits, ' + c.misses + ' misses' +
-    (c.sharedErrors ? ', ' + c.sharedErrors + ' shared errors' : '') +
-    '\nResearch: ' + r.researched + ' researched in ' + r.waves + ' wave(s), ' + r.unchecked + ' still unchecked, ' +
-    r.dedupedWaits + ' de-duplicated' +
     (budget.trace.deadlineHit ? '\nDeadline reached: ' + budget.trace.notes.filter(function(n) { return n.indexOf('deadline') === 0; }).join('; ') : ''));
 }
 
 app.get('/smart-match/result', async function(req, res) {
   const demo = req.session.demo;
   // ONE overall deadline for this request: discovery + dietary research + ranking + card extras.
-  const budget = requestBudget.createBudget(isActiveRestriction(demo && demo.profile.dietaryPreference)
-    ? SMART_MATCH_DIETARY_DEADLINE_MS : SMART_MATCH_DEADLINE_MS);
+  const budget = requestBudget.createBudget(SMART_MATCH_DEADLINE_MS);
   try {
     await requestBudget.runWithBudget(budget, async function() {
       // Coordinates in the URL take priority — this is how GPS works across cold-started
@@ -4106,8 +3556,7 @@ app.get('/smart-match/result', async function(req, res) {
         // genuine batch exhaustion - never silently re-query to paper over it (Step 6). Dietary
         // outcomes never trigger a refresh either: discovery already searched with dietary intent,
         // and unchecked candidates are simply researched on the next request.
-        if (!recommendation && !result.noCloserMatch && !result.noVerifiedDietary && !result.researchUnavailable &&
-            !result.verificationIncomplete && !demo.nearbyRefreshAttempted) {
+        if (!recommendation && !result.noCloserMatch && !result.noDeclaredDietary && !demo.nearbyRefreshAttempted) {
           demo.nearbyRefreshAttempted = true;
           const gotNewMerchants = await refreshNearbyBatch(demo);
           if (gotNewMerchants) {
@@ -4128,18 +3577,14 @@ app.get('/smart-match/result', async function(req, res) {
         } else {
           emptyState = {
             noCloserMatch: Boolean(result.noCloserMatch),
-            noVerifiedDietary: Boolean(result.noVerifiedDietary),
-            researchUnavailable: Boolean(result.researchUnavailable),
-            verificationIncomplete: Boolean(result.verificationIncomplete),
-            checkedCount: result.researchStats ? result.researchStats.researched : 0
+            noDeclaredDietary: Boolean(result.noDeclaredDietary)
           };
         }
       }
       if (!recommendation) {
         logMatchDiagnostics(budget, emptyState.noCloserMatch ? 'empty - no closer match' :
-          emptyState.researchUnavailable ? 'empty - dietary research provider unavailable' :
-          emptyState.verificationIncomplete ? 'empty - dietary verification incomplete' :
-          emptyState.noVerifiedDietary ? 'empty - candidates checked, none verified' : 'empty - no candidates in constraints');
+          emptyState.noDeclaredDietary ? 'empty - no merchant has listed this dietary option' :
+          'empty - no candidates in constraints');
         return res.render('smart-match-empty', Object.assign({ profile: demo.profile,
           dietaryPreferenceOptions: dietaryPreferenceOptions, moodCuisineOptions: moodCuisineOptions,
           dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference),
@@ -4158,30 +3603,41 @@ app.get('/smart-match/result', async function(req, res) {
   }
 });
 
-// Halal tag for the result card - display only, never used by ranking. It reads the EXISTING
-// evidence-based merchant research (Tavily + Groq/OpenAI, cached 24 h per place): green "Halal" only
-// with verified halal evidence, orange "Non-halal" only with evidence it is not, otherwise a neutral
-// "Halal not verified" - never guessed from the name, cuisine or a Google type. Curated demo
-// merchants use their own dietary records. Returns null while a Places merchant has no verdict yet.
-function resultHalalTag(merchant) {
-  if (isPlacesMerchant(merchant) && !(merchant.research && merchant.research.halal)) return null;
-  const state = getDietaryMatchState(merchant, 'halal');
-  if (state === MATCH_STATE.MATCH) return { tone: 'halal', label: 'Halal' };
-  if (state === MATCH_STATE.NON_MATCH) return { tone: 'non-halal', label: 'Non-halal' };
-  return { tone: 'unknown', label: 'Halal not verified' };
+// Customer-facing dietary badges. They state ONLY what the registered merchant itself listed. All
+// verification and certification wording was removed along with the research system, deliberately:
+// nothing here is checked on the merchant's behalf. Returns null when the merchant listed nothing
+// relevant to the customer's active restriction.
+const DIETARY_BADGES = { halal: 'Halal', vegetarian: 'Vegetarian options', vegan: 'Vegan options' };
+const DIETARY_SOURCE_NOTE = 'Dietary information provided by the merchant.';
+
+// Every capability this merchant listed, strongest-first, for the result card.
+function merchantDietaryBadges(merchant) {
+  const capabilities = merchantDietaryCapabilities(merchant);
+  return DIETARY_CAPABILITY_KEYS.filter(function(key) { return capabilities[key]; })
+    .map(function(key) { return { tone: key, label: DIETARY_BADGES[key] }; });
 }
 
-// Result-card extras (display only). The halal badge only READS existing fresh evidence (shared store /
-// memory / fresh session copy) - no badge-only research is ever started. The optional photo lookup
-// may use at most RESULT_EXTRAS_WAIT_MS and never more than the request's remaining time; it runs
-// inside the request (awaited or abandoned via its own timeout), never as work after the response.
+// The badge for the customer's ACTIVE restriction, shown with the merchant-provided note.
+function resultDietaryTag(merchant, dietaryPreference) {
+  if (!merchant || !isActiveRestriction(dietaryPreference)) return null;
+  if (!merchantDeclaresDiet(merchant, dietaryPreference)) return null;
+  const capabilities = merchantDietaryCapabilities(merchant);
+  // A vegetarian diner matched by a vegan kitchen sees the capability actually listed.
+  const key = capabilities[dietaryPreference] ? dietaryPreference :
+    (dietaryPreference === 'vegetarian' && capabilities.vegan ? 'vegan' : dietaryPreference);
+  return { tone: key, label: DIETARY_BADGES[key], note: DIETARY_SOURCE_NOTE };
+}
+
+// Result-card extras (display only). The optional photo lookup may use at most RESULT_EXTRAS_WAIT_MS
+// and never more than the request's remaining time; it runs inside the request (awaited or abandoned
+// via its own timeout), never as work after the response. Dietary badges need no lookup at all -
+// they come straight from the merchant's own settings.
 const RESULT_EXTRAS_WAIT_MS = 500;
 async function settleResultExtras(merchant) {
   const waitMs = Math.max(0, requestBudget.callTimeout(RESULT_EXTRAS_WAIT_MS));
-  const extras = Promise.all([
-    waitMs > 0 ? smartMatchResult.ensureMerchantPhoto(merchant, process.env.GOOGLE_PLACES_API_KEY, waitMs) : null,
-    hydrateMerchantResearch([merchant], ['halal'])
-  ]).catch(function() { /* display-only extras never break the result */ });
+  if (waitMs <= 0) return;
+  const extras = Promise.resolve(smartMatchResult.ensureMerchantPhoto(merchant, process.env.GOOGLE_PLACES_API_KEY, waitMs))
+    .catch(function() { /* display-only extras never break the result */ });
   let timer;
   await Promise.race([extras, new Promise(function(resolve) { timer = setTimeout(resolve, waitMs); })]);
   clearTimeout(timer);
@@ -4537,11 +3993,22 @@ app.post('/profile/dietary', function(req, res) {
   if (!isValidDietaryPreference(req.body.dietaryPreference)) {
     return res.redirect('/profile/dietary?error=invalid');
   }
+  // Only a real CHANGE resets anything: re-saving the same value leaves the session untouched.
+  const changed = demo.profile.dietaryPreference !== req.body.dietaryPreference;
   demo.profile.dietaryPreference = req.body.dietaryPreference;
+  if (changed) {
+    // Changing the restriction changes which merchants are even eligible, so the "already shown"
+    // history from the previous filter would hide merchants the customer has never seen under this
+    // one. It is cleared, and matching restarts under the new filter.
+    //
+    // Explicit REJECTIONS survive: "not for me" is the customer's own judgement about that merchant,
+    // not an artefact of the old filter. So do payments, Vouches, rewards and analytics - nothing
+    // below touches them, and merchant dietary declarations live on the merchant's own record.
+    demo.shownMerchantIds = [];
+  }
   // A merchant already selected under the OLD restriction must never be relabelled as compliant
   // with the new one: drop the current selection and the discovered batch so the next Smart Match
-  // is discovered, verified and ranked under the restriction just saved. The shown/rejected history
-  // deliberately survives (Issue 3), as it does for every other filter edit.
+  // is discovered and ranked under the restriction just saved.
   demo.selectedMerchantId = null;
   demo.selectedMerchantReason = null;
   demo.selectedMerchantRelevance = null;
@@ -4631,11 +4098,16 @@ app.get('/merchant', function(req, res) {
   const campaign = findCampaign(demo, merchant.id);
   res.render('merchant', {
     merchants: merchantList, merchant: merchant, campaign: campaign,
+    // Dietary capabilities: offered only for platform-registered merchants (see POST /merchant/dietary).
+    merchantDietaryOptions: merchantDietaryOptions,
+    canDeclareDietary: true,
+    dietaryCapabilities: merchantDietaryCapabilities(merchant),
+    dietarySaved: req.query.saved === 'dietary',
     illustrativeMetrics: campaignSeedMetrics[merchant.id] || null,
     tab: req.query.tab === 'results' ? 'results' : 'campaign',
     availability: getCampaignAvailability(campaign, false),
     maxDailyCost: getMaxDailyCostEstimate(campaign),
-    error: req.query.error === 'invalid' || req.query.error === 'label' ? req.query.error : false,
+    error: ['invalid', 'label', 'dietary'].indexOf(req.query.error) !== -1 ? req.query.error : false,
     recentPayments: merchantPaymentFeed.filter(function(p) {
       return p.merchantId === merchant.id && !p.illustrative;
     }).slice(0, 12),
@@ -4751,6 +4223,11 @@ app.get('/merchant/report', function(req, res) {
 
   res.render('merchant-report', {
     merchants: merchantList, merchant: merchant, campaign: campaign,
+    // Dietary capabilities: offered only for platform-registered merchants (see POST /merchant/dietary).
+    merchantDietaryOptions: merchantDietaryOptions,
+    canDeclareDietary: true,
+    dietaryCapabilities: merchantDietaryCapabilities(merchant),
+    dietarySaved: req.query.saved === 'dietary',
     tab: 'report',
     liveKpis: liveKpis,
     baselineKpis: baselineKpis,
@@ -4771,6 +4248,41 @@ app.get('/merchant/report', function(req, res) {
 
 app.post('/merchant/start-preparing', function(req, res) { res.redirect('/merchant'); });
 app.post('/merchant/mark-ready', function(req, res) { res.redirect('/merchant'); });
+// The merchant's own dietary capabilities, saved into its existing settings record as three
+// independent flags. The merchant states what it can serve; nothing is verified on its behalf, and
+// only merchants registered on the platform may set them - an external Places listing cannot.
+app.post('/merchant/dietary', function(req, res) {
+  const demo = req.session.demo;
+  // The submitted ID is the only thing that decides which record is written. It is a stable merchant
+  // ID ("<provider>-<placeId>" for a discovered merchant), never a display name, and it is matched
+  // EXACTLY - so a stale form or a mid-edit dropdown change can never write to another merchant.
+  const submittedId = typeof req.body.merchantId === 'string' ? req.body.merchantId.trim() : '';
+  const tab = req.body.tab === 'results' ? 'results' : 'campaign';
+  const merchantList = fallbackMerchants.concat(Array.from(discoveredMerchants.values()));
+  const merchant = submittedId ? findMerchantById(merchantList, submittedId) : null;
+  if (!merchant) {
+    // Missing or unknown ID: nothing is written anywhere, and the page says so.
+    return res.redirect('/merchant?tab=' + tab + '&error=dietary');
+  }
+  const destination = '/merchant?merchantId=' + encodeURIComponent(merchant.id) + '&tab=' + tab;
+  // An externally discovered merchant is a manageable account in this prototype: its settings
+  // record is created on demand, keyed by that same stable ID, so rediscovering it reuses it.
+  if (!findCampaign(demo, merchant.id)) registerDemoMerchant(merchant);
+  const campaign = findCampaign(demo, merchant.id);
+  if (!campaign || campaign.merchantId !== merchant.id) return res.redirect(destination + '&error=dietary');
+  // Unchecked boxes are simply absent from the submission, so each flag is read independently.
+  // A FRESH object per save, owned by this campaign alone - never a shared or reused reference.
+  const submitted = {};
+  DIETARY_CAPABILITY_KEYS.forEach(function(key) {
+    const value = req.body[key];
+    submitted[key] = value === 'on' || value === 'true' || value === true || value === '1';
+  });
+  campaign.dietaryCapabilities = submitted;
+  logDiscovery('Dietary options saved for ' + campaign.merchantId + ': ' +
+    DIETARY_CAPABILITY_KEYS.filter(function(k) { return submitted[k]; }).join(', ') || 'none');
+  res.redirect(destination + '&saved=dietary');
+});
+
 app.post('/merchant/offer', function(req, res) {
   const campaign = findCampaign(req.session.demo, req.body.merchantId);
   const reward = Number(req.body.rewardAmount);
@@ -4909,10 +4421,12 @@ module.exports = { app: app, createInitialDemo: createInitialDemo, demoStore: de
   rewardCreditText: rewardCreditText,
   validateRewardLabel: validateRewardLabel,
   resetReferralCooldowns: function() { referralCooldowns.clear(); },
-  clearDiscoveryCache: clearDiscoveryCache, clearMerchantResearchCache: clearMerchantResearchCache,
+  clearDiscoveryCache: clearDiscoveryCache,
   clearSearchIntentCache: clearSearchIntentCache, classifyMealEligibility: classifyMealEligibility,
-  // Test hook: the dietary research step exactly as getSmartRecommendation runs it.
-  runDietaryResearchForTest: applyMerchantResearch,
+  // Dietary hooks: the declaration gate and the customer-facing badges, so both can be tested
+  // without any provider at all.
+  applyDietaryPolicyForTest: applyDietaryPolicy,
+  merchantDietaryCapabilitiesForTest: merchantDietaryCapabilities,
+  resultDietaryTagForTest: resultDietaryTag,
   safeAIReason: safeAIReason, getMatchReasons: getMatchReasons, isMealMerchant: isMealMerchant,
-  buildMatchExplanation: buildMatchExplanation,
-  RESEARCH_STATUS: RESEARCH_STATUS };
+  buildMatchExplanation: buildMatchExplanation };

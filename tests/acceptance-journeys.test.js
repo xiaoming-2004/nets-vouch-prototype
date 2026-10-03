@@ -1,9 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { app, demoStore, getMerchantCampaigns, resetMerchantCampaigns, resetReferralCooldowns,
-  clearDiscoveryCache, clearMerchantResearchCache, clearSearchIntentCache } = require('../app');
-const researchStore = require('../research-store');
-
+  clearDiscoveryCache, clearSearchIntentCache } = require('../app');
 // End-to-end acceptance of the five Open House demo journeys, over HTTP against local data, mocked
 // providers and test-only sessions. These walk what a person actually does at the stand, so a
 // regression that each unit-level suite would miss individually still fails here.
@@ -27,7 +25,6 @@ test.before(async function() {
 test.after(function() {
   server.close();
   global.fetch = originalFetch;
-  researchStore.setSharedClient(null);
   trackedKeys.forEach(function(key) {
     if (originalEnv[key] === undefined) delete process.env[key];
     else process.env[key] = originalEnv[key];
@@ -36,11 +33,9 @@ test.after(function() {
 test.beforeEach(async function() {
   global.fetch = originalFetch;
   trackedKeys.forEach(function(key) { delete process.env[key]; });
-  researchStore.setSharedClient(null);
   resetMerchantCampaigns();
   resetReferralCooldowns();
   clearDiscoveryCache();
-  clearMerchantResearchCache();
   clearSearchIntentCache();
   await visitor().request('/reset-demo', {});
 });
@@ -261,10 +256,16 @@ function mockDietaryProviders(options) {
       return { ok: true, json: async function() {
         return { choices: [{ message: { content: JSON.stringify({ results: merchants.map(function(m) {
           const status = options.verdict ? options.verdict(m.name) : 'UNKNOWN';
-          const src = m.sources[0];
-          return { merchantId: m.merchantId, identified: true, status: status,
+          // A real analyser cites the sources that actually identify the outlet, so the mock cites
+          // every source it was given; the server-side validator decides which ones qualify.
+          const cited = m.sources.map(function(src) {
+            return { title: src.title, url: src.url, sourceType: 'certification' };
+          });
+          return { merchantId: m.merchantId, identified: true, outletMatched: true, status: status,
+            evidenceClass: status === 'SUITABLE' ? 'CERTIFIED_HALAL' : 'NONE', claimSubject: 'merchant',
+            conflict: false, evidenceDate: null, outletSignalsUsed: [],
             evidence: status === 'SUITABLE' ? 'Listed as MUIS halal certified.' : '',
-            matchingItems: [], sources: [{ title: src.title, url: src.url, sourceType: 'certification' }] };
+            matchingItems: [], sources: cited };
         }) }) } }] };
       } };
     }
@@ -280,90 +281,50 @@ async function halalVisitor(v) {
   await v.request('/location', { latitude: String(DIET_ORIGIN.latitude), longitude: String(DIET_ORIGIN.longitude) });
 }
 
-test('JOURNEY 2: a Halal match is only shown when evidence verified that outlet', async function() {
+test('JOURNEY 2: a Halal match is shown only when a registered merchant listed Halal', async function() {
   process.env.GOOGLE_PLACES_API_KEY = 'test-google';
-  process.env.TAVILY_API_KEY = 'test-tavily';
-  process.env.GROQ_API_KEY = 'test-groq';
-  mockDietaryProviders({
-    places: [googlePlace('verified', 'Certified Halal Kitchen', 150), googlePlace('other', 'Unchecked Stall', 200)],
-    verdict: function(name) { return name === 'Certified Halal Kitchen' ? 'SUITABLE' : 'UNKNOWN'; }
+  // External Google results can never be a dietary match; the registered merchant below listed Halal.
+  mockDietaryProviders({ places: [googlePlace('ext', 'Unlisted Stall', 150)] });
+  const campaign = getMerchantCampaigns().find(function(c) { return c.merchantId === 'felicia-chicken-rice'; });
+  campaign.dietaryCapabilities = { halal: true, vegetarian: false, vegan: false };
+  const v = visitor();
+  await halalVisitor(v);
+  const card = await v.request('/smart-match/result');
+  assert.equal(merchantIdFromCard(card.html), 'felicia-chicken-rice',
+    'only a merchant that listed Halal may be recommended');
+  assert.ok(!card.html.includes('Unlisted Stall'), 'an external listing is never shown as a dietary match');
+  assert.match(card.html, /diet-tag diet-tag--halal">Halal</);
+  assert.match(card.html, /Dietary information provided by the merchant\./);
+});
+
+test('JOURNEY 2b: with nothing listed nearby the app says exactly that and recommends nothing', async function() {
+  process.env.GOOGLE_PLACES_API_KEY = 'test-google';
+  mockDietaryProviders({ places: [googlePlace('a', 'Unlisted Stall A', 150), googlePlace('b', 'Unlisted Stall B', 200)] });
+  getMerchantCampaigns().forEach(function(c) {
+    c.dietaryCapabilities = { halal: false, vegetarian: false, vegan: false };
   });
   const v = visitor();
   await halalVisitor(v);
   const card = await v.request('/smart-match/result');
-  const shown = merchantIdFromCard(card.html);
-  if (shown) {
-    assert.match(card.html, /Certified Halal Kitchen/,
-      'only the outlet whose own evidence verified Halal may be recommended');
-    assert.ok(!card.html.includes('Unchecked Stall'), 'an unverified outlet must never be shown as suitable');
-  } else {
-    // An honest empty state is also acceptable; silently recommending the unverified one is not.
-    assert.ok(!card.html.includes('Unchecked Stall'));
-  }
+  assert.equal(merchantIdFromCard(card.html), null, 'nothing may be recommended for an unlisted diet');
+  assert.match(card.html, /No nearby merchants have listed this dietary option yet\./);
+  assert.ok(!/no suitable restaurants/i.test(card.html), 'and it never claims none exist generally');
 });
 
-test('JOURNEY 2b: with no verified evidence the app says so instead of recommending anything', async function() {
+test('JOURNEY 2c: a Halal search spends no research provider call and returns immediately', async function() {
   process.env.GOOGLE_PLACES_API_KEY = 'test-google';
   process.env.TAVILY_API_KEY = 'test-tavily';
-  process.env.GROQ_API_KEY = 'test-groq';
-  mockDietaryProviders({
-    places: [googlePlace('a', 'Unchecked Stall A', 150), googlePlace('b', 'Unchecked Stall B', 200)],
-    verdict: function() { return 'UNKNOWN'; }
-  });
+  const calls = mockDietaryProviders({ places: [googlePlace('ext', 'Unlisted Stall', 150)] });
+  const campaign = getMerchantCampaigns().find(function(c) { return c.merchantId === 'felicia-chicken-rice'; });
+  campaign.dietaryCapabilities = { halal: true, vegetarian: false, vegan: false };
   const v = visitor();
   await halalVisitor(v);
+  const started = Date.now();
   const card = await v.request('/smart-match/result');
-  assert.equal(merchantIdFromCard(card.html), null, 'nothing may be recommended without verified evidence');
-  assert.match(card.html, /halal/i);
-  // One of the honest unverified states, never a silent match.
-  assert.ok(/No verified halal matches found nearby|Still checking halal options nearby|couldn't check halal options/i
-    .test(card.html), 'an explicit unverified state must be shown. Got: ' + card.html.slice(0, 400));
-});
-
-test('JOURNEY 2c: when research is unavailable the app reports it and recommends nothing', async function() {
-  process.env.GOOGLE_PLACES_API_KEY = 'test-google';
-  // No TAVILY/GROQ key: there is no way to verify suitability at all.
-  mockDietaryProviders({ places: [googlePlace('a', 'Unchecked Stall A', 150)] });
-  const v = visitor();
-  await halalVisitor(v);
-  const card = await v.request('/smart-match/result');
-  assert.equal(merchantIdFromCard(card.html), null,
-    'an unverifiable outlet must never be offered as Halal');
-  assert.ok(/couldn't check halal options|No verified halal matches found nearby/i.test(card.html),
-    'the unavailable state must be stated. Got: ' + card.html.slice(0, 400));
-});
-
-test('JOURNEY 2d: evidence that times out leaves verification incomplete, never suitable', async function() {
-  process.env.GOOGLE_PLACES_API_KEY = 'test-google';
-  process.env.TAVILY_API_KEY = 'test-tavily';
-  process.env.GROQ_API_KEY = 'test-groq';
-  mockDietaryProviders({ places: [googlePlace('a', 'Slow Stall', 150)], hangTavily: true });
-  const v = visitor();
-  await halalVisitor(v);
-  const card = await v.request('/smart-match/result');
-  assert.equal(merchantIdFromCard(card.html), null, 'a timed-out check must not produce a match');
-  assert.ok(/Still checking halal options|couldn't check halal options|No verified halal matches/i.test(card.html),
-    'incomplete verification must be stated. Got: ' + card.html.slice(0, 400));
-});
-
-test('JOURNEY 2e: a cached verified verdict answers without any further provider call', async function() {
-  process.env.GOOGLE_PLACES_API_KEY = 'test-google';
-  process.env.TAVILY_API_KEY = 'test-tavily';
-  process.env.GROQ_API_KEY = 'test-groq';
-  const places = [googlePlace('verified', 'Certified Halal Kitchen', 150)];
-  const first = mockDietaryProviders({ places: places, verdict: function() { return 'SUITABLE'; } });
-  const v = visitor();
-  await halalVisitor(v);
-  await v.request('/smart-match/result');
-  const groqCallsAfterFirst = first.groq;
-  assert.ok(groqCallsAfterFirst >= 1, 'the first request must actually research the outlet');
-
-  // A second visitor at the same place reuses the stored verdict.
-  const second = mockDietaryProviders({ places: places, verdict: function() { return 'SUITABLE'; } });
-  const v2 = visitor();
-  await halalVisitor(v2);
-  await v2.request('/smart-match/result');
-  assert.equal(second.groq, 0, 'a cached verified verdict must not be re-researched');
+  const elapsed = Date.now() - started;
+  assert.equal(merchantIdFromCard(card.html), 'felicia-chicken-rice');
+  assert.equal(calls.search.length, 0, 'no Tavily dietary search exists any more');
+  assert.ok(elapsed < 3000, 'and a dietary search is no slower than any other: ' + elapsed + ' ms');
 });
 
 // ===========================================================================

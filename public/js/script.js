@@ -442,3 +442,13 @@ document.addEventListener('click', function(event) {
     if (!menu.contains(event.target)) menu.removeAttribute('open');
   });
 });
+
+// Merchant picker: changing the dropdown loads that merchant's page straight away, so the dietary
+// and campaign forms below can never still be holding the previously rendered merchant's hidden ID.
+// The Switch button remains the no-JavaScript fallback.
+document.addEventListener('change', function(event) {
+  const select = event.target.closest('[data-auto-submit] select');
+  if (!select) return;
+  const form = select.closest('form');
+  if (form) form.submit();
+});

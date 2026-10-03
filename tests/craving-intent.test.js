@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createInitialDemo, getNearbyMerchants, getSmartRecommendation, classifyMealEligibility,
-  clearDiscoveryCache, clearMerchantResearchCache, clearSearchIntentCache, resetMerchantCampaigns } = require('../app');
+  clearDiscoveryCache, clearSearchIntentCache, resetMerchantCampaigns } = require('../app');
 
 // Resilient meal-type classification (MEAL / NON_MEAL / UNCERTAIN) and the Groq search-intent
 // pre-step for local/free-text cravings. No food dictionary, merchant or location logic in production.
@@ -21,7 +21,6 @@ test.after(function() {
 test.beforeEach(function() {
   resetMerchantCampaigns();
   clearDiscoveryCache();
-  clearMerchantResearchCache();
   clearSearchIntentCache();
   trackedKeys.forEach(function(key) { delete process.env[key]; });
   global.fetch = originalFetch;

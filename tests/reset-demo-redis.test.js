@@ -67,7 +67,6 @@ class FakeUpstashRedis {
 // ---------------------------------------------------------------------------
 const upstashPath = require.resolve('@upstash/redis');
 const appPath = require.resolve('../app');
-const researchPath = require.resolve('../research-store');
 const originalUpstashModule = require.cache[upstashPath];
 
 let created = [];
@@ -92,7 +91,6 @@ process.env.UPSTASH_REDIS_REST_TOKEN = 'fake-token';
  'FOURSQUARE_API_KEY'].forEach(function(key) { delete process.env[key]; });
 
 delete require.cache[appPath];
-delete require.cache[researchPath];
 const { app, demoStore, getMerchantCampaigns } = require('../app');
 
 const redis = created[0];

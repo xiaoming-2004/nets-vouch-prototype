@@ -1,4 +1,4 @@
-// Per-request time budget for Smart Match matching (discovery + dietary research + ranking).
+// Per-request time budget for Smart Match matching (discovery + ranking).
 //
 // One explicit overall deadline is created per /smart-match/result request and carried through all
 // async work with AsyncLocalStorage, so provider calls deep in the call chain can size their own
@@ -21,8 +21,7 @@ function createBudget(totalMs, label) {
     startedAt: startedAt,
     deadline: startedAt + totalMs,
     signal: controller.signal,
-    trace: { providers: {}, cache: { hits: 0, sharedHits: 0, misses: 0, sharedErrors: 0 },
-      research: { researched: 0, unchecked: 0, waves: 0, dedupedWaits: 0 }, deadlineHit: false, notes: [] },
+    trace: { providers: {}, deadlineHit: false, notes: [] },
     remaining: function() { return Math.max(0, this.deadline - Date.now()); },
     elapsed: function() { return Date.now() - this.startedAt; },
     finish: function() { clearTimeout(timer); }
