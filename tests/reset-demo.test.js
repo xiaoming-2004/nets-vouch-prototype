@@ -141,7 +141,7 @@ test('payment, credit, Vouch, daily marker, idempotency and stale URLs reset', a
 test('Smart Match, preferences, location, selected merchant and partial scan reset', async function() {
   const v = visitor();
   await reset(v);
-  await v.request('/profile', { dietaryPreference: 'halal', budget: '9', maxDistanceMinutes: '7', craving: 'rice' });
+  await v.request('/profile', { dietaryPreference: 'halal', budget: '9', maxDistanceMinutes: '7', craving: '' });
   await v.request('/smart-match/location', { status: 'fallback' });
   await v.request('/smart-match/result');
   const selected = (await v.state()).demo.selectedMerchantId;

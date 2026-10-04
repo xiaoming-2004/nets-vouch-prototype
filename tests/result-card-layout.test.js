@@ -470,11 +470,11 @@ test('LAYOUT 4b: the empty states keep their own explanations and inline filter 
   // An impossible budget empties the pool - the empty state is allowed to be as tall as it needs.
   await v.request('/profile', { budget: '1', maxDistanceMinutes: '1', craving: '', moodCuisine: 'any' });
   const empty = (await v.request('/smart-match/result')).html;
-  assert.match(empty, /No spots nearby right now/);
+  assert.match(empty, /No nearby merchants clearly match your current craving and mood./);
   assert.match(empty, /Adjust filters/);
   assert.match(empty, /name="craving"/);
   assert.match(empty, /Dietary: <strong>No dietary restriction<\/strong>/);
-  assert.match(empty, /Widen distance by 5 minutes/);
+  assert.match(empty, /Search more places/);
   const css = CSS();
   assert.match(css, /\.refine-prefs--flat \.refine-sheet \{ padding:/,
     'the empty state keeps its inline disclosure instead of an overlay');

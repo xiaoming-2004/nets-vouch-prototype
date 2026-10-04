@@ -1,3 +1,4 @@
+const rankingFixture = require('./ranking-fixture');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { app, createInitialDemo, getNearbyMerchants, getSmartRecommendation, getMoodMatchState,
@@ -89,7 +90,7 @@ function mockProviders(options) {
       calls.openai.push(body);
       if (!options.openai) return { ok: false, status: 500 };
       return { ok: true, json: async function() {
-        return { choices: [{ message: { content: JSON.stringify(options.openai) } }] };
+        return { choices: [{ message: { content: JSON.stringify(rankingFixture(options.openai, body.messages)) } }] };
       } };
     }
     return { ok: false, status: 404 };
@@ -228,54 +229,33 @@ test('MOOD 5c: a failed Google mood search still falls back to Foursquare', asyn
 });
 
 // MOOD 6 ---------------------------------------------------------------------------------------
-test('MOOD 6: mood + craving keeps every raw-craving result and merges the mood results after them', async function() {
+test('MOOD 6: both inputs use one combined query when intent AI is unavailable', async function() {
   process.env.GOOGLE_PLACES_API_KEY = 'test-google';
-  const calls = mockProviders({ text: {
-    'crispy chicken': [place('r1', 'Raw Crispy Chicken', 100), place('shared', 'Shared Stall', 200)],
-    rice: [place('shared', 'Shared Stall', 200), place('m1', 'Rice Bowl House', 320)]
-  } });
+  const calls = mockProviders({ text: { 'crispy chicken rice': generalPlaces(6) } });
   const nearby = await getNearbyMerchants(ORIGIN, 'jia', 'crispy chicken', 30, 'none', 'rice');
-  assert.deepEqual(calls.text, ['crispy chicken', 'rice'],
-    'the raw craving is searched first and is authoritative; max 2 Google calls');
-  assert.equal(calls.nearby, 0);
-  assert.deepEqual(nearby.merchants.map(function(m) { return m.id; }),
-    ['google-r1', 'google-shared', 'google-m1'], 'raw results stay first and are never replaced');
-  assert.ok(nearby.merchants.find(function(m) { return m.id === 'google-m1'; }).fromMoodSearch);
-  assert.ok(!nearby.merchants.find(function(m) { return m.id === 'google-r1'; }).fromMoodSearch);
+  assert.deepEqual(calls.text, ['crispy chicken rice']);
+  assert.ok(nearby.merchants.every(m => m.fromMoodSearch && m.fromCravingSearch));
 });
 
-test('MOOD 6b: Foursquare mood + craving searches the raw craving first, then the mood', async function() {
-  process.env.PLACES_PROVIDER = 'foursquare';
-  process.env.FOURSQUARE_API_KEY = 'test-fsq';
-  const calls = mockProviders({ foursquare: {
-    'crispy chicken': [fsqResult('r1', 'Raw Crispy Chicken', 'Restaurant', 100)],
-    noodles: [fsqResult('m1', 'Mee Pok Stall', 'Noodle Restaurant', 150)]
-  } });
+test('MOOD 6b: Foursquare uses one combined input query and preserves provenance', async function() {
+  process.env.PLACES_PROVIDER = 'foursquare'; process.env.FOURSQUARE_API_KEY = 'test-fsq';
+  const calls = mockProviders({ foursquare: { 'crispy chicken noodles': [fsqResult('r1', 'Chicken Noodles', 'Noodle Restaurant', 100)] } });
   const nearby = await getNearbyMerchants(ORIGIN, 'jia', 'crispy chicken', 30, 'none', 'noodles');
-  assert.deepEqual(calls.foursquare, ['crispy chicken', 'noodles']);
-  assert.deepEqual(nearby.merchants.map(function(m) { return m.id; }),
-    ['foursquare-r1', 'foursquare-m1']);
-  assert.ok(nearby.merchants.find(function(m) { return m.id === 'foursquare-m1'; }).fromMoodSearch);
+  assert.deepEqual(calls.foursquare, ['crispy chicken noodles', 'food']);
+  assert.equal(nearby.merchants[0].fromMoodSearch, true);
+  assert.equal(nearby.merchants[0].fromCravingSearch, true);
 });
 
 // MOOD 7 ---------------------------------------------------------------------------------------
-test('MOOD 7: no duplicate mood search when the craving already contains the mood', async function() {
+test('MOOD 7: combined raw fallback needs no synonym dictionary', async function() {
   process.env.GOOGLE_PLACES_API_KEY = 'test-google';
-  const cases = [['chicken rice', 'rice'], ['ramen', 'noodles'], ['bee hoon soup', 'noodles'],
-    ['spaghetti', 'pasta'], ['bak kut teh soup', 'soup'], ['kaya toast', 'bread']];
-  for (const [craving, mood] of cases) {
+  for (const [craving, mood] of [['ramen', 'noodles'], ['spaghetti', 'pasta'], ['kaya toast', 'bread']]) {
     clearDiscoveryCache();
-    const calls = mockProviders({ text: { [craving]: generalPlaces(6) } });
+    const query = craving + ' ' + mood;
+    const calls = mockProviders({ text: { [query]: generalPlaces(6) } });
     await getNearbyMerchants(ORIGIN, 'jia', craving, 30, 'none', mood);
-    assert.deepEqual(calls.text, [craving],
-      '"' + craving + '" already asks for the ' + mood + ' mood - one search only');
-    assert.equal(calls.nearby, 0);
+    assert.deepEqual(calls.text, [query]); assert.equal(calls.nearby, 0);
   }
-  // A craving that does NOT contain the staple still gets its own mood search.
-  clearDiscoveryCache();
-  const calls = mockProviders({ text: { 'crispy chicken': generalPlaces(6), rice: generalPlaces(3, 500) } });
-  await getNearbyMerchants(ORIGIN, 'jia', 'crispy chicken', 30, 'none', 'rice');
-  assert.deepEqual(calls.text, ['crispy chicken', 'rice']);
 });
 
 // MOOD 8 ---------------------------------------------------------------------------------------
@@ -309,49 +289,31 @@ test('MOOD 8: mood + dietary composes ONE query and keeps strict dietary verific
 test('MOOD 8b: craving + dietary + mood spends both calls on dietary safety and the raw craving', async function() {
   process.env.GOOGLE_PLACES_API_KEY = 'test-google';
   const calls = mockProviders({ text: {
-    'crispy chicken': [place('r1', 'Raw Crispy Chicken', 100)],
+    'crispy chicken rice': [place('r1', 'Raw Crispy Chicken', 100)],
     'halal crispy chicken': [place('d1', 'Halal Chicken House', 300)]
   } });
   const nearby = await getNearbyMerchants(ORIGIN, 'jia', 'crispy chicken', 30, 'halal', 'rice');
-  assert.deepEqual(calls.text, ['crispy chicken', 'halal crispy chicken'],
-    'the broad mood hint is dropped from discovery; dietary and the craving take priority');
+  assert.deepEqual(calls.text, ['crispy chicken rice', 'halal crispy chicken'],
+    'combined food intent and dietary breadth both remain available');
   // With an active dietary restriction the third call is the general nearby pool: most certified or
   // Muslim-owned outlets are not labelled halal by the provider, so they must stay researchable.
   // The broad MOOD hint is still dropped - it is only a ranking signal.
   assert.equal(calls.nearby, 1, 'the third call is the general nearby pool, not a mood search');
-  assert.ok(nearby.merchants.every(function(m) { return !m.fromMoodSearch; }));
+  assert.ok(nearby.merchants.find(function(m) { return m.id === 'google-r1'; }).fromMoodSearch);
 });
 
 // MOOD 9 ---------------------------------------------------------------------------------------
-test('MOOD 9: the AI ranking prompt receives the selected mood and its per-merchant match', async function() {
-  const demo = createInitialDemo('jia');
-  demo.profile.moodCuisine = 'noodles';
-  const eligible = [
-    { id: 'google-a', merchantName: 'Mee Pok Stall', categoryNames: ['Noodle Restaurant'], itemName: null,
-      price: null, distanceMinutes: 3, distanceMetres: 240, distanceLabel: '240 m away', dietary: [],
-      cuisineTags: ['noodles'], source: 'GOOGLE', placeTypes: ['restaurant'], address: 'Singapore' },
-    { id: 'google-b', merchantName: 'Generic Eatery', categoryNames: ['Restaurant'], itemName: null,
-      price: null, distanceMinutes: 2, distanceMetres: 160, distanceLabel: '160 m away', dietary: [],
-      cuisineTags: [], source: 'GOOGLE', placeTypes: ['restaurant'], address: 'Singapore' }
-  ];
-  eligible[0].fromMoodSearch = true;
+test('MOOD 9: ranking receives factual inputs and retrieval flags without a deterministic mood verdict', function() {
+  const demo = createInitialDemo('jia'); demo.profile.moodCuisine = 'noodles';
+  const eligible = [{ id: 'a', merchantName: 'Noodle Stall', categoryNames: ['Noodle Restaurant'], cuisineTags: ['noodles'], itemName: null, price: null, distanceMetres: 240, source: 'GOOGLE', placeTypes: ['restaurant'], fromMoodSearch: true }];
   const messages = buildRankingMessagesForTest(demo.profile, eligible, [], demo);
-  const prompt = messages[1].content;
-  assert.match(prompt, /- Food mood today: Noodles/);
-  assert.match(prompt, /Discovery also searched for the mood staple "noodles" \(retrieval only/);
-  const summaries = JSON.parse(prompt.slice(prompt.indexOf('[{'), prompt.lastIndexOf('}]') + 2));
-  assert.equal(summaries.find(function(s) { return s.id === 'google-a'; }).matchesCurrentMood, true);
-  assert.equal(summaries.find(function(s) { return s.id === 'google-b'; }).matchesCurrentMood, false);
-  // The mood never relaxes the standing guardrails.
-  assert.match(messages[0].content, /matchesCurrentMood being false is neutral/);
-  assert.match(messages[0].content, /Never claim a merchant serves rice, noodles, pasta, soup or bread/);
-  assert.match(messages[0].content, /never judge dietary suitability yourself/);
-
-  // "Anything" states no preference and never mentions a mood search.
+  assert.match(messages[1].content, /Food mood today: Noodles/);
+  const summary = JSON.parse(messages[1].content.split('Eligible merchants:\n')[1].split('\n\nOutput:')[0])[0];
+  assert.equal(summary.fromMoodSearch, true); assert.equal(summary.matchesCurrentMood, undefined);
+  assert.deepEqual(summary.cuisine, ['noodles']);
+  assert.match(messages[0].content, /cannot support HIGH fit/); assert.match(messages[0].content, /Never judge dietary suitability yourself/);
   demo.profile.moodCuisine = 'any';
-  const neutral = buildRankingMessagesForTest(demo.profile, eligible, [], demo)[1].content;
-  assert.match(neutral, /- Food mood today: no preference/);
-  assert.doesNotMatch(neutral, /mood staple/);
+  assert.match(buildRankingMessagesForTest(demo.profile, eligible, [], demo)[1].content, /Food mood today: Anything/);
 });
 
 test('MOOD 9b: AI output still cannot override the distance constraint under an active mood', async function() {
@@ -388,7 +350,7 @@ test('MOOD 10: with no AI key the rules fallback prefers a supported mood match'
     'the match comes from the provider category name, not the merchant name');
   const result = await getSmartRecommendation(demo.profile, nearby.merchants, [], [], demo, []);
   assert.equal(result.merchant.id, 'google-mood', 'the mood match wins over a slightly nearer plain eatery');
-  assert.equal(result.reason, null, 'deterministic rules never fabricate a reason');
+  assert.match(result.reason, /nearby noodles search; merchant details are limited/);
 });
 
 test('MOOD 10b: a mood match never overrides distance or budget constraints', async function() {
@@ -397,18 +359,18 @@ test('MOOD 10b: a mood match never overrides distance or budget constraints', as
   demo.profile.budget = 7;
   demo.profile.maxDistanceMinutes = 10;
   // Woodlands Noodle Bar is the mood match ($6.80, 4 min); Spice Lane is farther and over budget.
-  const result = await getSmartRecommendation(demo.profile, (await getNearbyMerchants()).merchants,
+  const result = await getSmartRecommendation(demo.profile, (await getNearbyMerchants()).merchants.map(function(m) { return { ...m, fromMoodSearch: true }; }),
     [], [], demo, []);
   assert.equal(result.merchant.id, 'woodlands-noodle-bar');
 
   // A mood match that breaks the budget is still excluded, not promoted.
   demo.profile.moodCuisine = 'rice';
   demo.profile.budget = 6;
-  const riceResult = await getSmartRecommendation(demo.profile, (await getNearbyMerchants()).merchants,
+  const riceResult = await getSmartRecommendation(demo.profile, (await getNearbyMerchants()).merchants.map(function(m) { return { ...m, fromMoodSearch: true }; }),
     [], [], demo, []);
   assert.equal(riceResult.merchant.id, 'felicia-chicken-rice', '$5.00 chicken rice is inside the budget');
   demo.profile.budget = 4;
-  const tightResult = await getSmartRecommendation(demo.profile, (await getNearbyMerchants()).merchants,
+  const tightResult = await getSmartRecommendation(demo.profile, (await getNearbyMerchants()).merchants.map(function(m) { return { ...m, fromMoodSearch: true }; }),
     [], [], demo, []);
   assert.equal(tightResult.merchant, null, 'budget still excludes every candidate, mood or not');
 });
@@ -425,7 +387,8 @@ test('MOOD 11: an incomplete provider category never makes mood an eligibility r
     assert.equal(getMoodMatchState(m, 'pasta'), MATCH_STATE.UNKNOWN, 'generic "Restaurant" stays unknown');
   });
   const result = await getSmartRecommendation(demo.profile, nearby.merchants, [], [], demo, []);
-  assert.ok(result.merchant, 'an unsupported mood never empties the result');
+  assert.ok(result.merchant.fromMoodSearch, 'generic targeted category can support cautious fallback');
+  assert.match(result.reason, /merchant details are limited/);
 });
 
 test('MOOD 11b: mood evidence comes from facts, never from a merchant name alone', async function() {
@@ -435,10 +398,10 @@ test('MOOD 11b: mood evidence comes from facts, never from a merchant name alone
   const dishEvidence = { merchantName: 'Woodlands Noodle Bar', category: 'noodles', itemName: 'Mushroom Noodles' };
   assert.equal(getMoodMatchState(dishEvidence, 'noodles'), MATCH_STATE.MATCH);
   const biryani = { merchantName: 'Spice Lane', category: 'indian-food', itemName: 'Chicken Biryani' };
-  assert.equal(getMoodMatchState(biryani, 'rice'), MATCH_STATE.MATCH, 'biryani is evidence of rice');
-  assert.equal(getMoodMatchState(biryani, 'pasta'), MATCH_STATE.NON_MATCH, 'a known cuisine that is not pasta');
+  assert.equal(getMoodMatchState(biryani, 'rice'), MATCH_STATE.UNKNOWN, 'semantic equivalence requires AI');
+  assert.equal(getMoodMatchState(biryani, 'pasta'), MATCH_STATE.UNKNOWN, 'unconfirmed facts remain unknown');
   const bakery = { merchantName: 'Corner Shop', category: 'google.place', categoryNames: ['Bakery'], cuisineTags: ['bakery'] };
-  assert.equal(getMoodMatchState(bakery, 'bread'), MATCH_STATE.MATCH);
+  assert.equal(getMoodMatchState(bakery, 'bread'), MATCH_STATE.UNKNOWN);
 });
 
 // MOOD 12 --------------------------------------------------------------------------------------

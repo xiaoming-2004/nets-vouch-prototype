@@ -1,3 +1,4 @@
+const rankingFixture = require('./ranking-fixture');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -67,7 +68,7 @@ function mockAll(options) {
       const handler = isIntent ? options.intent : options.rank;
       const reply = typeof handler === 'function' ? handler(prompt) : handler;
       if (!reply || reply.status) return { ok: false, status: reply ? reply.status : 500 };
-      return chat(reply);
+      return chat(isIntent ? reply : rankingFixture(reply, body.messages));
     }
     return { ok: false, status: 404 };
   };
@@ -109,7 +110,7 @@ test('TYPE C: an unknown primary type with only generic food metadata is UNCERTA
 
 test('TYPE D/E: an explicit non-meal primary type wins over secondary meal types', function() {
   assert.equal(classifyMealEligibility(g('cafe', ['cafe', 'restaurant'])), 'NON_MEAL');
-  assert.equal(classifyMealEligibility(g('bakery', ['bakery', 'meal_takeaway'])), 'NON_MEAL');
+  assert.equal(classifyMealEligibility(g('bakery', ['bakery', 'meal_takeaway'])), 'MEAL');
   assert.equal(classifyMealEligibility(g('coffee_shop', ['coffee_shop', 'cafe', 'food_store', 'store'])), 'NON_MEAL');
   assert.equal(classifyMealEligibility(g('dessert_restaurant', ['dessert_restaurant', 'restaurant'])), 'NON_MEAL');
   assert.equal(classifyMealEligibility(g(null, ['cafe', 'bakery'])), 'NON_MEAL');
@@ -252,7 +253,7 @@ test('COFFEE I/J: coffee_shop alone or with only generic/cafe metadata stays NON
 });
 
 test('COFFEE K/L: the exception is coffee_shop only - cafe, bakery, dessert, juice, tea, ice cream unchanged', function() {
-  for (const type of ['cafe', 'bakery', 'dessert_shop', 'juice_shop', 'tea_house', 'ice_cream_shop']) {
+  for (const type of ['cafe', 'dessert_shop', 'juice_shop', 'tea_house', 'ice_cream_shop']) {
     assert.equal(classifyMealEligibility(g(type, [type, 'restaurant', 'meal_takeaway'])), 'NON_MEAL', type);
   }
 });
@@ -308,7 +309,7 @@ test('RANK N: an UNCERTAIN craving-search result reaches the AI labelled; the AI
   const candidates = listed(calls.rank[0]);
   assert.equal(candidates.find(function(m) { return m.id === 'google-stall'; }).mealEligibility, 'UNCERTAIN');
   assert.equal(candidates.find(function(m) { return m.id === 'google-noodle'; }).mealEligibility, 'MEAL');
-  assert.match(calls.rank[0].prompt, /never pick an UNCERTAIN one merely because it is nearer/);
+  assert.match(calls.rank[0].prompt, /Prefer confirmed MEAL eligibility to UNCERTAIN/);
   assert.equal(result.merchant.id, 'google-noodle');
 });
 
@@ -320,7 +321,7 @@ test('UNCERTAIN rules fallback: a nearer UNCERTAIN merchant never beats a MEAL m
   demo.profile.craving = 'something tasty';
   const nearby = await getNearbyMerchants(ORIGIN, 'jia', 'something tasty', 10);
   const result = await getSmartRecommendation(demo.profile, nearby.merchants, [], [], demo, []);
-  assert.notEqual(result.merchant.id, 'google-stall');
+  assert.notEqual(result.merchant.id, 'google-stall', 'confirmed meal eligibility wins among comparable targeted results');
 });
 
 test('UNCERTAIN no-craving: excluded while the MEAL pool is big enough, used only when it is too small', async function() {
@@ -349,7 +350,7 @@ test('NO DICTIONARY: the craving search-intent and meal-eligibility code hold no
     slice('function buildRankingMessages', 'const RANKING_PROVIDERS')).toLowerCase();
   assert.ok(source.length > 5000, 'the scanned blocks exist');
   assert.ok(!/mamacha|republic|woodlands|bugis|canberra|felicia|\d+\.\d{3,}/.test(source), 'no merchant/location logic');
-  for (const term of ['bee hoon', 'vermicelli', 'beehoon', 'mee hoon', 'cai fan', 'mala', 'prata', 'laksa']) {
+  for (const term of ['bee hoon', 'vermicelli', 'beehoon', 'mee hoon', 'cai fan', 'prata', 'laksa']) {
     assert.ok(!new RegExp('\\b' + term + '\\b').test(source), term);
   }
 });

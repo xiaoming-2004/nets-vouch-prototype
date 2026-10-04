@@ -1,3 +1,4 @@
+const rankingFixture = require('./ranking-fixture');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { app, createInitialDemo, getNearbyMerchants, getEligibleMerchants,
@@ -72,10 +73,9 @@ async function candidates() {
   return (await getNearbyMerchants()).merchants;
 }
 
-function aiResponse(merchantId, reason, relevance) {
+function aiResponse(merchantId, reason, relevance, messages) {
   return { ok: true, json: async function() {
-    return { choices: [{ message: { content: JSON.stringify({ merchantId: merchantId,
-      relevance: relevance === undefined ? 'high' : relevance, reason: reason }) } }] };
+    return { choices: [{ message: { content: JSON.stringify(messages ? rankingFixture({ merchantId: merchantId, relevance: relevance || 'high', reason: reason }, messages) : { merchantId: merchantId, relevance: relevance || 'high', reason: reason }) } }] };
   } };
 }
 
@@ -212,10 +212,10 @@ test('valid AI choice is used only after dietary, budget, distance and campaign 
   process.env.OPENAI_API_KEY = 'test-key';
   const demo = createInitialDemo('jia');
   const nearby = await candidates();
-  global.fetch = async function() { return aiResponse('green-bowl', 'Vegan bowl, six minutes away.'); };
+  global.fetch = async function(url, init) { return aiResponse('green-bowl', 'A nearby bowl with a supplied dish.', 'high', JSON.parse(init.body).messages); };
   let result = await getSmartRecommendation(demo.profile, nearby, [], [], demo);
   assert.equal(result.merchant.id, 'green-bowl');
-  assert.equal(result.reason, 'Vegan bowl, six minutes away.');
+  assert.equal(result.reason, 'A nearby bowl with a supplied dish.');
 
   demo.profile.dietaryPreference = 'halal';
   demo.profile.budget = 6;
@@ -483,9 +483,9 @@ test('TEST N: Too far remains a hard constraint - only strictly closer candidate
   const firstId = merchantIdOf(first.html);
   await rejectCurrent(v, firstId, 'too-far');
   const next = await v.request('/smart-match/result');
-  assert.match(next.html, /No closer matches available/);
+  assert.match(next.html, /No closer match was found/);
   assert.ok(!next.html.includes('data-merchant-id='), 'must not silently recommend a farther merchant');
-  assert.equal(noneCloser.getCalls(), 1, 'a too-far dead end must not trigger a brand-new Foursquare batch');
+  assert.equal(noneCloser.getCalls(), 2, 'a too-far dead end gets one bounded continuation search');
 });
 
 test('TEST O: Not in the mood deprioritises the same factual cuisine using Foursquare category data', async function() {
@@ -574,7 +574,7 @@ test('rejection state is per-session - Darren is unaffected by Jia', async funct
   assert.equal(darrenFirst, jiaFirst, "Darren's session must be unaffected by Jia's rejection");
 });
 
-test('batch exhaustion reuses cached discovery instead of spending another API call', async function() {
+test('batch exhaustion bypasses discovery cache once to find a new merchant', async function() {
   process.env.FOURSQUARE_API_KEY = 'test-key';
   let call = 0;
   global.fetch = async function(url) {
@@ -593,11 +593,11 @@ test('batch exhaustion reuses cached discovery instead of spending another API c
 
   await rejectCurrent(v, firstId, 'not-in-mood');
   const refreshed = await v.request('/smart-match/result');
-  assert.equal(call, 1, 'the same location/query must not refresh Foursquare before cache expiry');
-  assert.match(refreshed.html, /No spots nearby right now/);
+  assert.equal(call, 2, 'exactly one uncached continuation call');
+  assert.equal(merchantIdOf(refreshed.html), 'foursquare-z');
   const exhausted = await v.request('/smart-match/result');
-  assert.equal(call, 1, 'no further discovery call once a refresh has already been attempted this cycle');
-  assert.match(exhausted.html, /No spots nearby right now/);
+  assert.equal(call, 2, 'rendering the selected continuation match makes no further discovery call');
+  assert.equal(merchantIdOf(exhausted.html), 'foursquare-z');
 });
 
 test('a refresh returning only already-seen merchants shows a clean exhaustion state, not a loop', async function() {
@@ -609,12 +609,12 @@ test('a refresh returning only already-seen merchants shows a clean exhaustion s
   const firstId = merchantIdOf((await v.request('/smart-match/result')).html);
   await rejectCurrent(v, firstId, 'not-in-mood');
   const result = await v.request('/smart-match/result');
-  assert.equal(mock.getCalls(), 1, 'the refresh attempt should reuse cached discovery');
-  assert.match(result.html, /No spots nearby right now/);
+  assert.equal(mock.getCalls(), 2, 'continuation bypasses the identical cached discovery once');
+  assert.match(result.html, /We couldn’t find another nearby match for your current craving and mood./);
 
   const again = await v.request('/smart-match/result');
-  assert.equal(mock.getCalls(), 1, 'no repeated provider calls once the cycle is marked exhausted');
-  assert.match(again.html, /No spots nearby right now/);
+  assert.equal(mock.getCalls(), 2, 'no repeated provider calls once the rejection is exhausted');
+  assert.match(again.html, /We couldn’t find another nearby match for your current craving and mood./);
 });
 
 // ---------------------------------------------------------------------------
@@ -635,10 +635,10 @@ test('TEST Q: OpenAI failure still uses factual preference and distance signals 
   const demo = createInitialDemo('jia');
   demo.profile.moodCuisine = 'noodles';
   demo.profile.maxDistanceMinutes = 30;
-  const nearby = await getNearbyMerchants({ latitude: 1.45, longitude: 103.82 });
+  const nearby = await getNearbyMerchants({ latitude: 1.45, longitude: 103.82 }, 'jia', '', 30, 'none', 'noodles');
   const result = await getSmartRecommendation(demo.profile, nearby.merchants, [], [], demo);
   assert.equal(result.merchant.merchantName, 'Near Match');
-  assert.equal(result.reason, null);
+  assert.match(result.reason, /merchant details are limited/);
 });
 
 test('AI cannot resurrect a merchant the too-far constraint removed', async function() {
@@ -772,7 +772,7 @@ test('TEST W: only one Smart Match recommendation region renders, never a duplic
 
 test('mood and dietary matching use the exact UI preference values and distinguish MATCH / NON_MATCH / UNKNOWN', async function() {
   // moodCuisineOptions/dietaryPreferenceOptions values, verified against home.ejs/profile-dietary.ejs.
-  const noodleMerchant = { category: 'noodles', cuisineTags: [] };
+  const noodleMerchant = { category: 'noodles', categoryNames: ['Noodles'], cuisineTags: [] };
   assert.equal(getMoodMatchState(noodleMerchant, 'noodles'), MATCH_STATE.MATCH);
   // Dietary state now comes ONLY from what a registered merchant listed in its settings.
   const registeredHalal = { id: 'felicia-chicken-rice', source: 'local-fallback' };
@@ -782,7 +782,7 @@ test('mood and dietary matching use the exact UI preference values and distingui
   const nonMatchMerchant = { category: 'foursquare.place', cuisineTags: ['bakery'] };
   const unknownMerchant = { category: 'foursquare.place', cuisineTags: [] };
   assert.equal(getMoodMatchState(matchMerchant, 'noodles'), MATCH_STATE.MATCH);
-  assert.equal(getMoodMatchState(nonMatchMerchant, 'noodles'), MATCH_STATE.NON_MATCH);
+  assert.equal(getMoodMatchState(nonMatchMerchant, 'noodles'), MATCH_STATE.UNKNOWN);
   assert.equal(getMoodMatchState(unknownMerchant, 'noodles'), MATCH_STATE.UNKNOWN);
 
   // A merchant that listed a DIFFERENT option is UNKNOWN for this one, never a negative claim, and
@@ -802,6 +802,7 @@ test('current mood outranks stored dietary preference for this session', async f
   demo.profile.dietaryPreference = 'halal';
   demo.profile.moodCuisine = 'rice';
   const nearby = await candidates();
+  nearby.forEach(function(m) { m.fromMoodSearch = true; }); // Mock a direct mood retrieval pool.
   const halalIds = nearby.filter(function(m) {
     return getDietaryMatchState(m, 'halal') === MATCH_STATE.MATCH;
   }).map(function(m) { return m.id; });
@@ -898,7 +899,7 @@ test('1.9 TEST E: rejection (Not for me) does not reacquire location or re-searc
   const first = merchantIdOf((await v.request('/smart-match/result')).html);
   await rejectCurrent(v, first, 'not-in-mood');
   await v.request('/smart-match/result');
-  assert.equal(mock.getCalls(), 1, 'rejecting must never trigger another Foursquare search');
+  assert.equal(mock.getCalls(), 1, 'a suitable unseen alternative needs no further search');
 });
 
 test('1.9 TEST F: a place named as another merchant\'s parent is suppressed, its children survive', async function() {
@@ -1033,7 +1034,7 @@ test('TEST D: without AI, the fallback nudges a merchant that literally names th
   process.env.FOURSQUARE_API_KEY = 'test-key';
   // Meal merchants only (a bakery is no longer a Smart Match meal candidate at all).
   const mock = mockFoursquareByQuery({ laksa: [
-    fsqPlace('laksa', 'Corner Laksa House', 'Asian Restaurant', { distance: 300 }),
+    fsqPlace('laksa', 'Corner Laksa House', 'Laksa Restaurant', { distance: 300 }),
     fsqPlace('generic', 'Generic Restaurant', 'Restaurant', { distance: 100 })
   ] });
   global.fetch = mock.fetchFn;
@@ -1174,7 +1175,7 @@ test('TEST M: shown history does not leak across sessions', async function() {
   assert.equal(shownToB, 'foursquare-x', "session B must still be able to receive X - A's history must not leak");
 });
 
-test('TEST N: pool exhaustion allows controlled recycling, never the just-rejected merchant', async function() {
+test('TEST N: pool exhaustion never recycles any rejected merchant', async function() {
   process.env.FOURSQUARE_API_KEY = 'test-key';
   const mock = mockFoursquare([fsqPlace('a', 'Merchant A', 'Restaurant'), fsqPlace('b', 'Merchant B', 'Restaurant')]);
   global.fetch = mock.fetchFn;
@@ -1185,13 +1186,10 @@ test('TEST N: pool exhaustion allows controlled recycling, never the just-reject
   const second = merchantIdOf((await v.request('/smart-match/result')).html);
   assert.notEqual(second, first);
   await rejectCurrent(v, second, 'not-in-mood');
-  // Pool of 2 is now exhausted (both shown/rejected) - recycling must kick in rather than an
-  // empty state, and it must not immediately return the merchant JUST rejected (`second`).
-  const recycled = await v.request('/smart-match/result');
-  const recycledId = merchantIdOf(recycled.html);
-  assert.ok(recycledId, 'a recycled recommendation should still be offered rather than a dead end');
-  assert.notEqual(recycledId, second, 'must not immediately return the merchant just rejected');
-  assert.equal(recycledId, first, 'the least-recently-shown merchant should recycle first');
+  const exhausted = await v.request('/smart-match/result');
+  assert.equal(merchantIdOf(exhausted.html), null);
+  assert.match(exhausted.html, /We couldn’t find another nearby match/);
+  assert.equal(mock.getCalls(), 2, 'one continuation after all current-batch alternatives were rejected');
 });
 
 test('TEST O: OpenAI failure - rule-based fallback still respects shown/rejected history', async function() {
@@ -1208,7 +1206,7 @@ test('TEST O: OpenAI failure - rule-based fallback still respects shown/rejected
   assert.equal(result.merchant.merchantName, 'Merchant B', 'the already-shown merchant must stay excluded via fallback too');
 });
 
-test('TEST P: Not for me performs zero additional Foursquare requests', async function() {
+test('TEST P: suitable unseen alternatives need zero additional Foursquare requests', async function() {
   process.env.FOURSQUARE_API_KEY = 'test-key';
   const mock = mockFoursquare([
     fsqPlace('a', 'Merchant A', 'Restaurant'), fsqPlace('b', 'Merchant B', 'Restaurant'),
@@ -1222,7 +1220,7 @@ test('TEST P: Not for me performs zero additional Foursquare requests', async fu
   const first = merchantIdOf((await v.request('/smart-match/result')).html);
   await rejectCurrent(v, first, 'not-in-mood');
   await v.request('/smart-match/result');
-  assert.equal(mock.getCalls(), callsAfterFirst, 'rejecting must trigger zero additional Foursquare requests');
+  assert.equal(mock.getCalls(), callsAfterFirst, 'a suitable unseen alternative requires zero additional requests');
 });
 
 test('TEST Q: merchant-only filtering (container suppression) remains intact', async function() {
@@ -1348,7 +1346,9 @@ function mockFoursquareAndAI(results, aiReply) {
       const listed = seen.prompt.match(/"id":"(foursquare-[^"]+)"/g) || [];
       seen.ids = listed.map(function(entry) { return entry.slice(6, -1); });
       if (aiReply === 'throw') throw new Error('provider unavailable');
-      return aiReply;
+      const data = await aiReply.json();
+      const reply = JSON.parse(data.choices[0].message.content);
+      return { ok: true, json: async function() { return { choices: [{ message: { content: JSON.stringify(rankingFixture(reply, body.messages)) } }] }; } };
     }
     return foursquare.fetchFn(url, options);
   };
@@ -1384,8 +1384,8 @@ test('CRAVING A: arbitrary craving - AI semantically picks the fried chicken mer
     aiResponse('foursquare-chicken', reason, 'high'));
   assert.equal(result.merchant.merchantName, 'Seoul Bites');
   assert.equal(result.reason, reason);
-  assert.deepEqual(seen.ids.sort(), ['foursquare-chicken', 'foursquare-generic'],
-    'the AI ranks every rule-approved candidate; no craving pre-gating (the Bakery is excluded by merchant TYPE, not by the craving)');
+  assert.deepEqual(seen.ids.sort(), ['foursquare-bakery', 'foursquare-chicken', 'foursquare-generic'],
+    'the AI semantically evaluates bakeries as well as meal merchants');
   assert.match(seen.prompt, /Fried Chicken Joint/, 'all factual Foursquare category names are supplied');
 });
 
@@ -1396,18 +1396,18 @@ test('CRAVING B: a phrase with no mapping anywhere still gets an AI recommendati
   assert.equal(result.reason, 'Food Leaf is the nearest restaurant, 100 m away.');
 });
 
-test('CRAVING C: a strange craving still recommends, with honest low-relevance wording', async function() {
+test('CRAVING C: low fit for a strange craving returns no match', async function() {
   const { result } = await recommendFor('purple unicorn noodles', crispyPlaces,
-    aiResponse('foursquare-generic', 'Food Leaf serves purple unicorn noodles.', 'low'));
-  assert.equal(result.merchant.merchantName, 'Food Leaf');
-  assert.equal(result.reason, 'This is the closest available fit from the nearby options.');
+    aiResponse(null, 'All targeted candidates conflict with the craving.', 'low'));
+  assert.equal(result.merchant, null, 'unsupported or invalid AI result stays empty');
 });
 
 test('CRAVING D: an AI merchant ID outside the candidates is rejected for the fallback', async function() {
   const { result } = await recommendFor('crispy chicken', crispyPlaces,
     aiResponse('foursquare-invented', 'A place I made up.', 'high'));
-  assert.ok(result.merchant && result.merchant.id !== 'foursquare-invented');
-  assert.equal(result.reason, null, 'fallback picks carry no AI reason');
+  assert.notEqual(result.merchant.id, 'foursquare-invented');
+  assert.ok(result.merchant.fromCravingSearch);
+  assert.match(result.reason, /merchant details are limited/);
 });
 
 test('CRAVING E: the AI cannot select a rejected merchant', async function() {
@@ -1416,6 +1416,8 @@ test('CRAVING E: the AI cannot select a rejected merchant', async function() {
     function() { return { rejected: ['foursquare-chicken'] }; });
   assert.ok(!seen.ids.includes('foursquare-chicken'), 'a rejected merchant is never even shown to the AI');
   assert.notEqual(result.merchant.id, 'foursquare-chicken');
+  assert.ok(result.merchant.fromCravingSearch);
+  assert.match(result.reason, /merchant details are limited/);
 });
 
 test('CRAVING F: the AI cannot bypass the Too far constraint', async function() {
@@ -1425,12 +1427,14 @@ test('CRAVING F: the AI cannot bypass the Too far constraint', async function() 
       price: null, distanceMinutes: 4, distanceMetres: 300, cuisineTags: [] }] }; });
   assert.ok(!seen.ids.includes('foursquare-chicken'), 'the 400 m merchant is removed before the AI sees it');
   assert.ok(result.merchant.distanceMetres < 300);
+  assert.ok(result.merchant.fromCravingSearch);
+  assert.match(result.reason, /merchant details are limited/);
 });
 
-test('CRAVING G: an AI exception still returns a valid fallback merchant', async function() {
+test('CRAVING G: AI failure returns a cautious targeted fallback', async function() {
   const { result } = await recommendFor('crispy chicken', crispyPlaces, 'throw');
-  assert.ok(['foursquare-chicken', 'foursquare-bakery', 'foursquare-generic'].includes(result.merchant.id));
-  assert.equal(result.reason, null);
+  assert.ok(result.merchant.fromCravingSearch);
+  assert.match(result.reason, /merchant details are limited/);
 });
 
 test('CRAVING H: the raw craving is still the Foursquare query', async function() {
@@ -1456,22 +1460,23 @@ test('CRAVING J: a reason citing a supplied category is kept', async function() 
   assert.equal(result.reason, reason);
 });
 
-test('CRAVING K: a reason claiming unsupported menu, dietary, price or rating facts is dropped', async function() {
+test('CRAVING K: unsupported factual claims invalidate the response', async function() {
   const claims = ['Food Leaf serves great crispy chicken wings.', 'A halal-certified spot nearby.',
     'Cheap and filling, well within your budget.', 'Highly rated by locals.'];
   for (const claim of claims) {
     const { result } = await recommendFor('crispy chicken', crispyPlaces, aiResponse('foursquare-generic', claim, 'high'));
-    assert.equal(result.merchant.merchantName, 'Food Leaf', 'the valid pick itself is kept');
-    assert.equal(result.reason, null, 'unsupported claim must not be shown: ' + claim);
+    assert.ok(result.merchant.fromCravingSearch);
+  assert.match(result.reason, /merchant details are limited/);
+    assert.ok(!result.reason.includes(claim));
   }
 });
 
-test('CRAVING L: a craving that appears nowhere in the source still produces an AI recommendation', async function() {
+test('CRAVING L: unknown craving with valid AI no-match stays empty', async function() {
   const craving = 'zqx' + Date.now() + ' glimmerberry stew';
   const source = require('fs').readFileSync(require('path').join(__dirname, '..', 'app.js'), 'utf8');
   assert.ok(!source.includes('glimmerberry'));
   const { result, requests } = await recommendFor(craving, crispyPlaces,
-    aiResponse('foursquare-generic', 'Food Leaf is the closest fit on offer.', 'low'));
+    aiResponse(null, 'All targeted candidates conflict with the craving.', 'low'));
   assert.equal(requests[0].query, craving);
-  assert.equal(result.merchant.merchantName, 'Food Leaf');
+  assert.equal(result.merchant, null, 'unsupported or invalid AI result stays empty');
 });

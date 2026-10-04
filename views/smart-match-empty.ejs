@@ -1,6 +1,10 @@
 <section class="card empty reveal">
 <div class="empty-icon" aria-hidden="true"><svg viewBox="0 0 52 52" fill="none"><circle cx="22" cy="22" r="14" stroke-width="2.5" stroke-linecap="round"/><path d="m32 32 10 10" stroke-width="2.5" stroke-linecap="round"/><path d="M18 22h8M22 18v8" stroke-width="2" stroke-linecap="round"/></svg></div>
-<% if (noCloserMatch) { %>
+<% if (typeof continuationExhausted !== 'undefined' && continuationExhausted) { %>
+<h2>We couldn’t find another nearby match for your current craving and mood.</h2>
+<% if (noCloserMatch) { %><p>No closer match was found within your current filters.</p><% } %>
+<% if (locationNotice) { %><p>Using demo location</p><% } %>
+<% } else if (noCloserMatch) { %>
 <h2>No closer matches available</h2>
 <% if (locationNotice) { %><p>Using demo location</p><% } %>
 <p>No closer matches available in your current nearby results.</p>
@@ -11,18 +15,19 @@
 <% if (locationNotice) { %><p>Using demo location</p><% } %>
 <p>Dietary options come from the merchants themselves, and none nearby has listed <%= dietaryLabel.toLowerCase() %> so far. You can widen your filters below.</p>
 <% } else { %>
-<h2>No spots nearby right now</h2>
+<h2>No nearby merchants clearly match your current craving and mood.</h2>
 <% if (locationNotice) { %><p>Using demo location</p><% } %>
-<p>No participating merchants match your current filters. Try adjusting below.</p>
+<p>Try searching more places or updating what you feel like eating.</p>
 <% } %>
 <% if (profile) { %>
 <div class="refine-chips refine-chips--center"><span class="refine-chip"><%= profile.dietaryPreference === 'none' ? 'Any diet' : profile.dietaryPreference %></span><span class="refine-chip">≤ $<%= profile.budget %></span><span class="refine-chip"><%= profile.maxDistanceMinutes %> min</span></div>
-<details class="refine-prefs refine-prefs--flat">
+<div class="empty-actions"><a class="text-button" href="#match-mood">Change mood</a><a class="text-button" href="#match-craving">Edit craving</a></div>
+<details open class="refine-prefs refine-prefs--flat">
 <summary class="refine-summary refine-summary--link">Adjust filters</summary>
 <div class="refine-sheet">
 <form method="POST" action="/profile" class="form-stack">
-<label class="field">Craving<input name="craving" type="text" placeholder="e.g. chicken rice, something light…" maxlength="100" autocomplete="off" value="<%= profile.craving || '' %>"></label>
-<label class="field">Mood today<select name="moodCuisine"><% moodCuisineOptions.forEach(function(opt) { %><option value="<%= opt.value %>" <%= opt.value === (profile.moodCuisine || 'any') ? 'selected' : '' %>><%= opt.label %></option><% }); %></select></label>
+<label class="field">Craving<input id="match-craving" name="craving" type="text" placeholder="e.g. chicken rice, something light…" maxlength="100" autocomplete="off" value="<%= profile.craving || '' %>"></label>
+<label class="field">Mood today<select id="match-mood" name="moodCuisine"><% moodCuisineOptions.forEach(function(opt) { %><option value="<%= opt.value %>" <%= opt.value === (profile.moodCuisine || 'any') ? 'selected' : '' %>><%= opt.label %></option><% }); %></select></label>
 <p class="field-hint">Dietary: <strong><%= dietaryLabel %></strong> · <a href="/profile/dietary">Change in Profile</a></p>
 <label class="field">Budget (max $)<input name="budget" type="number" min="1" max="100" step="1" value="<%= profile.budget %>"></label>
 <label class="field">Walking distance (max min)<input name="maxDistanceMinutes" type="number" min="1" max="60" step="1" value="<%= profile.maxDistanceMinutes %>"></label>
@@ -32,5 +37,5 @@
 </div>
 </details>
 <% } %>
-<form method="POST" action="/recommendation/widen-distance"><button class="text-button" type="submit">Widen distance by 5 minutes</button></form>
+<form method="POST" action="/recommendation/widen-distance"><button class="text-button" type="submit"><%= typeof continuationExhausted !== 'undefined' && continuationExhausted ? 'Search farther' : 'Search more places' %></button></form>
 </section>

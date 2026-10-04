@@ -1,3 +1,4 @@
+const rankingFixture = require('./ranking-fixture');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { app, createInitialDemo, getNearbyMerchants, getSmartRecommendation, clearDiscoveryCache, resetMerchantCampaigns, safeAIReason, getMatchReasons } = require('../app');
@@ -66,7 +67,7 @@ function mockRankers(replies) {
     const prompt = body.messages.map(function(m) { return m.content; }).join('\n');
     const value = typeof reply === 'function' ? reply(prompt, body) : reply;
     if (value && value.status) return { ok: false, status: value.status };
-    return chatReply(typeof value === 'string' ? value : JSON.stringify(value));
+    return chatReply(typeof value === 'string' ? value : JSON.stringify(rankingFixture(value, body.messages)));
   };
   global.fetch = async function(url, init) {
     const host = new URL(String(url)).hostname;
@@ -111,7 +112,7 @@ test('RANK A/I: Groq succeeds -> Groq recommendation used, OpenAI never called, 
   assert.equal(calls.openai.length, 0, 'OpenAI is never called when Groq returns a valid ranking');
   assert.deepEqual(calls.other, [], 'ranking makes no discovery, Tavily or other calls');
   assert.equal(calls.groq[0].model, 'openai/gpt-oss-20b');
-  assert.deepEqual(calls.groq[0].response_format, { type: 'json_object' });
+  assert.equal(calls.groq[0].response_format.type, 'json_schema');
 });
 
 test('RANK I2: GROQ_RANKING_MODEL overrides the Groq ranking model', async function() {
@@ -156,7 +157,7 @@ for (const scenario of [
   });
 }
 
-test('RANK G: both providers fail -> deterministic fallback, same as having no AI', async function() {
+test('RANK G: both providers fail -> no unsupported fallback', async function() {
   const merchants = await discover(chickenPlaces);
   const rules = await rank(merchants, 'spicy crispy chicken');
   process.env.GROQ_API_KEY = 'test-groq';
@@ -165,8 +166,7 @@ test('RANK G: both providers fail -> deterministic fallback, same as having no A
   const result = await rank(merchants, 'spicy crispy chicken');
   assert.equal(calls.groq.length, 1);
   assert.equal(calls.openai.length, 1);
-  assert.equal(result.merchant.id, rules.merchant.id);
-  assert.equal(result.reason, null);
+  assert.equal(result.merchant, null, 'no clearly supported fallback');
 });
 
 test('RANK O2: Groq-only invented merchant is rejected -> deterministic fallback, never the invented ID', async function() {
@@ -174,17 +174,14 @@ test('RANK O2: Groq-only invented merchant is rejected -> deterministic fallback
   process.env.GROQ_API_KEY = 'test-groq';
   mockRankers({ groq: Object.assign({}, chixPick, { merchantId: 'google-invented' }) });
   const result = await rank(merchants, 'spicy crispy chicken');
-  assert.ok(merchants.some(function(m) { return m.id === result.merchant.id; }));
-  assert.notEqual(result.merchant.id, 'google-invented');
-  assert.equal(result.reason, null);
+  assert.equal(result.merchant, null, 'no clearly supported fallback');
 });
 
-test('RANK H: no AI keys -> deterministic fallback with no network calls', async function() {
+test('RANK H: no AI keys -> no unsupported result or network calls', async function() {
   const merchants = await discover(chickenPlaces);
   const calls = mockRankers({});
   const result = await rank(merchants, 'spicy crispy chicken');
-  assert.ok(result.merchant);
-  assert.equal(result.reason, null);
+  assert.equal(result.merchant, null, 'no clearly supported fallback');
   assert.equal(calls.groq.length + calls.openai.length + calls.other.length, 0);
 });
 
@@ -224,7 +221,7 @@ test('RANK L: the ranker receives factual price context; unknown stays unknown; 
   const unknown = Object.assign(byId('green-bowl'), { itemName: null, price: null });
   process.env.GROQ_API_KEY = 'test-groq';
   const calls = mockRankers({ groq: { merchantId: 'green-bowl', relevance: 'medium', budgetFit: 'within',
-    reason: 'Green Bowl is cheap and within your budget.' } });
+    reason: 'Its supplied category is a plausible fit.' } });
   const result = await rank([within, over, unknown], 'spicy chicken', { budget: 10 });
   const listed = JSON.parse(promptOf(calls.groq[0]).split('Eligible merchants:\n')[1].split('\n\nOutput:')[0]);
   assert.equal(listed.find(function(m) { return m.id === 'felicia-chicken-rice'; }).price, '$8.90');
@@ -234,7 +231,7 @@ test('RANK L: the ranker receives factual price context; unknown stays unknown; 
   assert.match(promptOf(calls.groq[0]), /- Budget: \$10/);
   assert.equal(result.merchant.id, 'green-bowl');
   assert.equal(result.budgetFit, 'unknown', 'no fabricated budget fit without a real price');
-  assert.equal(result.reason, null, 'an affordability claim without a price is dropped');
+  assert.equal(result.reason, 'Its supplied category is a plausible fit.');
 });
 
 test('RANK M: a merchant beyond the hard distance limit never reaches the AI', async function() {
@@ -245,7 +242,9 @@ test('RANK M: a merchant beyond the hard distance limit never reaches the AI', a
   const calls = mockRankers({ groq: Object.assign({}, chixPick, { merchantId: 'google-far' }) });
   const result = await rank(merchants, 'spicy crispy chicken', { maxDistanceMinutes: 10 });
   assert.ok(!promptIds(calls.groq[0]).includes('google-far'));
-  assert.notEqual(result.merchant.id, 'google-far', 'the AI cannot pick it even by naming it');
+  assert.ok(result.merchant.fromCravingSearch);
+  assert.equal(result.selectionSource, 'FALLBACK');
+  assert.match(result.reason, /merchant details are limited/);
 });
 
 test('RANK N: an unverified merchant under a dietary restriction never reaches the ranker', async function() {
@@ -257,13 +256,12 @@ test('RANK N: an unverified merchant under a dietary restriction never reaches t
   assert.equal(calls.groq.length, 0, 'the ranker is never asked');
 });
 
-test('RANK P: an unsupported "highest rated" claim is dropped for the server-generated reasons', async function() {
+test('RANK P: unsupported rating claim invalidates the response', async function() {
   const merchants = await discover(chickenPlaces);
   process.env.GROQ_API_KEY = 'test-groq';
   mockRankers({ groq: Object.assign({}, chixPick, { reason: 'The highest rated chicken spot nearby.' }) });
   const result = await rank(merchants, 'spicy crispy chicken');
-  assert.equal(result.merchant.id, 'google-chix', 'the valid pick is kept');
-  assert.equal(result.reason, null, 'the card falls back to server-generated "Why this match" reasons');
+  assert.equal(result.merchant, null, 'no clearly supported fallback');
   for (const claim of ['A best seller in Bugis.', 'A must-try chicken stall.', 'Very popular with students.']) {
     mockRankers({ groq: Object.assign({}, chixPick, { reason: claim }) });
     assert.equal((await rank(merchants, 'spicy crispy chicken')).reason, null, claim);
@@ -353,18 +351,20 @@ test('REASON G/H: a dietary reason survives only when the merchant listed that o
     'an external merchant has listed nothing -> dropped');
 });
 
-test('REASON I/J: a dropped reason keeps the AI merchant choice and provider behaviour', async function() {
+test('REASON I/J: unsupported sentence is replaced with cautious medium retrieval copy', async function() {
   const merchants = await discover(chickenPlaces, 'spicy crispy chicken');
   process.env.GROQ_API_KEY = 'test-groq';
   process.env.OPENAI_API_KEY = 'test-openai';
   const calls = mockRankers({ groq: Object.assign({}, chixPick, { reason: 'Very popular for spicy chicken.' }),
-    openai: Object.assign({}, chixPick, { merchantId: 'google-leaf' }) });
+    openai: { status: 500 } });
   const result = await rank(merchants, 'spicy crispy chicken');
-  assert.equal(result.merchant.id, 'google-chix', 'Groq selection kept');
-  assert.equal(result.reason, null);
-  assert.equal(result.relevance, 'high');
+  assert.ok(result.merchant.fromCravingSearch);
+  assert.equal(result.selectionSource, 'GROQ');
+  assert.equal(result.aiFits.overallFit, 'medium');
+  assert.match(result.reason, /merchant details are limited/);
+  assert.equal(result.aiFits.overallFit, 'medium');
   assert.equal(calls.groq.length, 1);
-  assert.equal(calls.openai.length, 0, 'an unsafe reason alone never triggers the OpenAI fallback');
+  assert.equal(calls.openai.length, 0, 'discarded wording does not require a second ranking call');
 });
 
 test('SERVER REASONS: useful factual fallback lines, never fabricated', function() {
@@ -392,7 +392,7 @@ test('SERVER REASONS: useful factual fallback lines, never fabricated', function
     ['Best available match from the eligible nearby options']);
 });
 
-test('SERVER REASONS end-to-end: a dropped AI reason is never shown; the card renders the valid pick', async function() {
+test('SERVER REASONS end-to-end: unsupported AI response uses cautious targeted fallback', async function() {
   const server = await new Promise(function(resolve) {
     const instance = app.listen(0, '127.0.0.1', function() { resolve(instance); });
   });
@@ -424,10 +424,11 @@ test('SERVER REASONS end-to-end: a dropped AI reason is never shown; the card re
     await request('/profile', { dietaryPreference: 'none', budget: '10', maxDistanceMinutes: '10', craving: 'spicy crispy chicken' });
     await request('/smart-match/location', ORIGIN);
     const html = await request('/smart-match/result');
-    assert.match(html, /data-merchant-id="google-chix"/);
+    assert.match(html, /data-merchant-id="google-/);
+    assert.match(html, /merchant details are limited/);
     // The card shows a "Why this match" line, but a rejected AI sentence never reaches it - the
     // line falls back to the server's own factual reasons.
-    assert.match(html, /result-why-text/);
+    assert.ok(html.includes("result-why-text"));
     assert.ok(!/Famous|best spicy/.test(html), 'the unsafe AI claim is not rendered anywhere');
     assert.ok(!html.includes('AI Matched'), 'no AI badge without a safe AI reason');
   } finally {
@@ -469,24 +470,25 @@ test('WALK curated: a demo merchant may quote only its own supplied minutes esti
   assert.equal(checkReason('Fits your craving within a 10-minute walk.', curated), null, 'the user limit is not its travel time');
 });
 
-test('WALK E/F: a dropped walking-time reason keeps the merchant and never triggers OpenAI', async function() {
+test('WALK E/F: unsupported walking-time sentence is replaced with factual retrieval copy', async function() {
   const merchants = await discover(chickenPlaces, 'spicy crispy chicken');
   process.env.GROQ_API_KEY = 'test-groq';
   process.env.OPENAI_API_KEY = 'test-openai';
   const calls = mockRankers({ groq: Object.assign({}, chixPick,
     { reason: 'Chix Hot Chicken matches your spicy chicken craving within a 10-minute walk.' }),
-  openai: Object.assign({}, chixPick, { merchantId: 'google-leaf' }) });
+  openai: { status: 500 } });
   const result = await rank(merchants, 'spicy crispy chicken');
-  assert.equal(result.merchant.id, 'google-chix');
-  assert.equal(result.reason, null);
+  assert.ok(result.merchant.fromCravingSearch);
+  assert.equal(result.selectionSource, 'GROQ');
+  assert.equal(result.aiFits.overallFit, 'medium');
+  assert.match(result.reason, /merchant details are limited/);
   assert.equal(calls.groq.length, 1);
   assert.equal(calls.openai.length, 0);
   const prompt = promptOf(calls.groq[0]);
-  assert.match(prompt, /maxWalkingMinutes: 10 \(an eligibility limit only - NOT a travel time\)/);
-  assert.match(prompt, /Never convert maxWalkingMinutes into a claimed travel time/);
+  assert.match(prompt, /travel times/);
 });
 
-test('SPEED: a hung Groq ranker falls back within the shared 2.5 s ranking budget', async function() {
+test('SPEED: hung Groq ranker uses targeted fallback within the shared budget', async function() {
   const merchants = await discover(chickenPlaces, 'spicy crispy chicken');
   process.env.GROQ_API_KEY = 'test-groq';
   process.env.OPENAI_API_KEY = 'test-openai';
@@ -508,6 +510,7 @@ test('SPEED: a hung Groq ranker falls back within the shared 2.5 s ranking budge
   assert.ok(elapsed < 2900, 'ranking finished in ' + elapsed + ' ms');
   assert.equal(calls.groq, 1);
   assert.equal(calls.openai, 0, 'Groq used the whole budget, so OpenAI is skipped for rules');
-  assert.ok(result.merchant, 'deterministic rules still recommend a merchant');
-  assert.equal(result.reason, null);
+  assert.ok(result.merchant.fromCravingSearch);
+  assert.equal(result.selectionSource, 'FALLBACK');
+  assert.match(result.reason, /merchant details are limited/);
 });

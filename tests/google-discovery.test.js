@@ -1,3 +1,4 @@
+const rankingFixture = require('./ranking-fixture');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -93,7 +94,7 @@ function mockProviders(options) {
       calls.openai.push(body);
       if (!options.openai) return { ok: false, status: 500 };
       return { ok: true, json: async function() {
-        return { choices: [{ message: { content: JSON.stringify(options.openai) } }] };
+        return { choices: [{ message: { content: JSON.stringify(rankingFixture(options.openai, body.messages)) } }] };
       } };
     }
     return { ok: false, status: 404 };
@@ -195,6 +196,7 @@ test('GOOGLE E: a Text Search result beyond the walking limit is excluded before
   assert.ok(!JSON.stringify(calls.openai[0]).includes('google-far'), 'the AI never sees the 975 m merchant');
   assert.notEqual(result.merchant.id, 'google-far');
   assert.ok(result.merchant.distanceMetres <= 400);
+  assert.equal(result.selectionSource, 'FALLBACK');
 });
 
 test('GOOGLE F: a place whose primaryType is food_court is excluded as a container', async function() {

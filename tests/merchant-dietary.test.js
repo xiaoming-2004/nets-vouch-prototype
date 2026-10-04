@@ -1,3 +1,4 @@
+const rankingFixture = require('./ranking-fixture');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { app, demoStore, createInitialDemo, getNearbyMerchants, getSmartRecommendation, getEligibleMerchants,
@@ -320,8 +321,8 @@ test('DIET 9: unrelated Smart Match ranking still works with no dietary preferen
     if (new URL(String(url)).hostname === 'api.openai.com') {
       rankPrompt = body.messages.map(function(m) { return m.content; }).join('\n');
       return { ok: true, json: async function() {
-        return { choices: [{ message: { content: JSON.stringify({ merchantId: 'google-a', relevance: 'high',
-          budgetFit: 'unknown', reason: 'Its Chicken Restaurant category fits your craving.' }) } }] };
+        return { choices: [{ message: { content: JSON.stringify(rankingFixture({ merchantId: 'google-a', relevance: 'high',
+          budgetFit: 'unknown', reason: 'Its Chicken Restaurant category fits your craving.' }, body.messages)) } }] };
       } };
     }
     return withRanker(url, init);

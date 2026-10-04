@@ -1,3 +1,4 @@
+const rankingFixture = require('./ranking-fixture');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createInitialDemo, getNearbyMerchants, getSmartRecommendation, isMealMerchant, clearDiscoveryCache, clearSearchIntentCache, resetMerchantCampaigns } = require('../app');
@@ -60,7 +61,7 @@ function mockGoogleAndGroq(options) {
       const prompt = body.messages.map(function(m) { return m.content; }).join('\n');
       const reply = typeof options.groq === 'function' ? options.groq(prompt) : options.groq;
       if (!reply) return { ok: false, status: 500 };
-      return { ok: true, json: async function() { return { choices: [{ message: { content: JSON.stringify(reply) } }] }; } };
+      return { ok: true, json: async function() { return { choices: [{ message: { content: JSON.stringify(rankingFixture(reply, body.messages)) } }] }; } };
     }
     return { ok: false, status: 404 };
   };
@@ -92,7 +93,7 @@ function googleMerchant(primaryType, types, extra) {
 test('MEAL A-D: cafe, bakery, coffee_shop and dessert/drink primary types are not meal merchants', function() {
   // coffee_shop is covered separately: the Singapore exception makes it MEAL with meal-service evidence.
   assert.equal(isMealMerchant(googleMerchant('coffee_shop', ['coffee_shop', 'cafe'])), false);
-  for (const type of ['cafe', 'bakery', 'dessert_shop', 'pastry_shop', 'dessert_restaurant',
+  for (const type of ['cafe', 'dessert_shop', 'pastry_shop', 'dessert_restaurant',
     'ice_cream_shop', 'juice_shop', 'tea_house', 'convenience_store', 'store']) {
     assert.equal(isMealMerchant(googleMerchant(type, [type, 'restaurant'])), false, type);
   }
@@ -136,7 +137,7 @@ test('MEAL nearby request: meal-oriented included types; cafes/bakeries excluded
   };
   await getNearbyMerchants(ORIGIN, 'jia', '', 10);
   assert.deepEqual(captured[0].includedTypes, ['restaurant', 'fast_food_restaurant', 'meal_takeaway']);
-  for (const type of ['cafe', 'bakery', 'food_court', 'shopping_mall']) {
+  for (const type of ['cafe', 'food_court', 'shopping_mall']) {
     assert.ok(captured[0].excludedPrimaryTypes.includes(type), type);
   }
   assert.ok(!captured[0].excludedPrimaryTypes.includes('coffee_shop'),
@@ -180,7 +181,7 @@ test('MEAL K: "spicy chicken" - a bakery is filtered before the ranker', async f
     groq: { merchantId: 'google-chix', relevance: 'high', budgetFit: 'unknown', reason: 'Fits your spicy chicken craving.' }
   });
   const ids = listedCandidates(calls.groq[0]).map(function(m) { return m.id; });
-  assert.ok(!ids.includes('google-bake'));
+  assert.ok(ids.includes('google-bake'), 'bakery is classified semantically rather than pre-excluded');
   assert.ok(ids.includes('google-chix') && ids.includes('google-generic'));
 });
 
@@ -192,8 +193,8 @@ test('MEAL K2: a Text Search full of non-meal places triggers the broad Nearby f
   });
   assert.equal(calls.nearby, 1, 'zero usable meal merchants from Text Search -> one Nearby fallback');
   assert.deepEqual(listedCandidates(calls.groq[0]).map(function(m) { return m.id; }), ['google-meal']);
-  assert.equal(result.merchant.id, 'google-meal');
-  assert.equal(result.reason, 'This is the closest available fit from the nearby options.', 'low relevance stays conservative');
+  assert.equal(result.merchant, null, 'no supplied facts support spicy chicken without AI');
+  assert.equal(result.reason, null, 'low fit stays empty');
 });
 
 test('MEAL L: an arbitrary craving reaches Google and Groq verbatim', async function() {
@@ -215,7 +216,7 @@ test('MEAL M: an excluded cafe ID returned by the ranker is rejected, never reco
   });
   assert.equal(calls.groq.length, 1);
   assert.notEqual(result.merchant.id, 'google-cafe', 'invalid candidate -> rules fallback over meal merchants only');
-  assert.equal(result.reason, null);
+  assert.match(result.reason, /search; merchant details are limited/);
 });
 
 test('MEAL rules fallback: without AI keys a nearer cafe still never wins', async function() {
@@ -253,10 +254,10 @@ test('MEAL FSQ: cafes/bakeries excluded, restaurants and stalls inside container
   const demo = createInitialDemo('jia');
   const nearby = await getNearbyMerchants(ORIGIN, 'jia', '', 10);
   const meal = nearby.merchants.filter(isMealMerchant).map(function(m) { return m.id; }).sort();
-  assert.deepEqual(meal, ['foursquare-rest', 'foursquare-stall'], 'primary category decides');
+  assert.deepEqual(meal, ['foursquare-bakery', 'foursquare-rest', 'foursquare-stall'], 'primary category decides');
   assert.ok(!nearby.merchants.some(function(m) { return m.id === 'foursquare-court'; }), 'container removed at discovery');
   const result = await getSmartRecommendation(demo.profile, nearby.merchants, [], [], demo, []);
-  assert.ok(['foursquare-rest', 'foursquare-stall'].includes(result.merchant.id));
+  assert.ok(['foursquare-bakery', 'foursquare-rest', 'foursquare-stall'].includes(result.merchant.id));
 });
 
 test('MEAL curated demo merchants all remain meal merchants', async function() {
