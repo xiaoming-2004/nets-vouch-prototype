@@ -11,9 +11,13 @@
     "test:browser-js": "node --check public/js/script.js"
   },
   "dependencies": {
+    "@ai-sdk/groq": "^4.0.76",
     "@upstash/redis": "^1.39.0",
+    "ai": "^7.0.162",
     "ejs": "^6.0.1",
-    "express": "^5.2.1",
-    "express-session": "^1.19.0"
+    "express": "^5.3.0",
+    "express-session": "^1.19.0",
+    "mysql2": "^3.24.6",
+    "zod": "^4.6.7"
   }
 }

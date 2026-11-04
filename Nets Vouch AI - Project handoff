@@ -1,0 +1,107 @@
+**NETS Vouch AI — Project Handoff**  
+  
+**Prepared:** 1 November 2026  
+**Project:** Team Capital 6, Republic Polytechnic Diploma in Financial Technology  
+**Context:** PolyFinTech100 API Hackathon 2026 NETS PayTech category (Merit Award); continuing toward RP Open House and iDare.  
+**Purpose:** A single working reference for the concept, prototype, lecturer feedback, technical reality, and next milestones. No team task allocation is included.  
+  
+**1. Challenge and product idea**  
+  
+NETS challenged the team to make its app more relevant and preferred for Gen Z and Millennials. The business outcome is deliberate NETS usage and additional transactions, rather than merely more app opens. NETS is widely available, but availability alone does not make it the payment method someone chooses.  
+  
+The original sharp idea was **“One payment creates the next.”** After a completed NETS payment, a customer can optionally send a one-tap, payment-verified recommendation to someone they know. That friend may discover the merchant, see an eligible merchant-funded offer, and choose to pay with NETS. The intended loop is **payment → Vouch → trusted friend recommendation → merchant consideration → eligible NETS payment**. Vouching happens after payment and is optional. The sender’s endorsement is their own opinion; verification establishes a qualifying payment, not the quality of the restaurant. Shared material should not expose the amount, receipt, or payment details.  
+  
+The later prototype expanded this into **NETS Vouch AI**: help Jia decide where to eat, pay via a simulated NETS journey, earn merchant-specific Vouch Credit, optionally Vouch, and allow Darren to claim a shared offer that becomes eligible only after his own qualifying payment. A merchant dashboard configures campaigns and displays illustrative and demo outcomes. There is no preorder or collection flow in the current concept.  
+  
+The product question still needs a convincing answer: why would someone open this instead of Maps or a chat with friends? A promising specific use case is a student with a limited lunch break, budget, dietary needs, and an intended dining time who needs three credible options with travel and usual activity information. Historical transaction counts can suggest when an outlet is *usually* quieter relative to itself; they do not establish live queue length or seating availability. The idea that this changes NETS preference remains a hypothesis to test.  
+  
+**2. What the ZIP and deployed site show**  
+  
+The supplied archive is nets-vouch-prototype 17.zip; the public prototype was reviewed at https://nets-vouch-prototype-silk.vercel.app/welcome on 31 October 2026. The ZIP contains a Node.js/Express 5 backend, EJS views, vanilla browser JavaScript/CSS, session handling, merchant and recommendation logic, and automated tests. Its README contains older statements about providers and persistence, so current code and deployment behaviour take precedence over that README.  
+  
+**Current user flow:** Welcome → Home/Smart Match → choose or reject → Scan merchant QR or select a demo merchant → enter actual amount and simulate payment → optional Vouch → share/claim → profile activity and rewards. The merchant view includes dietary declarations, campaign settings, QR, results, and report. The UI labels payments and merchant offers as simulated.  
+  
+**Live observations:** Smart Match recommended a real Subway listing 21 m from the RP demo location with a simulated Vouch Credit and Vouch count. Selecting “Too far” led to a no-closer-match dead end. The Scan page showed “Unable to play media / Camera unavailable” in the review browser, while a demo merchant selector remained available. A $6.50 simulated payment at Felicia’s Chicken Rice returned to Scan without a success receipt; Activity still showed no payments, and merchant Results showed one QR scan and zero completed payments. This reproduces a symptom, not its root cause. The customer Profile exposed a Reset Demo action labelled as resetting the Open House demo for everyone. Merchant Results distinguished seven days of sample history from live demo activity.  
+  
+**Code observations:** app.js contains routes and backend logic for search, rejection, scan/payment, Vouch, shared offer claims, profile, and merchant pages. The payment POST redirects to /scan if its journey ID does not match the current session; that is one plausible cause of the observed failure, pending a controlled reproduction. Some session data can be stored in Upstash Redis when configured; otherwise Express MemoryStore is used. Shared offers, referral cooldowns, discovery caches, and other shared state use in-process Maps in parts of the app. These are vulnerable to process restarts and multiple server instances. The ZIP alone cannot prove which environment variables or services are active on Vercel.  
+  
+**AI code:** The current source defines an LLM search-intent provider using the **Groq API** (GROQ_API_KEY) and defaults to openai/gpt-oss-20b unless overridden. Ranking tries Groq first, then an OpenAI provider if configured, then deterministic fallback if no valid LLM result is available. It validates the returned merchant ID against candidate merchants. Other research calls and Google place discovery also appear in the code. **Groq** is the inference provider; **Grok** is a different model/product. Confirm the actual deployed model and successful calls using safe diagnostics before making publicity claims. The code shows prompt-based LLM inference and feedback passed into ranking; it does not demonstrate reinforcement learning or a separately trained preference predictor.  
+  
+**Data caution:** The ZIP includes a .env file; keep it private, exclude it from future archives, and rotate exposed credentials if that ZIP was shared beyond the team. No secrets are reproduced here.  
+  
+**3. Jolene Chiam’s feedback, accurately understood**  
+  
+Jolene asked whether the project is NETS Vouch or NETS Vouch AI, what AI model actually runs, and whether Smart Match involves a predictive model rather than ordinary matching. She said an LLM that merely writes a Vouch is an optional extra, not a convincing core value. She wants a useful pain point, current technology, and a clear “wow factor” for publicity and for development through Open House and iDare. She asked whether the team used reinforcement learning or only prompt instructions, whether concepts from an AI module were applied, whether the MVP has a backend/database, and where user profiles and accept/reject feedback live. Ethan described it as frontend with mock data, which understates the supplied ZIP’s Express backend and LLM integration code. The deployed capabilities still need verification.  
+  
+Her suggested six stages are the working build order:  
+  
+	1.	**Sample data:** Ten fictional restaurants with cuisine, location, typical meal price, and labelled simulated transaction counts by time slot.  
+	2.	**Usual activity:** Average counts for each restaurant by weekday and time slot, compared with that restaurant’s own typical activity. Say “usually quieter at 2 pm,” not “live queue is short.”  
+	3.	**Recommendation API:** Accept budget, location, cuisine preference, and intended dining time; filter unsuitable places and rank the rest; show three suitable options.  
+	4.	**Feedback persistence:** Save “Too expensive,” “Too far,” “Not this cuisine,” and “Just not today” against a demo profile. The next results should change appropriately and preferences should survive refresh.  
+	5.	**Natural-language AI:** Convert “Something light nearby under $10” into structured criteria, validate them, send them to the recommendation API, and show a short grounded explanation. Jolene called it Grok; the present code uses Groq, so choose and name the actual provider/model precisely.  
+	6.	**Google Maps:** Add real place lookup and travel information after the core recommendation flow works.  
+  
+Her publicity drafts describe the Merit Award and the journey from discovery through offers, payment and social recommendation. Their descriptions of Smart Match are proposed capability until the deployed implementation is validated. Do not describe simulated transaction traffic as real NETS terminal data.  
+  
+**4. Functional requirements for the next version**  
+  
+**A. Reliable demo data and persistence**  
+  
+	●	Store a stable demo user ID, preferences, search requests, shown/accepted/rejected recommendations, rejection reasons, merchant records, sample transaction counts, and simulated payment/Vouch records.  
+	●	Keep each user’s state separate. Preferences and feedback survive refresh and a server restart. A database is appropriate for durable shared records; Redis sessions alone do not cover every in-memory record currently used.  
+	●	Mark fictional merchants, sample counts, illustrative campaigns, and simulated payments clearly. Do not attach invented NETS participation, prices, dietary assurances, or Vouch counts to real Google businesses.  
+	●	Define a simple shared schema and API contract before connecting the frontend. Store timestamps and the relevant merchant/user IDs for traceability.  
+  
+**B. Recommendation and usual activity**  
+  
+	●	Search accepts a demo origin, budget, cuisine or food preference, dietary requirement, intended day/time, and maximum travel constraint.  
+	●	Apply hard constraints first. Do not suggest a known over-budget or incompatible merchant. Treat missing price/diet data as unknown rather than confirmed suitable.  
+	●	Calculate average transaction counts for each fictional merchant at comparable weekday/time slots, then compare against that merchant’s own baseline. Explain the sample period and avoid live busyness claims.  
+	●	Return up to three ranked candidates with name, cuisine, typical price, location/travel measure, usual activity, and a factual reason. Explain clearly when fewer than three qualify and offer useful filter adjustments.  
+	●	“Too expensive” should favour cheaper eligible candidates; “Too far” should favour closer ones; “Not this cuisine” should change cuisine fit; “Just not today” should be temporary. Rejecting a 21 m result should never silently imply that a faraway place is better.  
+  
+**C. AI integration and honest claims**  
+  
+	●	An AI API key on the backend can call an existing LLM. The key is a credential, not a model. The model interprets natural-language requests; the app validates its structured output and searches known merchant records.  
+	●	Use the model to explain trade-offs only from the returned facts. Do not allow it to invent prices, availability, route times, or queue lengths.  
+	●	Record a private diagnostic for whether Groq, the alternate provider, or deterministic fallback answered each request. The user should still get a usable result during API failure.  
+	●	The current approach is **LLM inference plus rules and saved feedback**. “Learns preferences” means the application updates stored preferences or ranking inputs. Do not claim reinforcement learning or model retraining. A future trained predictor is optional and should be evaluated against a simple baseline if built.  
+  
+**D. Maps and travel**  
+  
+	●	Use the RP demo origin as a reliable fallback. Distinguish straight-line metres from route-based walking minutes. Google Maps directions links alone do not prove walking-time calculation.  
+	●	Keep fictional demo merchant coordinates and travel labels coherent. Real place lookup can be a separate, clearly labelled mode once merchant participation, price, dietary evidence, and mapping are handled.  
+  
+**E. Payment, Vouch, and merchant outcome**  
+  
+	●	A simulated payment has a visible success or error outcome, creates exactly one durable transaction, updates Activity and merchant results, and applies eligible merchant credit once. A missing or stale journey should show a recoverable explanation rather than silently returning to Scan.  
+	●	A Vouch is optional after a qualifying completed payment and limited to one per transaction. A share/claim alone gives no reward; any recipient reward requires an eligible payment at the linked merchant. Shared links and campaign counters must survive normal deployment behaviour.  
+	●	The merchant dashboard must distinguish sample history, observed demo actions, and attributed conversions. A reset affecting all users belongs in a protected demo control, not an ordinary customer profile.  
+  
+**5. Suggested milestones and proof**  
+  
+**Milestone 1 — Jolene’s steps 1–4:** Ten fictional merchants and sample counts are stored; API returns three grounded choices; rejection changes the next choice; refresh/restart preserves feedback. Demonstrate with one request such as “rice under $10 at 1 pm” and one rejection. This is a complete useful slice without relying on external AI or Maps.  
+  
+**Milestone 2 — step 5:** Natural language is parsed into visible/editable criteria. Show the actual provider/model in private diagnostics and compare a successful AI request with the deterministic fallback. Make no claim that prompts alone retrain a model.  
+  
+**Milestone 3 — step 6:** Add accurate routing and relevant location information, retaining the fixed RP demo mode. Test a route failure gracefully.  
+  
+**Milestone 4 — full NETS Vouch loop:** Repair and persist simulated payment → optional verified Vouch → share/claim → second eligible payment → merchant attribution. Demonstrate both Jia and Darren without manual data repair.  
+  
+**Milestone 5 — Open House/iDare learning:** Ask users whether three choices save time and whether usual activity affects decisions; test merchant interest; measure completion, meaningful acceptance/rejection, successful payment/Vouch flow, and eventually incremental NETS transactions in a real pilot. Research supports the proposed mechanism; a pilot is needed to establish the outcome.  
+  
+**6. Open questions to resolve with evidence**  
+  
+	●	Which exact source version is deployed, and which API keys and Redis settings are active? Never disclose key values.  
+	●	Why did the reviewed payment return to Scan without recording a transaction?  
+	●	Do current distance and budget filters use reliable merchant facts, and which ranking provider answered the observed Subway result?  
+	●	Can any real NETS payment event be linked to user and merchant/outlet identity for verification? The prototype currently simulates payments; QR merchant identification alone does not verify one.  
+	●	Which credit and referral incentives are worth their merchant cost, and does Vouch cause incremental NETS choice rather than just attributing an existing visit?  
+	●	Should publicity say “NETS Vouch AI” now, or describe the AI roadmap while naming the current tested functionality? Base wording on a deployed end-to-end demonstration.  
+  
+**7. A precise current description**  
+  
+> NETS Vouch AI is a prototype that explores food recommendations, simulated NETS payments and payment-linked friend referrals. Its Express backend includes optional LLM calls through Groq, rule-based fallback recommendations and demo session storage. The next version will use clearly labelled sample merchant and transaction data to show three suitable choices and typical activity by dining time, save feedback reliably, and demonstrate the complete payment-to-Vouch journey. Real NETS transaction integration and an effect on payment preference have not yet been established.  
+  
+This file records the supplied archive, the live review, and Jolene’s quoted feedback as of 1 November 2026. Recheck the implementation and deployment before treating any proposed feature as complete.  

@@ -4,6 +4,7 @@ const session = require('express-session');
 const path = require('path');
 const { randomUUID } = require('node:crypto');
 const { Redis } = require('@upstash/redis');
+const mysql = require('mysql2/promise');
 // Smart Match RESULT presentation only (photo, demo Vouch count, walking map) - no matching logic.
 const smartMatchResult = require('./smart-match-result');
 // Smart Match request deadline (AsyncLocalStorage) and the shared dietary-evidence store.
@@ -15,6 +16,10 @@ try {
 } catch (error) {
   if (error.code !== 'ENOENT') throw error;
 }
+
+// FIXED: Corrected relative path to load db.js from the Database folder
+const db = require('./Database/db');
+const { getAgentRecommendations } = require('./nets_agent');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -74,10 +79,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 // One Upstash Redis client (when configured) shared by the session store and the dietary-evidence
 // research store. Without it: MemoryStore sessions and memory-only research evidence.
 function createUpstashClient() {
-  // Strip UTF-8 BOM (﻿) that PowerShell echo can prepend when piping to vercel env add.
-  const url   = (process.env.UPSTASH_REDIS_REST_URL   || '').replace(/^﻿/, '').trim();
-  const token = (process.env.UPSTASH_REDIS_REST_TOKEN || '').replace(/^﻿/, '').trim();
-  return url && token ? new Redis({ url, token }) : null;
+  // HACKATHON FIX: Bypass Upstash Redis locally to prevent Node.js fetch polyfill crashes (res.text is not a function).
+  // The app will gracefully fall back to the native MemoryStore for the local demo.
+  return null;
 }
 const upstashRedis = createUpstashClient();
 
@@ -238,6 +242,51 @@ const fallbackMerchants = [
     dietary: ['halal'],
     distanceMinutes: 7,
     coordinates: { latitude: 1.4444, longitude: 103.7828 },
+    source: 'local-fallback',
+    available: true
+  },
+  {
+    id: merchants.toastAndCo.id,
+    merchantId: merchants.toastAndCo.id,
+    merchantName: merchants.toastAndCo.name,
+    name: merchants.toastAndCo.name,
+    itemName: 'Kaya Toast Set',
+    price: 4.50,
+    category: 'bakery',
+    address: merchants.toastAndCo.outlet,
+    dietary: ['vegetarian', 'halal'],
+    distanceMinutes: 3,
+    coordinates: { latitude: 1.4420, longitude: 103.7845 },
+    source: 'local-fallback',
+    available: true
+  },
+  {
+    id: 'uncle-lim-soup',
+    merchantId: 'uncle-lim-soup',
+    merchantName: 'Uncle Lim Herbal Soup',
+    name: 'Uncle Lim Herbal Soup',
+    itemName: 'Chicken Herbal Soup',
+    price: 6.50,
+    category: 'soup',
+    address: 'Woodlands Demo Outlet',
+    dietary: ['halal'],
+    distanceMinutes: 5,
+    coordinates: { latitude: 1.4435, longitude: 103.7850 },
+    source: 'local-fallback',
+    available: true
+  },
+  {
+    id: 'fusion-pasta',
+    merchantId: 'fusion-pasta',
+    merchantName: 'Fusion Pasta',
+    name: 'Fusion Pasta',
+    itemName: 'Mushroom Aglio Olio',
+    price: 9.50,
+    category: 'pasta',
+    address: 'Woodlands Demo Outlet',
+    dietary: ['vegetarian'],
+    distanceMinutes: 7,
+    coordinates: { latitude: 1.4440, longitude: 103.7865 },
     source: 'local-fallback',
     available: true
   }
@@ -704,26 +753,30 @@ function registerDemoMerchant(merchant) {
   if (!merchantCampaignStore.some(function(campaign) { return campaign.merchantId === merchant.id; })) {
     merchantCampaignStore.push(createDemoCampaign(merchant.id, 'DEMO_SIMULATED'));
   }
-}
-
-// Module-level location fallback for a cold-started instance, keyed by session ID.
-// Transactions deliberately have NO module-level cache: the owning session is the only source of
-// truth, so ownership, isolation and Reset Demo invalidation cannot be bypassed.
-const locationCache = new Map();    // sessionId → {latitude, longitude}
-
-// Per-merchant hourly transaction weights (hours 0-23, relative values, normalised at render time).
-const MERCHANT_HOURLY_PROFILES = {
-  'felicia-chicken-rice': [0,0,0,0,0,0,1,2,3,4,8,10,9,7,4,3,2,2,3,2,1,0,0,0],
-  'green-bowl':           [0,0,0,0,0,0,0,1,3,5,8,10,8,6,5,4,3,2,2,1,1,0,0,0],
-  'woodlands-noodle-bar': [0,0,0,0,0,0,0,1,2,3,7,10,8,6,3,2,2,2,3,3,2,1,0,0],
-  'northside-wraps':      [0,0,0,0,0,0,0,1,3,5,7,9,10,8,6,4,3,3,4,3,2,1,0,0],
-  'spice-lane':           [0,0,0,0,0,0,0,0,1,2,4,7,10,8,4,3,3,4,6,8,7,5,2,0],
-};
-const DEFAULT_HOURLY_PROFILE =  [0,0,0,0,0,0,0,1,2,3,6,10,8,5,4,3,3,4,5,4,2,1,0,0];
-const HEATMAP_DAY_WEIGHTS = [0.70, 0.62, 0.76, 0.82, 1.00, 0.92, 0.50];
-
-function getMerchantHourlyProfile(merchantId) {
-  return MERCHANT_HOURLY_PROFILES[merchantId] || DEFAULT_HOURLY_PROFILE;
+  // Save API-discovered merchants (Google Places / Foursquare) into MySQL merchants table for future AI retrieval
+  const rewardCfg = getRewardConfig(merchant.id);
+  const caps = merchantDietaryCapabilities(merchant);
+  db.execute(
+    `INSERT IGNORE INTO merchants 
+     (merchant_id, name, location_label, distance_metres, cuisine_type, typical_price, dietary_halal, dietary_vegetarian, dietary_vegan, reward_amount, min_spend, is_sample_data)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE)`,
+    [
+      String(merchant.id).slice(0, 64),
+      String(merchant.merchantName || merchant.name || 'Merchant').slice(0, 120),
+      String(merchant.address || 'Nearby Outlet').slice(0, 160),
+      Number.isFinite(merchant.distanceMetres) ? merchant.distanceMetres : (merchant.distanceMinutes || 5) * 80,
+      String(merchant.categoryLabel || merchant.category || 'food').slice(0, 64),
+      Number.isFinite(merchant.price) ? merchant.price : 6.50,
+      Boolean(caps.halal),
+      Boolean(caps.vegetarian),
+      Boolean(caps.vegan),
+      Number(rewardCfg.rewardAmount || 0.50),
+      Number(rewardCfg.minimumEligibleSpend || 5.00)
+    ]
+  ).catch(function(err) {
+    // Non-blocking log if MySQL table is busy or offline
+    console.error('MySQL merchant sync note:', err.message);
+  });
 }
 
 // Rule-based observations over the illustrative hourly/weekly baseline. These are deterministic
@@ -1626,7 +1679,6 @@ async function fetchFoursquarePlaces(searchLocation, query, radiusMetres, option
     url.searchParams.set('sort', 'DISTANCE');
     url.searchParams.set('limit', String(FOURSQUARE_RESULT_LIMIT));
     url.searchParams.set('categories', '13000'); // Force Dining and Drinking category
-    url.searchParams.set('exclude_categories', '13035,13054'); // Exclude Coffee Shops & Food Courts
     url.searchParams.set('fields', 'fsq_place_id,name,geocodes,location,categories,distance,related_places');
     const response = await fetch(url, {
       signal: requestBudget.withBudgetSignal(controller.signal),
@@ -2610,7 +2662,9 @@ function rankingFacts(m) {
 
 function buildRankingMessages(profile, eligible, feedbackItems, demo) {
   return [{ role: 'system', content: [
-    'You are Smart Match. Select the strongest plausible food match from the eligible IDs. Interpret the actual craving and Mood today semantically. Anything means no mood requirement.',
+    'You are Smart Match. Select EXACTLY FOUR merchants that best match the diet, budget, and inputs from the eligible IDs.',
+    'The first MUST be the absolute best match ("bestMatch"). The next three are backups if the user rejects the first.',
+    'Do not pick a parent building or food court container; pick specific stalls or restaurants.',
     'EVIDENCE: supplied merchant name, provider categories, cuisine tags or known dish can support high or medium fit. Direct targeted mood/craving search membership can support a cautious MEDIUM fit, even with generic categories, when facts do not clearly conflict.',
     'Targeted retrieval alone cannot support HIGH fit, prove a specific menu item, or establish dietary suitability. Expanded-search membership is supporting context for the expanded food query. Broad Nearby membership provides NO food-fit evidence.',
     'An obvious semantic conflict is LOW, even if retrieved by a targeted search. For example a Mala merchant from broad Nearby with no bread-related facts is low for Bread. This illustrates reasoning, not a food mapping.',
@@ -2622,7 +2676,11 @@ function buildRankingMessages(profile, eligible, feedbackItems, demo) {
     'Every candidate already passed distance, budget and merchant-declared dietary constraints. Never judge dietary suitability yourself.',
     'REASON: one short factual sentence, max 160 characters. Cite supplied categories/name/cuisine/dish or the targeted search and uncertainty. Never invent menu items, ratings, prices or travel times. Unknown price remains unknown; the walking limit is not a travel time. Do not claim that food is sold unless the supplied known dish states it. For category/name evidence say it suggests a fit; for retrieval evidence say it was found in the targeted search with limited details. Do not say offers or serves without a known dish.',
     'Reason templates: Its supplied name/category suggests a fit for your food preference. Or: Found in the targeted food search; merchant details are limited. These are wording templates, not food mappings.',
-    'Return ONLY one JSON object with merchantId (eligible ID or null), cravingFit, moodFit, overallFit, reason. Do not classify every candidate or return evidence arrays.'
+    'Return ONLY a valid JSON object in this exact format. No markdown, no extra text:',
+    '{',
+    '  "bestMatch": { "merchantId": "string or null", "cravingFit": "high|medium|low|not_applicable", "moodFit": "high|medium|low|not_applicable", "overallFit": "high|medium|low", "reason": "short factual explanation" },',
+    '  "backups": [ { "merchantId": "string", "merchantName": "string", "reason": "string" } ]',
+    '}'
   ].join('\n') }, { role: 'user', content:
     'User profile:\n- Specific craving: ' + (profile.craving || 'none') +
     '\n- Food mood today: ' + getMoodCuisineLabel(profile.moodCuisine) +
@@ -2655,7 +2713,13 @@ function availableRankingProviders() {
 
 // Validate one selection, not an exhaustive classification of the candidate pool.
 function validateRankingResponse(content, candidates, profile) {
-  const parsed = JSON.parse(String(content).trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
+  const parsedRaw = JSON.parse(String(content).trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
+  if (!parsedRaw || typeof parsedRaw !== 'object' || !parsedRaw.bestMatch || !Array.isArray(parsedRaw.backups)) {
+    throw new Error('malformed ranking structure');
+  }
+  const parsed = parsedRaw.bestMatch;
+  const backups = parsedRaw.backups;
+
   const fields = ['merchantId', 'cravingFit', 'moodFit', 'overallFit', 'reason'];
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) ||
       Object.keys(parsed).some(function(k) { return !fields.includes(k); }) ||
@@ -2701,18 +2765,28 @@ function validateRankingResponse(content, candidates, profile) {
   return Object.assign({}, parsed, { relevance: parsed.overallFit,
     budgetFit: Number.isFinite(merchant.price) ? 'within' : 'unknown',
     reason: missing && !parsed.reason.includes('Your ' + missing + ' could not be confirmed.')
-      ? parsed.reason.trim() + ' Your ' + missing + ' could not be confirmed.' : parsed.reason.trim() });
+      ? parsed.reason.trim() + ' Your ' + missing + ' could not be confirmed.' : parsed.reason.trim(),
+    backups: backups // Pass backups through
+  });
 }
 
 function rankingResponseFormat(profile, candidates) {
-  const properties = {
+  const bestMatchProps = {
     merchantId: { type: ['string', 'null'], enum: candidates.map(function(m) { return m.id; }).concat(null) },
     cravingFit: { type: 'string', enum: isSpecificCraving(profile.craving) ? AI_RELEVANCE_LEVELS : ['not_applicable'] },
     moodFit: { type: 'string', enum: isActiveMood(profile.moodCuisine) ? AI_RELEVANCE_LEVELS : ['not_applicable'] },
     overallFit: { type: 'string', enum: AI_RELEVANCE_LEVELS }, reason: { type: 'string' }
   };
-  return { type: 'json_schema', json_schema: { name: 'smart_match', strict: true, schema: {
-    type: 'object', additionalProperties: false, required: Object.keys(properties), properties: properties
+  const backupProps = {
+    merchantId: { type: 'string' },
+    merchantName: { type: 'string' },
+    reason: { type: 'string' }
+  };
+  return { type: 'json_schema', json_schema: { name: 'smart_match_with_backups', strict: true, schema: {
+    type: 'object', additionalProperties: false, required: ['bestMatch', 'backups'], properties: {
+      bestMatch: { type: 'object', additionalProperties: false, required: Object.keys(bestMatchProps), properties: bestMatchProps },
+      backups: { type: 'array', items: { type: 'object', additionalProperties: false, required: Object.keys(backupProps), properties: backupProps }, maxItems: 3 }
+    }
   } } };
 }
 
@@ -2870,7 +2944,10 @@ function applyDeterministicRejectionConstraint(eligible, lastFeedback) {
     Number.isFinite(lastFeedback.distanceMinutes) ? lastFeedback.distanceMinutes * 80 : null;
   if (rejectedMetres === null) return { candidates: eligible, noCloserMatch: false };
   const closer = eligible.filter(function(merchant) { return merchantDistanceMetres(merchant) < rejectedMetres; });
-  return { candidates: closer, noCloserMatch: closer.length === 0 };
+  if (closer.length === 0) {
+    return { candidates: eligible, noCloserMatch: false };
+  }
+  return { candidates: closer, noCloserMatch: false };
 }
 
 // Preferences break relevance ties; unknown prices never count as cheaper.
@@ -2991,15 +3068,21 @@ async function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchant
   let eligible = getEligibleMerchants(profile, nearbyMerchants, excludedIds, demo);
   let recycled = false;
   // Pool exhaustion: only when there are truly no unseen eligible merchants left do we allow a
-  // previously-shown (but never the just-rejected) merchant back in, preferring the one shown
-  // longest ago so normal usage never bounces between the same 2-3 merchants.
+  // previously-shown merchant back in, preferring the one shown longest ago.
   if (eligible.length === 0 && shown.length > 0 && !(options && options.allowRecycle === false)) {
     const recyclable = filterByMealEligibility(nearbyMerchants.filter(function(m) {
       return m.available && !rejectedMerchantIds.includes(m.id) &&
         shown.indexOf(m.id) !== -1 && merchantMatchesProfile(m, profile) && Boolean(findCampaignForMerchant(m, demo));
     }), profile);
-    recyclable.sort(function(a, b) { return shown.indexOf(a.id) - shown.indexOf(b.id); });
-    if (recyclable.length > 0) { eligible = recyclable; recycled = true; }
+    if (recyclable.length > 0) {
+      recyclable.sort(function(a, b) { return shown.indexOf(a.id) - shown.indexOf(b.id); });
+      eligible = recyclable;
+      recycled = true;
+    } else {
+      demo.rejectedMerchantIds = [];
+      eligible = getEligibleMerchants(profile, nearbyMerchants, [], demo);
+      recycled = true;
+    }
   }
   if (eligible.length === 0) {
     logDiscovery('Smart Match empty: no candidates inside the current constraints (' +
@@ -3021,22 +3104,26 @@ async function getSmartRecommendation(profile, nearbyMerchants, rejectedMerchant
       noDeclaredDietary: dietary.noDeclaredMatch };
   }
 
-  // Step 13/14: AI only ever sees the deterministically-constrained subset, and its choice is
+ // Step 13/14: AI only ever sees the deterministically-constrained subset, and its choice is
   // validated against that same subset - it cannot resurrect a merchant the "too far" rule or
   // the seen/rejected history removed.
   if (availableRankingProviders().length) {
     try {
       const promptCandidates = capCandidatesForPrompt(candidates, profile, AI_PROMPT_CANDIDATE_LIMIT, options && options.fallbackCandidateIds);
-      const ranking = await getAIRanking(profile, promptCandidates, feedbackItems, demo);
-      if (ranking.merchantId === null) return { merchant: null, reason: ranking.reason, aiFits: selectedFits(ranking), selectionSource: ranking.provider, noSuitableMatch: true, noCloserMatch: false };
-      const aiMerchant = findMerchantById(promptCandidates, ranking.merchantId);
+      const result = await getAIRanking(profile, promptCandidates, feedbackItems, demo);
+      
+      if (result.merchantId === null) {
+        return { merchant: null, reason: result.reason, aiFits: selectedFits(result), selectionSource: result.provider, noSuitableMatch: true, noCloserMatch: false, backups: result.backups };
+      }
+      
+      const aiMerchant = findMerchantById(promptCandidates, result.merchantId);
       if (aiMerchant) {
-        logDiscovery('Selection source: ' + ranking.provider + ' -> ' + aiMerchant.merchantName +
-          ' (relevance: ' + ranking.relevance + ')');
+        logDiscovery('Selection source: ' + result.provider + ' -> ' + aiMerchant.merchantName +
+          ' (relevance: ' + result.relevance + ')');
         // A budget verdict needs a real price behind it.
-        const budgetFit = aiMerchant.price === null ? 'unknown' : ranking.budgetFit;
-        return { merchant: aiMerchant, reason: ranking.reason, budgetFit: budgetFit,
-          relevance: ranking.relevance, aiFits: selectedFits(ranking), selectionSource: ranking.provider, noCloserMatch: false };
+        const budgetFit = aiMerchant.price === null ? 'unknown' : result.budgetFit;
+        return { merchant: aiMerchant, reason: result.reason, budgetFit: budgetFit,
+          relevance: result.relevance, aiFits: selectedFits(result), selectionSource: result.provider, noCloserMatch: false, backups: result.backups };
       }
     } catch (error) {
       console.log('AI ranking unavailable, checking supplied food facts:', error.message);
@@ -3511,6 +3598,61 @@ app.use(function(req, res, next) {
   }
 });
 
+// Saved preferences (MySQL, optional). A persona's saved preferences are loaded ONCE per fresh demo
+// state, and only when that state has not set any itself, so a database can never overwrite what the
+// visitor is doing right now. Every loaded value is re-validated with the same rules the forms use.
+// With no database configured, or if it cannot be read, this does nothing and the session is used.
+async function hydratePreferences(demo) {
+  if (demo.preferencesHydrated) return;
+  if (demo.hasSetPreferences) { demo.preferencesHydrated = true; return; }
+  try {
+    const [rows] = await db.execute(
+      'SELECT budget_max, max_walk_minutes, dietary_preference FROM users WHERE user_id = ?',
+      [demo.user.id]
+    );
+    demo.preferencesHydrated = true;
+    if (!rows || !rows.length) return;
+    const saved = rows[0];
+    const budget = Number(saved.budget_max);
+    const distance = Number(saved.max_walk_minutes);
+    demo.profile.dietaryPreference = normaliseDietaryPreference(saved.dietary_preference);
+    demo.profile.budget = Number.isFinite(budget) && budget > 0 && budget <= 100 ? budget : demo.profile.budget;
+    demo.profile.maxDistanceMinutes = Number.isInteger(distance) && distance >= 1 && distance <= 60
+      ? distance : demo.profile.maxDistanceMinutes;
+  } catch (error) {
+    // If MySQL is unreachable, continue safely with session state
+  }
+}
+
+// Stores the current persona's preferences. Never throws and never blocks a page on a database fault.
+async function persistPreferences(demo) {
+  try {
+    await db.execute(
+      `INSERT INTO users (user_id, display_name, budget_max, max_walk_minutes, dietary_preference)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         display_name = VALUES(display_name),
+         budget_max = VALUES(budget_max),
+         max_walk_minutes = VALUES(max_walk_minutes),
+         dietary_preference = VALUES(dietary_preference)`,
+      [
+        demo.user.id,
+        demo.user.name,
+        demo.profile.budget,
+        demo.profile.maxDistanceMinutes,
+        normaliseDietaryPreference(demo.profile.dietaryPreference)
+      ]
+    );
+  } catch (error) {
+    console.error('MySQL preference save error:', error.message);
+  }
+}
+
+app.use(async function(req, res, next) {
+  try { await hydratePreferences(req.session.demo); } catch (error) { /* session state is used */ }
+  next();
+});
+
 // Home and persistent Smart Match
 app.get('/', function(req, res) { res.redirect('/welcome'); });
 // Health check endpoint — called by Vercel Cron (vercel.json) every 15 minutes.
@@ -3562,7 +3704,7 @@ app.get('/home', function(req, res) {
 // Onboarding is the CURRENT meal decision only: craving and "Mood today". Dietary restrictions are
 // a saved Profile setting and are deliberately not asked here, so an absent dietaryPreference field
 // must never be read as "reset it to none" - the saved restriction is kept untouched.
-app.post('/setup-preferences', function(req, res) {
+app.post('/setup-preferences', async function(req, res) {
   const demo = req.session.demo;
   const mood = req.body.moodCuisine || 'any';
   demo.profile.moodCuisine = normaliseMoodCuisine(mood);
@@ -3581,8 +3723,12 @@ app.post('/setup-preferences', function(req, res) {
   // A new Smart Match discovery re-acquires current GPS rather than depending on a stale
   // coordinate (Part C) - harmless here since this is normally the first-ever discovery anyway.
   demo.locationAttempted = false;
+  await persistPreferences(demo);
   res.redirect('/home');
 });
+
+// Add this line to restore the missing location cache map
+const locationCache = new Map();
 
 // Browser location is kept only in this demo session for the current discovery journey.
 app.post('/smart-match/location', function(req, res) {
@@ -3624,14 +3770,13 @@ function logMatchDiagnostics(budget, outcome) {
     (budget.trace.deadlineHit ? '\nDeadline reached: ' + budget.trace.notes.filter(function(n) { return n.indexOf('deadline') === 0; }).join('; ') : ''));
 }
 
+
+// 2. REPLACE your existing app.get('/smart-match/result', ...) route with this:
 app.get('/smart-match/result', async function(req, res) {
   const demo = req.session.demo;
-  // ONE overall deadline for this request: discovery + dietary research + ranking + card extras.
   const budget = requestBudget.createBudget(SMART_MATCH_DEADLINE_MS);
   try {
     await requestBudget.runWithBudget(budget, async function() {
-      // Coordinates in the URL take priority — this is how GPS works across cold-started
-      // Vercel instances where locationCache and session are empty.
       const qLat = parseFloat(req.query.lat);
       const qLng = parseFloat(req.query.lng);
       if (validCoordinates(qLat, qLng)) {
@@ -3656,14 +3801,12 @@ app.get('/smart-match/result', async function(req, res) {
             demo.profile.maxDistanceMinutes, demo.profile.dietaryPreference, demo.profile.moodCuisine);
           demo.nearbyMerchants = nearby.merchants;
           demo.nearbySource = nearby.source;
-          // Explicit server state: a real browser location that only produced curated demo merchants.
           demo.nearbyDemoFallback = Boolean(nearby.demoFallback && demo.discoveryLocation);
         }
         let result = await getSmartRecommendation(demo.profile, demo.nearbyMerchants,
           demo.rejectedMerchantIds, demo.recommendationFeedback, demo, demo.shownMerchantIds, { allowRecycle: !demo.matchContinuation });
         recommendation = result.merchant;
         if (!recommendation && demo.matchContinuation && !demo.matchContinuation.attempted) {
-          // Mark before awaiting so identical results/failures cannot trigger another discovery.
           demo.matchContinuation.attempted = true;
           const gotNewMerchants = await continueNearbySearch(demo);
           if (gotNewMerchants) {
@@ -3686,6 +3829,7 @@ app.get('/smart-match/result', async function(req, res) {
           demo.selectedMerchantId = recommendation.id;
           demo.selectedMerchantReason = result.reason;
           demo.selectedMerchantRelevance = result.relevance || null;
+          demo.matchBackups = result.backups || []; // Save backups to session memory
           if (!demo.shownMerchantIds.includes(recommendation.id)) {
             demo.shownMerchantIds.push(recommendation.id);
             const c = findCampaign(demo, recommendation.id);
@@ -3698,7 +3842,6 @@ app.get('/smart-match/result', async function(req, res) {
             noCloserMatch: Boolean(result.noCloserMatch || (getLastFeedback(demo.recommendationFeedback) && getLastFeedback(demo.recommendationFeedback).reason === 'too-far')),
             noDeclaredDietary: Boolean(result.noDeclaredDietary)
           };
-          // A terminal continuation result survives refreshes until the inputs or sequence change.
           if (demo.matchContinuation) demo.matchContinuation.emptyState = emptyState;
         }
       }
@@ -3711,7 +3854,6 @@ app.get('/smart-match/result', async function(req, res) {
           dietaryLabel: getDietaryPreferenceLabel(demo.profile.dietaryPreference),
           locationNotice: !demo.discoveryLocation }, emptyState));
       }
-      // Display extras (photo + existing halal evidence) within the remaining budget.
       await settleResultExtras(recommendation);
       logMatchDiagnostics(budget, 'selected ' + recommendation.id);
       res.render('smart-match-card', matchView(demo, recommendation));
@@ -3722,6 +3864,31 @@ app.get('/smart-match/result', async function(req, res) {
   } finally {
     budget.finish();
   }
+});
+
+// 3. ADD THIS NEW ROUTE ANYWHERE IN app.js
+// This listens for the silent JavaScript POST request from the Feedback Gate
+app.post('/api/feedback', async (req, res) => {
+    const demo = req.session.demo;
+    const { reason } = req.body;
+
+    try {
+        if (reason === 'too_expensive' || reason === 'too-expensive') {
+            await db.execute(
+                `UPDATE users SET weight_price_sensitivity = weight_price_sensitivity + 0.2 WHERE user_id = ?`,
+                [demo.user.id]
+            );
+        } else if (reason === 'too_far' || reason === 'too-far') {
+            await db.execute(
+                `UPDATE users SET weight_distance_sensitivity = weight_distance_sensitivity + 0.2 WHERE user_id = ?`,
+                [demo.user.id]
+            );
+        }
+        res.sendStatus(200);
+    } catch (error) {
+        console.error('Feedback sync error:', error);
+        res.sendStatus(500);
+    }
 });
 
 // Customer-facing dietary badges. They state ONLY what the registered merchant itself listed. All
@@ -3816,12 +3983,54 @@ app.post('/recommendation/reject', function(req, res) {
     category: merchant.category, price: merchant.price, distanceMinutes: merchant.distanceMinutes,
     distanceMetres: Number.isFinite(merchant.distanceMetres) ? merchant.distanceMetres : null,
     distanceLabel: merchant.distanceLabel || null, cuisineTags: merchantCuisineTags(merchant) });
+  // Sync rejection reason to MySQL user weights for future AI learning
+  if (req.body.reason === 'too-expensive') {
+    db.execute('UPDATE users SET weight_price_sensitivity = weight_price_sensitivity + 0.2 WHERE user_id = ?', [demo.user.id]).catch(function() {});
+  } else if (req.body.reason === 'too-far') {
+    db.execute('UPDATE users SET weight_distance_sensitivity = weight_distance_sensitivity + 0.2 WHERE user_id = ?', [demo.user.id]).catch(function() {});
+  }
   demo.selectedMerchantId = null;
   demo.recommendationAccepted = false;
   logDiscovery('Rejected: ' + merchant.id + '\nReason: ' + req.body.reason +
     '\nShown history size: ' + demo.shownMerchantIds.length + '\nContinuation: rerank unseen, then at most one uncached search');
   if (req.get('X-Requested-With') === 'smart-match') return res.sendStatus(204);
   res.redirect('/home?matching=again');
+
+  // Sync rejection reason to MySQL user weights for future AI learning
+  if (req.body.reason === 'too-expensive') {
+    db.execute('UPDATE users SET weight_price_sensitivity = weight_price_sensitivity + 0.2 WHERE user_id = ?', [demo.user.id]).catch(function() {});
+  } else if (req.body.reason === 'too-far') {
+    db.execute('UPDATE users SET weight_distance_sensitivity = weight_distance_sensitivity + 0.2 WHERE user_id = ?', [demo.user.id]).catch(function() {});
+  }
+
+  // --- NEW: Check if we have backups to pop instantly ---
+  if (demo.matchBackups && demo.matchBackups.length > 0) {
+    let backupMerchant = null;
+    let nextBackup = null;
+    
+    // Find the next backup that hasn't already been rejected
+    while (demo.matchBackups.length > 0 && !backupMerchant) {
+      nextBackup = demo.matchBackups.shift();
+      const potentialMerchant = findMerchantForDemo(demo, nextBackup.merchantId);
+      if (potentialMerchant && !demo.rejectedMerchantIds.includes(potentialMerchant.id)) {
+        backupMerchant = potentialMerchant;
+      }
+    }
+    
+    if (backupMerchant) {
+      demo.selectedMerchantId = backupMerchant.id;
+      demo.selectedMerchantReason = nextBackup.reason || 'Selected as a strong alternative match.';
+      demo.selectedMerchantRelevance = 'medium'; // Safe default
+      demo.recommendationAccepted = false;
+      logDiscovery('Popped backup merchant instantly: ' + backupMerchant.id);
+      
+      if (req.get('X-Requested-With') === 'smart-match') return res.sendStatus(204);
+      return res.redirect('/home?matching=again');
+    }
+  }
+  // --- END NEW BACKUP LOGIC ---
+
+  demo.matchContinuation = { rejectedId: merchant.id, attempted: false };
 });
 
 function restartMatch(req, res) {
@@ -4113,7 +4322,7 @@ app.get('/profile/preferences', renderDietaryRestrictions);
 // Saves ONLY the dietary restriction. Every other profile value (craving, mood, budget, walking
 // distance, notifications), and all session state - location, recommendation history, transactions,
 // Vouches and rewards - is left exactly as it was.
-app.post('/profile/dietary', function(req, res) {
+app.post('/profile/dietary', async function(req, res) {
   const demo = req.session.demo;
   if (!isValidDietaryPreference(req.body.dietaryPreference)) {
     return res.redirect('/profile/dietary?error=invalid');
@@ -4142,14 +4351,16 @@ app.post('/profile/dietary', function(req, res) {
   demo.nearbyRefreshAttempted = false;
   resetMatchContinuation(demo);
   demo.locationAttempted = false;
+  await persistPreferences(demo);
   res.redirect('/profile/dietary?saved=1');
 });
 
 // Notifications stay a saved Profile setting, toggled from Profile itself now that this screen
 // manages dietary restrictions only.
-app.post('/profile/notifications', function(req, res) {
+app.post('/profile/notifications', async function(req, res) {
   const demo = req.session.demo;
   demo.profile.notifications = !demo.profile.notifications;
+  await persistPreferences(demo);
   res.redirect('/profile');
 });
 app.get('/profile/vouches', function(req, res) {
@@ -4162,7 +4373,7 @@ app.get('/profile/activity', function(req, res) {
 // longer offers a dietary selector, so an omitted dietaryPreference keeps the saved restriction;
 // a submitted one is still honoured for compatibility with existing links and tests, and must
 // still be valid.
-app.post('/profile', function(req, res) {
+app.post('/profile', async function(req, res) {
   const demo = req.session.demo;
   const budget = parsePaymentAmount(req.body.budget);
   const distance = Number(req.body.maxDistanceMinutes);
@@ -4192,6 +4403,7 @@ app.post('/profile', function(req, res) {
   // A new Smart Match discovery re-acquires current GPS rather than depending on a stale
   // coordinate (Part C).
   demo.locationAttempted = false;
+  await persistPreferences(demo);
   res.redirect('/home?matching=again');
 });
 app.get('/transactions/:id', function(req, res) {
@@ -4486,10 +4698,18 @@ function resetOtherStoredSessions(currentSessionId, generation, done) {
   });
 }
 
-app.post('/reset-demo', function(req, res) {
+app.post('/reset-demo', async function(req, res) {
   // This helper control has always reset shared campaign state, so reset all demo
   // sessions too. The generation also protects against an in-flight stale save.
   demoResetGeneration += 1;
+  // Reset saved user preferences in MySQL back to default values
+  try {
+    await db.execute(
+      `UPDATE users 
+       SET budget_max = 10.00, max_walk_minutes = 15, dietary_preference = 'none',
+           weight_price_sensitivity = 1.00, weight_distance_sensitivity = 1.00, weight_quietness_affinity = 1.00`
+    );
+  } catch (e) { /* continue reset even if DB is offline */ }
   sharedOffers.clear();
   referralCooldowns.clear();
   merchantPaymentFeed.splice(0, merchantPaymentFeed.length,
