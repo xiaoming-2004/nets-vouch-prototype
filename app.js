@@ -293,10 +293,10 @@ const fallbackMerchants = [
 ];
 
 const rejectionReasons = [
+  { id: 'too-expensive', label: 'Too expensive' },
   { id: 'too-far', label: 'Too far' },
-  { id: 'too-expensive', label: 'Costs too much' },
-  { id: 'not-in-mood', label: 'Not in the mood' },
-  { id: 'ate-recently', label: 'Ate this recently' }
+  { id: 'ate-recently', label: 'Not this cuisine' },
+  { id: 'not-in-mood', label: 'Just not today' }
 ];
 
 const dietaryPreferenceOptions = [
@@ -940,7 +940,7 @@ const seedPromotionalRedemptions = [
 function createInitialDemo(userId) {
   const identityId = isValidDemoIdentity(userId) ? userId : 'jia';
   return {
-    version: 18,
+    version: 19,
     user: { ...demoIdentities[identityId] },
     profile: { dietaryPreference: 'none', moodCuisine: 'any', craving: '', budget: 10, maxDistanceMinutes: 10, notifications: true },
     hasSetPreferences: false,
@@ -950,6 +950,7 @@ function createInitialDemo(userId) {
     discoveryLocation: null, locationAttempted: false, nearbySource: null, nearbyDemoFallback: false,
     nearbyRefreshAttempted: false, matchContinuation: null,
     recommendationFeedback: [], shownMerchantIds: [],
+    lastApiRecommendations: [],
     currentScanPayment: null, activeVouchClaim: null,
     transactions: [], paymentVerifiedVouches: [], promotionalRedemptions: [],
     nextScanNumber: 1, nextTransactionNumber: 1, nextVouchNumber: 1,
@@ -964,7 +965,7 @@ function initialiseDemoSession(req) {
     req.session.demoUserStates = {};
   }
   req.session.demoResetGeneration = demoResetGeneration;
-  if (!req.session.demo || req.session.demo.version !== 18) {
+  if (!req.session.demo || req.session.demo.version !== 19) {
     req.session.demo = createInitialDemo('jia');
     req.session.demoUserStates = {};
   }
@@ -3967,11 +3968,114 @@ app.get('/smart-match/static', async function(req, res) {
   res.redirect('/home');
 });
 
+// Recommendation API — returns up to 3 ranked merchants as JSON.
+// Query params (all optional, fall back to session profile):
+//   budget        — max spend in dollars (e.g. 10)
+//   lat / lng     — user coordinates
+//   cuisine       — dietary preference id: none | halal | vegetarian | vegan
+//   diningTime    — HH:MM string (e.g. "12:30") — stored as context, not a hard filter
+//   maxDistance   — max walking minutes (e.g. 15)
+app.get('/api/recommend', function(req, res) {
+  const demo = req.session.demo;
+
+  const budget = (function() {
+    const v = parseFloat(req.query.budget);
+    return Number.isFinite(v) && v > 0 && v <= 1000 ? v : demo.profile.budget;
+  }());
+  const cuisine = isValidDietaryPreference(req.query.cuisine) ? req.query.cuisine : demo.profile.dietaryPreference;
+  const maxDistanceMinutes = (function() {
+    const v = parseInt(req.query.maxDistance, 10);
+    return Number.isFinite(v) && v > 0 && v <= 60 ? v : demo.profile.maxDistanceMinutes;
+  }());
+
+  // Update discovery location if coordinates supplied
+  const qLat = parseFloat(req.query.lat);
+  const qLng = parseFloat(req.query.lng);
+  if (validCoordinates(qLat, qLng)) {
+    demo.discoveryLocation = { latitude: qLat, longitude: qLng };
+    demo.locationAttempted = true;
+  }
+
+  const apiProfile = Object.assign({}, demo.profile, {
+    budget: budget,
+    dietaryPreference: cuisine,
+    maxDistanceMinutes: maxDistanceMinutes
+  });
+
+  if (!demo.nearbyMerchants.length) {
+    demo.nearbyMerchants = copyObjects(fallbackMerchants);
+    demo.nearbySource = 'local-fallback';
+  }
+
+  const eligible = getEligibleMerchants(apiProfile, demo.nearbyMerchants, demo.rejectedMerchantIds, demo);
+
+  if (!eligible.length) {
+    demo.lastApiRecommendations = [];
+    return res.json({ recommendations: [] });
+  }
+
+  const lastFeedback = getLastFeedback(demo.recommendationFeedback);
+  const scored = eligible.map(function(m) {
+    let score = 150 - distancePenalty(m);
+    if (classifyMealEligibility(m) === MEAL_ELIGIBILITY.UNCERTAIN) score -= 60;
+    if (m.price !== null) score += Math.max(0, apiProfile.budget - m.price);
+    if (merchantMentionsCraving(m, apiProfile.craving)) score += 100;
+    if (getDietaryMatchState(m, apiProfile.dietaryPreference) === MATCH_STATE.MATCH) score += 35;
+    if (getMoodMatchState(m, apiProfile.moodCuisine) === MATCH_STATE.MATCH) {
+      score += isSpecificCraving(apiProfile.craving) ? 15 : 45;
+    }
+    if (lastFeedback && lastFeedback.reason === 'too-expensive' && m.price !== null &&
+        lastFeedback.price !== null) {
+      score += Math.max(0, 20 - m.price);
+    }
+    if (lastFeedback && (lastFeedback.reason === 'not-in-mood' || lastFeedback.reason === 'ate-recently')) {
+      const sameSpecificCategory = m.category === lastFeedback.category &&
+        knownSpecificCategories.indexOf(m.category) !== -1;
+      const rejectedTags = Array.isArray(lastFeedback.cuisineTags) ? lastFeedback.cuisineTags : [];
+      const overlapsCuisine = rejectedTags.length > 0 &&
+        merchantCuisineTags(m).some(function(tag) { return rejectedTags.indexOf(tag) !== -1; });
+      if (sameSpecificCategory || overlapsCuisine) score -= 30;
+    }
+    return { merchant: m, score: score };
+  });
+
+  scored.sort(function(a, b) { return b.score - a.score; });
+  const top3 = scored.slice(0, 3);
+
+  const recommendations = top3.map(function(item) {
+    const m = item.merchant;
+    const campaign = findCampaignForMerchant(m, demo);
+    return {
+      id: m.id,
+      merchantName: m.merchantName || m.name,
+      itemName: m.itemName || null,
+      price: m.price,
+      distanceMinutes: m.distanceMinutes,
+      dietary: Array.isArray(m.dietary) ? m.dietary : [],
+      category: m.category || null,
+      campaign: campaign ? {
+        rewardAmount: campaign.rewardAmount,
+        rewardLabel: campaign.rewardLabel,
+        minimumEligibleSpend: campaign.minimumEligibleSpend
+      } : null
+    };
+  });
+
+  demo.lastApiRecommendations = recommendations.map(function(r) { return r.id; });
+
+  res.json({ recommendations: recommendations });
+});
+
 app.get('/recommendation', function(req, res) { res.redirect('/home'); });
 app.get('/recommendation/reject', function(req, res) { res.redirect('/home#feedback'); });
 app.post('/recommendation/reject', function(req, res) {
   const demo = req.session.demo;
-  const merchant = findMerchantForDemo(demo, demo.selectedMerchantId);
+  let merchant = findMerchantForDemo(demo, demo.selectedMerchantId);
+  // Allow rejecting any card from the last /api/recommend batch, not just the selected one.
+  if ((!merchant || merchant.id !== req.body.merchantId) &&
+      Array.isArray(demo.lastApiRecommendations) && demo.lastApiRecommendations.includes(req.body.merchantId)) {
+    merchant = findMerchantForDemo(demo, req.body.merchantId);
+  }
   if (!merchant || req.body.merchantId !== merchant.id ||
       !isValidRejectionReason(req.body.reason)) {
     if (req.get('X-Requested-With') === 'smart-match') return res.status(409).send('Refresh Home and try again.');
@@ -4058,7 +4162,17 @@ app.post('/recommendation/widen-distance', restartMatch);
 
 app.post('/recommendation/accept', function(req, res) {
   const demo = req.session.demo;
-  const merchant = findMerchantForDemo(demo, demo.selectedMerchantId);
+  let merchant = findMerchantForDemo(demo, demo.selectedMerchantId);
+  // Allow accepting any card from the last /api/recommend batch.
+  if ((!merchant || merchant.id !== req.body.merchantId) &&
+      Array.isArray(demo.lastApiRecommendations) && demo.lastApiRecommendations.includes(req.body.merchantId)) {
+    const candidate = findMerchantForDemo(demo, req.body.merchantId);
+    if (candidate) {
+      demo.selectedMerchantId = candidate.id;
+      demo.recommendationAccepted = false;
+      merchant = candidate;
+    }
+  }
   if (!merchant || merchant.id !== req.body.merchantId ||
       !merchantMatchesProfile(merchant, demo.profile) || !findCampaignForMerchant(merchant, demo)) {
     return res.redirect('/home?error=offer');

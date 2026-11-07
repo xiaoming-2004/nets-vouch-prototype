@@ -196,6 +196,79 @@ async function useDemoLocation() {
   loadMatch(false);
 }
 
+function escHtml(str) {
+  return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function escAttr(str) {
+  return String(str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
+const REC_REJECTION_REASONS = [
+  { id: 'too-expensive', label: 'Too expensive' },
+  { id: 'too-far', label: 'Too far' },
+  { id: 'ate-recently', label: 'Not this cuisine' },
+  { id: 'not-in-mood', label: 'Just not today' }
+];
+
+const DIETARY_LABELS = { halal: 'Halal', vegetarian: 'Vegetarian', vegan: 'Vegan' };
+
+function renderRecCard(r) {
+  const tags = (r.dietary || []).map(function(d) { return DIETARY_LABELS[d]; }).filter(Boolean);
+  const tagHtml = tags.map(function(t) { return '<span class="rec-tag">' + escHtml(t) + '</span>'; }).join('');
+  const rewardHtml = r.campaign
+    ? '<p class="rec-reward">Earn $' + escHtml(r.campaign.rewardAmount.toFixed(2)) + ' ' +
+      escHtml(r.campaign.rewardLabel) + ' · Spend $' +
+      escHtml(r.campaign.minimumEligibleSpend.toFixed(2)) + '+</p>'
+    : '';
+  const reasonHtml = REC_REJECTION_REASONS.map(function(reason) {
+    return '<button type="submit" name="reason" value="' + escAttr(reason.id) + '">' +
+      escHtml(reason.label) + '<span aria-hidden="true">→</span></button>';
+  }).join('');
+  return '<article class="rec-card reveal" data-merchant-id="' + escAttr(r.id) + '">' +
+    '<div class="rec-header">' +
+    '<div class="rec-initial" aria-hidden="true">' + escHtml((r.merchantName || '').charAt(0)) + '</div>' +
+    '<div class="rec-info">' +
+    '<h2 class="rec-name">' + escHtml(r.merchantName) + '</h2>' +
+    (r.itemName
+      ? '<p class="rec-dish">' + escHtml(r.itemName) +
+        (r.price !== null ? ' · <strong>$' + escHtml(r.price.toFixed(2)) + '</strong>' : '') + '</p>'
+      : '') +
+    '<p class="rec-meta">' + escHtml(r.distanceMinutes) + ' min away' +
+      (tagHtml ? ' · ' + tagHtml : '') + '</p>' +
+    '</div>' +
+    '</div>' +
+    rewardHtml +
+    '<form method="POST" action="/recommendation/accept" data-single-submit>' +
+    '<input type="hidden" name="merchantId" value="' + escAttr(r.id) + '">' +
+    '<button class="button" type="submit">Choose this</button>' +
+    '</form>' +
+    '<details class="feedback sheet-host">' +
+    '<summary class="sheet-trigger">Not for me</summary>' +
+    '<div class="result-sheet">' +
+    '<span class="result-sheet-backdrop" data-sheet-backdrop></span>' +
+    '<div class="result-sheet-panel feedback-sheet" role="group" aria-label="What didn\'t fit">' +
+    '<div class="result-sheet-head"><h3>What didn\'t fit?</h3>' +
+    '<button class="sheet-close" type="button" data-sheet-close>Close</button></div>' +
+    '<form method="POST" action="/recommendation/reject" data-feedback>' +
+    '<input type="hidden" name="merchantId" value="' + escAttr(r.id) + '">' +
+    reasonHtml +
+    '</form></div></div></details>' +
+    '</article>';
+}
+
+function renderRecommendationList(recommendations) {
+  if (!recommendations || !recommendations.length) {
+    return '<section class="card state-card reveal">' +
+      '<div class="state-icon" aria-hidden="true">' +
+      '<svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/>' +
+      '<circle cx="12" cy="9.5" r="2.5"/></svg></div>' +
+      '<h2>No matches nearby</h2>' +
+      '<p>Try widening your distance or budget in <a href="/profile">Profile</a>.</p>' +
+      '</section>';
+  }
+  return '<div class="rec-list">' + recommendations.map(renderRecCard).join('') + '</div>';
+}
+
 async function loadMatch(again) {
   if (!matchRegion) return;
   matchRegion.setAttribute('aria-busy', 'true');
@@ -205,24 +278,25 @@ async function loadMatch(again) {
   if (!locationReady) { renderLocationNeeded(); return; }
   try {
     const results = await Promise.all([
-      fetch('/smart-match/result').then(function(response) {
-        smartMatchDebug('result request status: ' + response.status);
-        if (!response.ok) throw new Error('Unable to load match');
-        return response.text();
+      fetch('/api/recommend').then(function(response) {
+        smartMatchDebug('recommend request status: ' + response.status);
+        if (!response.ok) throw new Error('Unable to load recommendations');
+        return response.json();
       }),
       wait(2000)
     ]);
     clearMatchingStages();
-    matchRegion.innerHTML = results[0];
-    const card = matchRegion.querySelector('[data-merchant-id]');
-    smartMatchDebug('recommendation rendered: ' + (card ? 'yes (' + card.dataset.merchantId + ')' : 'no (empty state)'));
+    matchRegion.innerHTML = renderRecommendationList(results[0].recommendations);
+    const cards = matchRegion.querySelectorAll('[data-merchant-id]');
+    smartMatchDebug('recommendations rendered: ' + cards.length);
     initMerchantMap();
   } catch (error) {
     smartMatchDebug('load failed: ' + error.message);
     clearMatchingStages();
     matchRegion.innerHTML = '<section class="card state-card reveal"><div class="state-icon" aria-hidden="true">' +
       '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg></div>' +
-      '<h2>Let’s try that again.</h2><p>We couldn’t load a match just now.</p><a class="button" href="/home">Return Home</a></section>';
+      '<h2>Let\'s try that again.</h2><p>We couldn\'t load a match just now.</p>' +
+      '<a class="button" href="/home">Return Home</a></section>';
   }
   matchRegion.setAttribute('aria-busy', 'false');
 }
