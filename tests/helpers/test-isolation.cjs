@@ -80,13 +80,28 @@ const defaults = () => ({ budget_max: 10, max_walk_minutes: 15, dietary_preferen
   weight_price_sensitivity: 1, weight_distance_sensitivity: 1, weight_quietness_affinity: 1,
   max_distance_minutes: 10, mood_cuisine: 'any', craving: '', notifications: 1, has_set_preferences: 0 });
 const database = {
-  users: new Map(), merchants: new Map(), calls: [], failing: false,
-  reset() { this.users.clear(); this.merchants.clear(); this.calls.length = 0; this.failing = false; },
+  users: new Map(), merchants: new Map(), calls: [], failing: false, catalogueFailing: false,
+  reset() { this.users.clear(); this.merchants.clear(); this.calls.length = 0; this.failing = false; this.catalogueFailing = false; },
+  seedMerchant(row) { this.merchants.set(row.merchant_id, { ...row }); },
   seedUser(id, values = {}) { this.users.set(id, { ...defaults(), user_id: id, display_name: id, ...values }); },
   async execute(sql, params = []) {
     const text = sql.replace(/\s+/g, ' ').trim();
     this.calls.push({ sql: text, params: [...params] });
     if (this.failing) throw new Error('simulated database outage');
+    if (text === 'SELECT merchant_id, name, location_label, distance_metres, cuisine_type, typical_price, dietary_halal, dietary_vegetarian, dietary_vegan, reward_amount, min_spend, is_sample_data FROM merchants ORDER BY merchant_id') {
+      if (this.catalogueFailing) throw new Error('simulated catalogue outage');
+      assert.deepEqual(params, []);
+      return [[...this.merchants.values()].filter(row => !Array.isArray(row))
+        .sort((a, b) => a.merchant_id < b.merchant_id ? -1 : a.merchant_id > b.merchant_id ? 1 : 0)
+        .map(row => ({ ...row })), []];
+    }
+    if (text === 'SELECT merchant_id, name, location_label, distance_metres, cuisine_type, typical_price, dietary_halal, dietary_vegetarian, dietary_vegan, reward_amount, min_spend, is_sample_data FROM merchants WHERE merchant_id = ?') {
+      if (this.catalogueFailing) throw new Error('simulated catalogue outage');
+      assert.equal(params.length, 1);
+      assert.equal(typeof params[0], 'string');
+      const row = this.merchants.get(params[0]);
+      return [row && !Array.isArray(row) ? [{ ...row }] : [], []];
+    }
     if (/^SELECT (budget_max, max_walk_minutes, dietary_preference|\*) FROM users WHERE user_id = \?$/.test(text)) {
       const row = this.users.get(params[0]);
       return [row ? [{ ...row }] : [], []];

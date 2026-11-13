@@ -2,6 +2,8 @@ const { database: db } = require('./helpers/test-isolation.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { start } = require('./helpers/visitor.cjs');
+const { seedCatalogue } = require('./helpers/catalogue-fixtures.cjs');
+test.beforeEach(() => seedCatalogue(db));
 let http;
 test.before(async () => { http = await start(); });
 test.after(() => http.close());

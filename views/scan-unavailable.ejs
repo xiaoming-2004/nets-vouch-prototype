@@ -1,0 +1,8 @@
+<%- include('partials/start', { title: 'Merchant unavailable' }) %>
+<section class="card state-card">
+  <h1>Merchant catalogue unavailable</h1>
+  <p class="error" role="alert">We could not load this merchant right now. Try again to continue with the same merchant.</p>
+  <a class="button" href="<%= retryUrl %>">Try again</a>
+  <a class="text-button" href="/scan">Back to Scan</a>
+</section>
+<%- include('partials/end', { active: 'scan' }) %>

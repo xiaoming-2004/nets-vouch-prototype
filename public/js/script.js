@@ -168,8 +168,8 @@ function clearMatchingStages() {
 }
 function matchingMarkup(again) {
   return '<div class="matching"><div class="matching-spinner" aria-hidden="true"></div><h2 data-matching-title>' +
-    (again ? 'Finding something better…' : 'Finding nearby places…') + '</h2><p data-matching-sub>' +
-    (again ? 'Using your feedback' : 'Checking what\'s around you right now') +
+    (again ? 'Finding something better…' : 'Finding catalogue matches…') + '</h2><p data-matching-sub>' +
+    (again ? 'Using your feedback' : 'Checking stored catalogue information') +
     '</p><div class="skeleton" aria-hidden="true"><i></i><i></i><i></i></div></div>';
 }
 function startMatchingStages() {
@@ -200,7 +200,7 @@ function escHtml(str) {
   return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 function escAttr(str) {
-  return String(str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  return escHtml(str).replace(/"/g, '&quot;');
 }
 
 const REC_REJECTION_REASONS = [
@@ -215,11 +215,16 @@ const DIETARY_LABELS = { halal: 'Halal', vegetarian: 'Vegetarian', vegan: 'Vegan
 function renderRecCard(r) {
   const tags = (r.dietary || []).map(function(d) { return DIETARY_LABELS[d]; }).filter(Boolean);
   const tagHtml = tags.map(function(t) { return '<span class="rec-tag">' + escHtml(t) + '</span>'; }).join('');
-  const rewardHtml = r.campaign
+  const rewardHtml = r.campaign && Number.isFinite(r.campaign.rewardAmount) && Number.isFinite(r.campaign.minimumEligibleSpend)
     ? '<p class="rec-reward">Earn $' + escHtml(r.campaign.rewardAmount.toFixed(2)) + ' ' +
       escHtml(r.campaign.rewardLabel) + ' · Spend $' +
       escHtml(r.campaign.minimumEligibleSpend.toFixed(2)) + '+</p>'
     : '';
+  const priceHtml = Number.isFinite(r.price) ? '<strong>$' + r.price.toFixed(2) + '</strong>' : 'unavailable';
+  const distance = r.source === 'mysql' ? r.distanceLabel || 'Catalogue distance unavailable'
+    : r.distanceMinutes + ' min away';
+  const sampleHtml = r.isSampleData === true ? '<p class="rec-meta">' +
+    (r.source === 'mysql' ? 'Sample catalogue data' : 'Demo merchant') + '</p>' : '';
   const reasonHtml = REC_REJECTION_REASONS.map(function(reason) {
     return '<button type="submit" name="reason" value="' + escAttr(reason.id) + '">' +
       escHtml(reason.label) + '<span aria-hidden="true">→</span></button>';
@@ -231,12 +236,13 @@ function renderRecCard(r) {
     '<h2 class="rec-name">' + escHtml(r.merchantName) + '</h2>' +
     (r.itemName
       ? '<p class="rec-dish">' + escHtml(r.itemName) +
-        (r.price !== null ? ' · <strong>$' + escHtml(r.price.toFixed(2)) + '</strong>' : '') + '</p>'
-      : '') +
-    '<p class="rec-meta">' + escHtml(r.distanceMinutes) + ' min away' +
+        (Number.isFinite(r.price) ? ' · ' + priceHtml : '') + '</p>'
+      : '<p class="rec-dish">Typical price: ' + priceHtml + '</p>') +
+    '<p class="rec-meta">' + escHtml(distance) +
       (tagHtml ? ' · ' + tagHtml : '') + '</p>' +
     '</div>' +
     '</div>' +
+    sampleHtml +
     rewardHtml +
     '<form method="POST" action="/recommendation/accept" data-single-submit>' +
     '<input type="hidden" name="merchantId" value="' + escAttr(r.id) + '">' +
@@ -256,17 +262,20 @@ function renderRecCard(r) {
     '</article>';
 }
 
-function renderRecommendationList(recommendations) {
+function renderRecommendationList(recommendations, catalogue) {
+  const notice = catalogue && catalogue.source === 'demo-fallback'
+    ? '<p class="report-note" role="status">Catalogue unavailable — showing demo merchants.</p>' : '';
+  const emptyCatalogue = catalogue && catalogue.source === 'mysql' && catalogue.status === 'empty';
   if (!recommendations || !recommendations.length) {
-    return '<section class="card state-card reveal">' +
+    return notice + '<section class="card state-card reveal">' +
       '<div class="state-icon" aria-hidden="true">' +
       '<svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/>' +
       '<circle cx="12" cy="9.5" r="2.5"/></svg></div>' +
-      '<h2>No matches nearby</h2>' +
-      '<p>Try widening your distance or budget in <a href="/profile">Profile</a>.</p>' +
+      (emptyCatalogue ? '<h2>No merchants in the catalogue</h2><p>The catalogue is currently empty.</p>'
+        : '<h2>No matches for your filters</h2><p>Try widening your distance or budget in <a href="/profile">Profile</a>.</p>') +
       '</section>';
   }
-  return '<div class="rec-list">' + recommendations.map(renderRecCard).join('') + '</div>';
+  return notice + '<div class="rec-list">' + recommendations.map(renderRecCard).join('') + '</div>';
 }
 
 async function loadMatch(again) {
@@ -274,8 +283,7 @@ async function loadMatch(again) {
   matchRegion.setAttribute('aria-busy', 'true');
   matchRegion.innerHTML = matchingMarkup(again);
   startMatchingStages();
-  const locationReady = await prepareDiscoveryLocation();
-  if (!locationReady) { renderLocationNeeded(); return; }
+  // Catalogue distances are estimates from the demo origin, not device GPS.
   try {
     const results = await Promise.all([
       fetch('/api/recommend').then(function(response) {
@@ -286,7 +294,7 @@ async function loadMatch(again) {
       wait(2000)
     ]);
     clearMatchingStages();
-    matchRegion.innerHTML = renderRecommendationList(results[0].recommendations);
+    matchRegion.innerHTML = renderRecommendationList(results[0].recommendations, results[0].catalogue);
     const cards = matchRegion.querySelectorAll('[data-merchant-id]');
     smartMatchDebug('recommendations rendered: ' + cards.length);
     initMerchantMap();

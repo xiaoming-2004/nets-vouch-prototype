@@ -19,6 +19,7 @@ try {
 
 // FIXED: Corrected relative path to load db.js from the Database folder
 const db = require('./Database/db');
+const merchantCatalogue = require('./merchant-catalogue');
 const { getAgentRecommendations } = require('./nets_agent');
 
 const app = express();
@@ -920,7 +921,7 @@ function createInitialDemo(userId) {
     discoveryLocation: null, locationAttempted: false, nearbySource: null, nearbyDemoFallback: false,
     nearbyRefreshAttempted: false, matchContinuation: null,
     recommendationFeedback: [], shownMerchantIds: [],
-    lastApiRecommendations: [],
+    lastApiRecommendations: [], catalogueBatch: [], selectedMerchantSnapshot: null,
     currentScanPayment: null, activeVouchClaim: null,
     transactions: [], paymentVerifiedVouches: [], promotionalRedemptions: [],
     nextScanNumber: 1, nextTransactionNumber: 1, nextVouchNumber: 1,
@@ -988,9 +989,59 @@ function findMerchantById(merchantList, merchantId) {
 }
 
 function findMerchantForDemo(demo, merchantId) {
+  const snapshot = storedMerchantSnapshot(demo, merchantId);
+  if (snapshot) return snapshot;
   const nearbyMerchant = findMerchantById(demo.nearbyMerchants, merchantId);
   if (nearbyMerchant) return nearbyMerchant;
   return findMerchantById(fallbackMerchants, merchantId) || discoveredMerchants.get(merchantId) || null;
+}
+
+// Snapshots are plain session data. Live campaign counters/status remain shared.
+function storedMerchantSnapshot(demo, merchantId) {
+  if (!demo || !merchantId) return null;
+  const scan = demo.currentScanPayment;
+  if (scan && scan.status !== 'COMPLETE' && scan.merchantSnapshot && scan.merchantId === merchantId) return scan.merchantSnapshot;
+  const claim = demo.activeVouchClaim;
+  if (claim && claim.status === 'CLAIMED' && Number(claim.expiresAt) > Date.now() &&
+      claim.merchantId === merchantId && claim.merchantSnapshot) return claim.merchantSnapshot;
+  if (demo.recommendationAccepted && demo.selectedMerchantSnapshot && demo.selectedMerchantId === merchantId) return demo.selectedMerchantSnapshot;
+  return findMerchantById(demo.catalogueBatch || [], merchantId);
+}
+
+function snapshotMerchant(merchant) {
+  return merchant ? JSON.parse(JSON.stringify(merchant)) : null;
+}
+
+function campaignWithTerms(campaign, merchant) {
+  if (!campaign || !merchant || !merchant.catalogueTerms) return campaign;
+  const terms = merchant.catalogueTerms;
+  return new Proxy(campaign, {
+    get(target, key) { return Object.prototype.hasOwnProperty.call(terms, key) ? terms[key] : Reflect.get(target, key); },
+    set(target, key, value) { return Reflect.set(target, key, value); }
+  });
+}
+
+function ensureCatalogueCampaign(merchant) {
+  if (!merchant.catalogueTerms || merchantCampaignStore.some(c => c.merchantId === merchant.id)) return;
+  const campaign = createDemoCampaign(merchant.id, 'CATALOGUE_SIMULATED');
+  Object.assign(campaign, merchant.catalogueTerms, { dietaryCapabilities: { ...merchant.dietaryCapabilities } });
+  merchantCampaignStore.push(campaign); // No database write or provider registration.
+}
+
+async function resolveScanMerchant(demo, merchantId) {
+  if (typeof merchantId !== 'string' || !merchantId.trim()) return null;
+  const known = findMerchantForDemo(demo, merchantId);
+  if (known) return known;
+  const merchant = await merchantCatalogue.findMerchant(db, merchantId);
+  if (!merchant || !merchant.catalogueTerms) return null;
+  ensureCatalogueCampaign(merchant);
+  return merchant;
+}
+
+function scanCatalogueUnavailable(res, merchantId) {
+  return res.status(503).render('scan-unavailable', {
+    retryUrl: '/scan/payment?m=' + encodeURIComponent(merchantId)
+  });
 }
 
 function findTransactionById(transactions, transactionId) {
@@ -1114,9 +1165,13 @@ function sanitizeCraving(value) {
   return value.replace(/[<>]/g, '').trim().slice(0, 100);
 }
 
-// Budget only uses a factual price. Provider price tiers (Foursquare Premium `price`, Google
-// `priceLevel`) are not requested, so an unknown price never excludes a merchant.
+// MySQL recommendations require known price/distance to enforce their limits.
+// Legacy provider flows retain their existing unknown-price policy; provider
+// price tiers are not factual meal prices.
 function merchantMatchesProfile(merchant, profile) {
+  if (merchant.source === 'mysql' && (!Number.isFinite(merchant.price) || !Number.isFinite(merchant.distanceMetres))) return false;
+  if (merchant.source === 'mysql' && isActiveRestriction(profile.dietaryPreference) &&
+      !merchantDeclaresDiet(merchant, profile.dietaryPreference)) return false;
   if (merchant.price !== null && merchant.price > profile.budget) return false;
   // Places API merchants carry real distanceMetres; use it for precise filtering.
   // Local demo merchants only have distanceMinutes, so fall back to the coarser check.
@@ -2421,7 +2476,7 @@ function logDiscovery(message) {
   if (process.env.NODE_ENV !== 'production') console.info(message);
 }
 
-function findCampaign(demo, merchantId) {
+function findCampaignState(merchantId) {
   for (let i = 0; i < merchantCampaignStore.length; i++) {
     const campaign = merchantCampaignStore[i];
     if (campaign.merchantId === merchantId) {
@@ -2436,9 +2491,14 @@ function findCampaign(demo, merchantId) {
   return null;
 }
 
+function findCampaign(demo, merchantId) {
+  return campaignWithTerms(findCampaignState(merchantId), storedMerchantSnapshot(demo, merchantId));
+}
+
 function findCampaignForMerchant(merchant, demo) {
   if (!merchant) return null;
-  const campaign = findCampaign(demo, merchant.id);
+  if (merchant.source === 'mysql' && !merchant.catalogueTerms) return null;
+  const campaign = campaignWithTerms(findCampaignState(merchant.id), merchant);
   if (!campaign || !getCampaignAvailability(campaign, false).available) return null;
   return campaign;
 }
@@ -2554,6 +2614,7 @@ function normaliseDietaryCapabilities(record) {
 // comes back all-false, whatever it is called or however it was found.
 function merchantDietaryCapabilities(merchant) {
   if (!merchant) return { halal: false, vegetarian: false, vegan: false };
+  if (merchant.source === 'mysql') return normaliseDietaryCapabilities(merchant);
   return normaliseDietaryCapabilities(findCampaign(null, merchant.id));
 }
 
@@ -3352,6 +3413,7 @@ function recordPayment(demo, journey, amount, useCashback) {
     id: 'tx-' + randomUUID(), ownerUserId: demo.user.id,
     journeyId: journey.id, source: acquisitionSource, journeySource: journey.source,
     merchantId: journey.merchantId, merchantName: journey.merchantName, outlet: journey.outlet,
+    merchantSnapshot: snapshotMerchant(journey.merchantSnapshot),
     itemName: journey.source === 'smart-match' ? journey.itemName : null,
     purchaseAmount: amount, merchantCreditUsed: breakdown.merchantCreditUsed,
     cashbackUsed: breakdown.merchantCreditUsed, netsPaid: breakdown.netsPaid,
@@ -3521,7 +3583,7 @@ function smartMatchResultDisplay(demo, recommendation) {
     // of any kind happens here.
     dietary: resultDietaryTag(recommendation, demo.profile.dietaryPreference),
     dietaryBadges: merchantDietaryBadges(recommendation),
-    demoVouches: smartMatchResult.demoVouchCount(recommendation.id) + countVouches(demo, recommendation.id),
+    demoVouches: recommendation.source === 'mysql' ? 0 : smartMatchResult.demoVouchCount(recommendation.id) + countVouches(demo, recommendation.id),
     photo: photo ? { src: '/smart-match/photo/' + encodeURIComponent(recommendation.id), attributions: photo.attributions } : null,
     // Tapping the result map opens Google Maps walking directions. Origin is the visitor's real
     // session location; with demo location/data Google Maps routes from the device instead.
@@ -3945,7 +4007,7 @@ app.get('/smart-match/static', async function(req, res) {
 //   cuisine       — dietary preference id: none | halal | vegetarian | vegan
 //   diningTime    — HH:MM string (e.g. "12:30") — stored as context, not a hard filter
 //   maxDistance   — max walking minutes (e.g. 15)
-app.get('/api/recommend', function(req, res) {
+app.get('/api/recommend', async function(req, res) {
   const demo = req.session.demo;
 
   const budget = (function() {
@@ -3971,17 +4033,26 @@ app.get('/api/recommend', function(req, res) {
     dietaryPreference: cuisine,
     maxDistanceMinutes: maxDistanceMinutes
   });
+  demo.catalogueBatchProfile = { ...apiProfile };
 
-  if (!demo.nearbyMerchants.length) {
-    demo.nearbyMerchants = copyObjects(fallbackMerchants);
-    demo.nearbySource = 'local-fallback';
+  let merchants;
+  let catalogue;
+  try {
+    const loaded = await merchantCatalogue.loadCatalogue(db);
+    merchants = loaded.merchants;
+    merchants.forEach(ensureCatalogueCampaign);
+    catalogue = { source: 'mysql', status: loaded.status };
+  } catch (error) {
+    merchants = copyObjects(fallbackMerchants);
+    catalogue = { source: 'demo-fallback', status: 'unavailable' };
   }
 
-  const eligible = getEligibleMerchants(apiProfile, demo.nearbyMerchants, demo.rejectedMerchantIds, demo);
+  const eligible = getEligibleMerchants(apiProfile, merchants.filter(m => Number.isFinite(m.price)), demo.rejectedMerchantIds, demo);
 
   if (!eligible.length) {
     demo.lastApiRecommendations = [];
-    return res.json({ recommendations: [] });
+    demo.catalogueBatch = [];
+    return res.json({ recommendations: [], catalogue });
   }
 
   const lastFeedback = getLastFeedback(demo.recommendationFeedback);
@@ -4012,6 +4083,13 @@ app.get('/api/recommend', function(req, res) {
   scored.sort(function(a, b) { return b.score - a.score; });
   const top3 = scored.slice(0, 3);
 
+  demo.catalogueBatch = top3.map(item => {
+    const merchant = item.merchant;
+    const campaign = findCampaignForMerchant(merchant, demo);
+    return { ...merchant, catalogueTerms: { rewardAmount: campaign.rewardAmount,
+      rewardLabel: campaign.rewardLabel, minimumEligibleSpend: campaign.minimumEligibleSpend } };
+  });
+
   const recommendations = top3.map(function(item) {
     const m = item.merchant;
     const campaign = findCampaignForMerchant(m, demo);
@@ -4021,6 +4099,10 @@ app.get('/api/recommend', function(req, res) {
       itemName: m.itemName || null,
       price: m.price,
       distanceMinutes: m.distanceMinutes,
+      distanceMetres: m.distanceMetres === undefined ? null : m.distanceMetres,
+      distanceLabel: m.distanceLabel || null,
+      source: m.source,
+      isSampleData: m.source === 'mysql' ? m.isSampleData : true,
       dietary: Array.isArray(m.dietary) ? m.dietary : [],
       category: m.category || null,
       campaign: campaign ? {
@@ -4033,14 +4115,16 @@ app.get('/api/recommend', function(req, res) {
 
   demo.lastApiRecommendations = recommendations.map(function(r) { return r.id; });
 
-  res.json({ recommendations: recommendations });
+  res.json({ recommendations: recommendations, catalogue });
 });
 
 app.get('/recommendation', function(req, res) { res.redirect('/home'); });
 app.get('/recommendation/reject', function(req, res) { res.redirect('/home#feedback'); });
 app.post('/recommendation/reject', function(req, res) {
   const demo = req.session.demo;
-  let merchant = findMerchantForDemo(demo, demo.selectedMerchantId);
+  let merchant = Array.isArray(demo.lastApiRecommendations) && demo.lastApiRecommendations.includes(req.body.merchantId)
+    ? findMerchantById(demo.catalogueBatch || [], req.body.merchantId) : null;
+  merchant = merchant || findMerchantForDemo(demo, demo.selectedMerchantId);
   // Allow rejecting any card from the last /api/recommend batch, not just the selected one.
   if ((!merchant || merchant.id !== req.body.merchantId) &&
       Array.isArray(demo.lastApiRecommendations) && demo.lastApiRecommendations.includes(req.body.merchantId)) {
@@ -4064,6 +4148,7 @@ app.post('/recommendation/reject', function(req, res) {
     db.execute('UPDATE users SET weight_distance_sensitivity = weight_distance_sensitivity + 0.2 WHERE user_id = ?', [demo.user.id]).catch(function() {});
   }
   demo.selectedMerchantId = null;
+  demo.selectedMerchantSnapshot = null;
   demo.recommendationAccepted = false;
   logDiscovery('Rejected: ' + merchant.id + '\nReason: ' + req.body.reason +
     '\nShown history size: ' + demo.shownMerchantIds.length + '\nContinuation: rerank unseen, then at most one uncached search');
@@ -4096,22 +4181,19 @@ app.post('/recommendation/widen-distance', restartMatch);
 
 app.post('/recommendation/accept', function(req, res) {
   const demo = req.session.demo;
-  let merchant = findMerchantForDemo(demo, demo.selectedMerchantId);
-  // Allow accepting any card from the last /api/recommend batch.
-  if ((!merchant || merchant.id !== req.body.merchantId) &&
-      Array.isArray(demo.lastApiRecommendations) && demo.lastApiRecommendations.includes(req.body.merchantId)) {
-    const candidate = findMerchantForDemo(demo, req.body.merchantId);
-    if (candidate) {
-      demo.selectedMerchantId = candidate.id;
-      demo.recommendationAccepted = false;
-      merchant = candidate;
-    }
-  }
+  const batchMerchant = Array.isArray(demo.lastApiRecommendations) && demo.lastApiRecommendations.includes(req.body.merchantId)
+    ? findMerchantById(demo.catalogueBatch || [], req.body.merchantId) : null;
+  const merchant = batchMerchant || findMerchantForDemo(demo, demo.selectedMerchantId);
   if (!merchant || merchant.id !== req.body.merchantId ||
-      !merchantMatchesProfile(merchant, demo.profile) || !findCampaignForMerchant(merchant, demo)) {
+      !merchantMatchesProfile(merchant, batchMerchant ? demo.catalogueBatchProfile || demo.profile : demo.profile) || !findCampaignForMerchant(merchant, demo)) {
     return res.redirect('/home?error=offer');
   }
-  if (!demo.recommendationAccepted) findCampaign(demo, merchant.id).metrics.smartMatchAccepted += 1;
+  // An API refresh/selection cannot replace a scan/payment already in progress.
+  if (demo.currentScanPayment && ['MERCHANT_FOUND', 'PAID'].includes(demo.currentScanPayment.status)) return res.redirect('/scan');
+  if (!demo.recommendationAccepted || demo.selectedMerchantId !== merchant.id) findCampaignState(merchant.id).metrics.smartMatchAccepted += 1;
+  demo.selectedMerchantId = merchant.id;
+  demo.selectedMerchantSnapshot = snapshotMerchant(batchMerchant || merchant);
+  if (batchMerchant) { demo.selectedMerchantReason = null; demo.selectedMerchantRelevance = null; }
   demo.recommendationAccepted = true;
   res.redirect('/scan');
 });
@@ -4134,48 +4216,58 @@ app.get('/scan', function(req, res) {
   const activeMerchantId = activeClaim && activeClaim.status === 'CLAIMED'
     ? activeClaim.merchantId
     : demo.recommendationAccepted && demo.selectedMerchantId ? demo.selectedMerchantId : null;
-  const scanMerchants = demo.discoveryLocation && (demo.nearbySource === 'google' || demo.nearbySource === 'foursquare')
+  const scanMerchants = demo.catalogueBatch && demo.catalogueBatch.length ? demo.catalogueBatch.slice()
+    : demo.discoveryLocation && (demo.nearbySource === 'google' || demo.nearbySource === 'foursquare')
     ? demo.nearbyMerchants.slice() : fallbackMerchants.slice();
   const activeMerchant = findMerchantForDemo(demo, activeMerchantId);
-  if (activeMerchant && !findMerchantById(scanMerchants, activeMerchant.id)) scanMerchants.unshift(activeMerchant);
+  if (activeMerchant) {
+    const index = scanMerchants.findIndex(m => m.id === activeMerchant.id);
+    if (index === -1) scanMerchants.unshift(activeMerchant);
+    else scanMerchants[index] = activeMerchant;
+  }
   res.render('scan', {
     error: req.query.error === 'invalid',
     merchants: scanMerchants,
     activeMerchantId: activeMerchantId
   });
 });
-app.post('/scan', function(req, res) {
+app.post('/scan', async function(req, res) {
   const demo = req.session.demo;
   const merchantId = req.body.merchantId;
-  const merchant = findMerchantForDemo(demo, merchantId);
-  if (!merchant || req.body.campaignId && req.body.campaignId !== merchant.id + '-campaign') {
-    return res.redirect('/scan?error=invalid');
-  }
   const existing = demo.currentScanPayment;
   if (existing && existing.status === 'PAID') return res.redirect('/vouch/' + existing.transactionId);
   if (existing && existing.status === 'MERCHANT_FOUND') return res.redirect('/scan/payment');
+  if (req.body.campaignId && req.body.campaignId !== merchantId + '-campaign') return res.redirect('/scan?error=invalid');
+  let merchant;
+  try { merchant = await resolveScanMerchant(demo, merchantId); }
+  catch (error) { return scanCatalogueUnavailable(res, merchantId); }
+  if (!merchant) return res.redirect('/scan?error=invalid');
   demo.currentScanPayment = {
     id: 'scan-' + randomUUID(), source: 'scan',
     attributionSource: demo.recommendationAccepted && demo.selectedMerchantId === merchant.id ? 'smart-match' : 'scan',
     merchantId: merchant.id, merchantName: merchant.merchantName, outlet: merchant.address,
+    merchantSnapshot: snapshotMerchant(merchant),
     enteredAmount: null, status: 'MERCHANT_FOUND', transactionId: null,
     cashbackUsed: 0, netsPaid: 0, cashbackAwarded: 0, vouchDecision: 'pending'
   };
   findCampaign(demo, merchant.id).metrics.scans += 1;
   res.redirect('/scan/payment?m=' + encodeURIComponent(merchant.id));
 });
-app.get('/scan/payment', function(req, res) {
+app.get('/scan/payment', async function(req, res) {
   const demo = req.session.demo;
   let scan = demo.currentScanPayment;
 
-  // If session is cold (Vercel cold start) but ?m= is present, rebuild scan state on the fly.
+  // Recover a fresh-session form by exact catalogue ID. This GET never records a payment.
   if ((!scan || scan.status === 'COMPLETE') && req.query.m) {
-    const merchant = findMerchantForDemo(demo, req.query.m);
+    let merchant;
+    try { merchant = await resolveScanMerchant(demo, req.query.m); }
+    catch (error) { return scanCatalogueUnavailable(res, req.query.m); }
     if (!merchant) return res.redirect('/scan?error=invalid');
     scan = {
       id: 'scan-' + randomUUID(), source: 'scan',
       attributionSource: demo.recommendationAccepted && demo.selectedMerchantId === merchant.id ? 'smart-match' : 'scan',
       merchantId: merchant.id, merchantName: merchant.merchantName, outlet: merchant.address,
+      merchantSnapshot: snapshotMerchant(merchant),
       enteredAmount: null, status: 'MERCHANT_FOUND', transactionId: null,
       cashbackUsed: 0, netsPaid: 0, cashbackAwarded: 0, vouchDecision: 'pending'
     };
@@ -4264,11 +4356,12 @@ app.post('/vouch/:id', function(req, res) {
       tag: tag, tagLabel: tag ? getVouchTagLabel(tag) : 'Payment-Verified', shareToken: shareToken
     };
     demo.paymentVerifiedVouches.unshift(vouch);
-    const campaign = findCampaign(demo, transaction.merchantId);
+    const campaign = campaignWithTerms(findCampaignState(transaction.merchantId), transaction.merchantSnapshot);
     sharedOffers.set(shareToken, {
       token: shareToken, vouchId: vouch.id, ownerSessionId: req.sessionID, senderUserId: demo.user.id,
       merchantId: transaction.merchantId,
       merchantName: transaction.merchantName, user: demo.user.name, tagLabel: vouch.tagLabel,
+      merchantSnapshot: snapshotMerchant(transaction.merchantSnapshot),
       rewardAmount: campaign ? campaign.rewardAmount : 0.50
     });
     transaction.vouchCreated = true;
@@ -4292,7 +4385,7 @@ app.get('/vouch/:id/success', function(req, res) {
   if (!vouch) return res.redirect('/home');
   res.render('vouch-success', { transaction: transaction, vouch: vouch,
     sharePath: '/offers/' + vouch.shareToken,
-    campaign: findCampaign(demo, transaction.merchantId) });
+    campaign: campaignWithTerms(findCampaignState(transaction.merchantId), transaction.merchantSnapshot) });
 });
 
 // A copied Vouch link can be opened by another demo session and claimed once.
@@ -4310,7 +4403,7 @@ app.post('/offers/:token/claim', function(req, res) {
   const offer = sharedOffers.get(req.params.token);
   // A person cannot refer themselves, even from a different browser/session - identity is what matters.
   if (!offer || offer.senderUserId === demo.user.id) return res.redirect('/offers/' + req.params.token);
-  const campaign = findCampaign(demo, offer.merchantId);
+  const campaign = campaignWithTerms(findCampaignState(offer.merchantId), offer.merchantSnapshot);
   if (!campaign || !getCampaignAvailability(campaign, false).available) {
     return res.redirect('/offers/' + req.params.token);
   }
@@ -4322,6 +4415,7 @@ app.post('/offers/:token/claim', function(req, res) {
     demo.activeVouchClaim = {
       vouchId: offer.vouchId, token: offer.token, merchantId: offer.merchantId,
       merchantName: offer.merchantName, rewardAmount: offer.rewardAmount, status: 'CLAIMED',
+      merchantSnapshot: snapshotMerchant(offer.merchantSnapshot),
       senderUserId: offer.senderUserId, recipientUserId: demo.user.id,
       claimedAt: getCurrentDateAndTime().iso, expiresAt: Date.now() + CLAIM_EXPIRY_MS, transactionId: null
     };

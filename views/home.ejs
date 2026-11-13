@@ -29,7 +29,7 @@
 <section id="smart-match"><p class="eyebrow">Your Smart Match</p>
 <div data-match-region data-location-ready="<%= locationAttempted ? 'true' : 'false' %>" aria-live="polite" aria-busy="<%= recommendation ? 'false' : 'true' %>">
 <% if (recommendation) { %><%- include('smart-match-card') %><% } else if (!showOnboarding) { %>
-<div class="matching" data-load-match><div class="matching-spinner" aria-hidden="true"></div><h2 data-matching-title><%= matchingAgain ? 'Finding something better…' : 'Finding nearby places…' %></h2><p data-matching-sub><%= matchingAgain ? 'Using your feedback' : 'Checking what\'s around you right now' %></p><div class="skeleton" aria-hidden="true"><i></i><i></i><i></i></div></div>
+<div class="matching" data-load-match><div class="matching-spinner" aria-hidden="true"></div><h2 data-matching-title><%= matchingAgain ? 'Finding something better…' : 'Finding catalogue matches…' %></h2><p data-matching-sub><%= matchingAgain ? 'Using your feedback' : 'Checking stored catalogue information' %></p><div class="skeleton" aria-hidden="true"><i></i><i></i><i></i></div></div>
 <noscript><a class="button" href="/smart-match/static">Find my match</a></noscript>
 <% } %>
 </div></section>

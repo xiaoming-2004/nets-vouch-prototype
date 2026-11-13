@@ -22,6 +22,9 @@ var metaLead = recommendation.parentVenueName || recommendation.categoryLabel ||
 <p class="result-tags"><% if (display.demoVouches) { %><span class="result-vouches" data-demo-sample="true"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m7.5 12.3 3 3 6-6.3"/></svg><%= display.demoVouches %> Vouches</span><% } %><% if (display.dietary) { %><span class="diet-tag diet-tag--<%= display.dietary.tone %>"><%= display.dietary.label %></span><% } %><% if (dietaryTagLabel && dietaryTagLabel !== 'Halal') { %><span class="match-diet"><%= dietaryTagLabel %></span><% } %></p>
 </div>
 </div>
+<% if (recommendation.source === 'mysql') { %>
+<p class="result-facts">Typical price: <%= Number.isFinite(recommendation.price) ? '$' + recommendation.price.toFixed(2) : 'unavailable' %><% if (recommendation.isSampleData === true) { %> · Sample catalogue data<% } %></p>
+<% } %>
 <%
 // The demo-location notice sits on the "Why this match" label line, which has free space to its
 // right: it costs no extra height, never squeezes the dish line, and never overlaps a map control.
