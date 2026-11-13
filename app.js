@@ -12,7 +12,7 @@ const requestBudget = require('./request-budget');
 
 // Load local environment variables when a .env file exists (Node.js 22+).
 try {
-  process.loadEnvFile(path.join(__dirname, '.env'));
+  if (process.env.NODE_ENV !== 'test') process.loadEnvFile(path.join(__dirname, '.env'));
 } catch (error) {
   if (error.code !== 'ENOENT') throw error;
 }
@@ -784,39 +784,9 @@ function registerDemoMerchant(merchant) {
 // of anything that happened during a demonstration. Every claim here must be readable straight off
 // the baseline numbers the report already shows; anything about sales lift, return-visit rate or
 // perceived value would need outcome data this prototype does not collect, so none is asserted.
-function generateMerchantInsights(merchant, campaign, seedMetrics, profile, weeklyData, liveAcquisition) {
+function generateMerchantInsights(merchant, campaign, seedMetrics, weeklyData, liveAcquisition) {
   const insights = [];
-  const profileMax = Math.max.apply(null, profile) || 1;
-  const peakIdx = profile.indexOf(profileMax);
-  const morningAvg = (profile[6] + profile[7] + profile[8] + profile[9]) / 4;
-  const eveningAvg = (profile[20] + profile[21] + profile[22]) / 3;
-  const afternoonTotal = profile[14] + profile[15] + profile[16];
-  const lunchTotal = profile[11] + profile[12] + profile[13] || 1;
-  // 1. Shape of the trading day.
-  if (morningAvg < 1.5 && peakIdx >= 11) {
-    insights.push({
-      icon: '🕙',
-      headline: 'Baseline morning traffic is very low',
-      detail: 'In the illustrative baseline, volume before 10 AM is close to zero and the busiest hour is around midday. Opening-hour decisions would need real trading data this prototype does not collect.',
-      basis: 'Illustrative hourly baseline'
-    });
-  } else if (eveningAvg < 1 && peakIdx < 18) {
-    insights.push({
-      icon: '🕗',
-      headline: 'Baseline evening traffic is very low',
-      detail: 'In the illustrative baseline, volume after 8 PM is close to zero. Closing-hour decisions would need real trading data this prototype does not collect.',
-      basis: 'Illustrative hourly baseline'
-    });
-  }
-  // 2. Quietest window, stated only as a ratio of the baseline itself.
-  if (afternoonTotal / lunchTotal < 0.35) {
-    insights.push({
-      icon: '📉',
-      headline: '2-5 PM is the quietest window in the baseline',
-      detail: 'Afternoon volume is about ' + Math.round(100 * afternoonTotal / lunchTotal) + '% of lunch volume in the illustrative baseline. Whether a campaign in that slot would change it is untested here.',
-      basis: 'Illustrative hourly baseline'
-    });
-  }
+  // Hourly observations are unavailable: no hourly sample profile is defined.
   // 3. Weakest and strongest day in the illustrative weekly series.
   if (weeklyData && weeklyData.length >= 7) {
     const vals = weeklyData.map(function(d) { return d.payments; });
@@ -4098,43 +4068,7 @@ app.post('/recommendation/reject', function(req, res) {
   logDiscovery('Rejected: ' + merchant.id + '\nReason: ' + req.body.reason +
     '\nShown history size: ' + demo.shownMerchantIds.length + '\nContinuation: rerank unseen, then at most one uncached search');
   if (req.get('X-Requested-With') === 'smart-match') return res.sendStatus(204);
-  res.redirect('/home?matching=again');
-
-  // Sync rejection reason to MySQL user weights for future AI learning
-  if (req.body.reason === 'too-expensive') {
-    db.execute('UPDATE users SET weight_price_sensitivity = weight_price_sensitivity + 0.2 WHERE user_id = ?', [demo.user.id]).catch(function() {});
-  } else if (req.body.reason === 'too-far') {
-    db.execute('UPDATE users SET weight_distance_sensitivity = weight_distance_sensitivity + 0.2 WHERE user_id = ?', [demo.user.id]).catch(function() {});
-  }
-
-  // --- NEW: Check if we have backups to pop instantly ---
-  if (demo.matchBackups && demo.matchBackups.length > 0) {
-    let backupMerchant = null;
-    let nextBackup = null;
-    
-    // Find the next backup that hasn't already been rejected
-    while (demo.matchBackups.length > 0 && !backupMerchant) {
-      nextBackup = demo.matchBackups.shift();
-      const potentialMerchant = findMerchantForDemo(demo, nextBackup.merchantId);
-      if (potentialMerchant && !demo.rejectedMerchantIds.includes(potentialMerchant.id)) {
-        backupMerchant = potentialMerchant;
-      }
-    }
-    
-    if (backupMerchant) {
-      demo.selectedMerchantId = backupMerchant.id;
-      demo.selectedMerchantReason = nextBackup.reason || 'Selected as a strong alternative match.';
-      demo.selectedMerchantRelevance = 'medium'; // Safe default
-      demo.recommendationAccepted = false;
-      logDiscovery('Popped backup merchant instantly: ' + backupMerchant.id);
-      
-      if (req.get('X-Requested-With') === 'smart-match') return res.sendStatus(204);
-      return res.redirect('/home?matching=again');
-    }
-  }
-  // --- END NEW BACKUP LOGIC ---
-
-  demo.matchContinuation = { rejectedId: merchant.id, attempted: false };
+  return res.redirect('/home?matching=again');
 });
 
 function restartMatch(req, res) {
@@ -4582,35 +4516,19 @@ app.get('/merchant/report', function(req, res) {
   //   DEMO  - a fixed illustrative baseline shipped with the prototype so the charts have shape
   //           during a demonstration. It did not happen today and is labelled as illustrative
   //           everywhere it appears.
-  // The hourly profile, weekday weights and seeded weekly totals are all DEMO data: the prototype
-  // keeps no per-hour or per-weekday history, so those charts cannot be live and do not claim to be.
-  const profile = getMerchantHourlyProfile(merchant.id);
-  const profileMax = Math.max.apply(null, profile) || 1;
-  const profileSum = profile.reduce(function(s, v) { return s + v; }, 0) || 1;
-  const baselineDailyPayments = seedMetrics ? Math.round(seedMetrics.payments / 7) : 20;
-
-  // Illustrative hourly shape, hours 8am-9pm (indices 8-21). Counts are a modelled distribution of
-  // the illustrative daily average, not recorded transactions.
-  const chartHours = profile.slice(8, 22).map(function(weight, i) {
-    const h = i + 8;
-    return {
-      label: h < 12 ? h + 'am' : h === 12 ? '12pm' : (h - 12) + 'pm',
-      count: Math.round(baselineDailyPayments * weight / profileSum),
-      height: Math.round(100 * weight / profileMax)
-    };
-  });
+  // No hourly/weekday sample profile is defined in this build. Do not invent activity.
+  const chartHours = [];
+  const heatmapData = [];
+  const heatmapHourLabels = [];
+  const baselineDailyPayments = seedMetrics ? Math.round(seedMetrics.payments / 7) : null;
 
   // Illustrative weekly shape. Labelled Day 1-7 because the prototype has no dated history to map
   // these onto real weekdays, and calling them "last 7 days" would assert a range it cannot support.
-  const rawDaily = seedMetrics ? seedMetrics.dailyPayments : [15, 14, 16, 18, 20, 22, 12];
+  const rawDaily = seedMetrics ? seedMetrics.dailyPayments : [];
   const maxDaily = Math.max.apply(null, rawDaily) || 1;
   const weeklyData = rawDaily.map(function(v, i) {
     return { label: 'Day ' + (i + 1), payments: v, height: Math.round(100 * v / maxDaily) };
   });
-
-  const peakIdx = profile.indexOf(profileMax);
-  const peakLabel = peakIdx < 12 ? peakIdx + 'am' : peakIdx === 12 ? '12pm' : (peakIdx - 12) + 'pm';
-  const peakEndLabel = (peakIdx + 1) < 12 ? (peakIdx + 1) + 'am' : (peakIdx + 1) === 12 ? '12pm' : (peakIdx - 11) + 'pm';
 
   // LIVE figures: recorded payments only.
   const lm = campaign.metrics;
@@ -4633,7 +4551,7 @@ app.get('/merchant/report', function(req, res) {
     sales: baselineSales.toFixed(2),
     avgBasket: seedMetrics.payments > 0 ? (baselineSales / seedMetrics.payments).toFixed(2) : null,
     dailyAverage: baselineDailyPayments,
-    peakHour: peakLabel + '-' + peakEndLabel
+    peakHour: null
   } : null;
 
   // Channel mix is reported twice - live and illustrative - so neither can borrow the other's volume.
@@ -4652,27 +4570,7 @@ app.get('/merchant/report', function(req, res) {
     ? channelMix(seedMetrics.smartMatchPayments, seedMetrics.sharedVouchPayments, seedMetrics.directScanPayments)
     : null;
 
-  // Illustrative busy-period shape: the hourly profile weighted per weekday. Not a measurement.
-  const heatmapHourLabels = ['9am','10am','11am','12pm','1pm','2pm','3pm','4pm','5pm','6pm','7pm','8pm'];
-  const heatWeekLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const heatMax = profileMax * Math.max.apply(null, HEATMAP_DAY_WEIGHTS);
-  const heatmapData = heatWeekLabels.map(function(day, d) {
-    return {
-      day: day,
-      cells: heatmapHourLabels.map(function(hlabel, hi) {
-        const h = hi + 9;
-        const raw = profile[h] * HEATMAP_DAY_WEIGHTS[d];
-        const intensity = Math.round(100 * raw / heatMax);
-        return {
-          hourLabel: hlabel,
-          intensity: intensity,
-          cls: intensity < 15 ? 'heat-0' : intensity < 35 ? 'heat-1' : intensity < 55 ? 'heat-2' : intensity < 75 ? 'heat-3' : 'heat-4'
-        };
-      })
-    };
-  });
-
-  const insights = generateMerchantInsights(merchant, campaign, seedMetrics, profile, weeklyData, liveAcquisition);
+  const insights = generateMerchantInsights(merchant, campaign, seedMetrics, weeklyData, liveAcquisition);
 
   res.render('merchant-report', {
     merchants: merchantList, merchant: merchant, campaign: campaign,

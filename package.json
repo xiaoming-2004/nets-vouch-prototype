@@ -7,7 +7,7 @@
   },
   "scripts": {
     "start": "node app.js",
-    "test": "npm run test:browser-js && node --test tests/*.test.js",
+    "test": "npm run test:browser-js && node --require ./tests/helpers/test-isolation.cjs --test tests/*.test.js",
     "test:browser-js": "node --check public/js/script.js"
   },
   "dependencies": {

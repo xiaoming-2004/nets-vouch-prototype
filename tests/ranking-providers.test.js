@@ -1,3 +1,4 @@
+require('./helpers/test-isolation.cjs');
 const rankingFixture = require('./ranking-fixture');
 const test = require('node:test');
 const assert = require('node:assert/strict');

@@ -1,9 +1,10 @@
+require('./helpers/test-isolation.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
 const ejs = require('ejs');
-const { app, demoStore, getMerchantCampaigns, resetMerchantCampaigns, resetReferralCooldowns } = require('../app');
+const { app, demoStore, getMerchantCampaigns, resetMerchantCampaigns, resetReferralCooldowns, getNearbyMerchants, clearDiscoveryCache } = require('../app');
 
 // The merchant Results and Business Report views must never present manufactured activity as real.
 // Two kinds of figure exist and may never be added together or mislabelled:
@@ -336,4 +337,39 @@ test('Reset Demo clears the live report figures and leaves the illustrative base
   assert.match(html, /Payments recorded<\/small><b>0<\/b>/);
   assert.match(html, /Gross sales<\/small><b>\$0\.00<\/b>/);
   assert.match(html, /Sample payments<\/small><b>494<\/b>/, 'the illustrative baseline survives reset');
+});
+
+
+test('missing hourly and weekday samples render honest empty states without fabricated observations', async () => {
+  const v = visitor(); const page = await report(v, 'felicia-chicken-rice');
+  assert.equal(page.status, 200);
+  assert.match(page.html, /Hourly activity unavailable/); assert.match(page.html, /Busiest periods unavailable/);
+  assert.match(page.html, /Sample busiest hour<\/small><b>Unavailable<\/b>/);
+  assert.doesNotMatch(page.html, /NaN|Infinity|Baseline morning traffic|Baseline evening traffic|2-5 PM is the quietest/);
+  assert.match(page.html, /Sample payments<\/small><b>494<\/b>/);
+});
+
+test('invalid report merchant redirects to the existing fallback route', async () => {
+  const v = visitor(); const page = await report(v, 'not-a-merchant');
+  assert.equal(page.status, 302); assert.equal(page.location, '/merchant/report?merchantId=felicia-chicken-rice');
+});
+
+
+test('a discovered outlet without existing samples receives honest baseline empty states', async () => {
+  const originalFetch = global.fetch;
+  process.env.FOURSQUARE_API_KEY = 'synthetic-report-key'; clearDiscoveryCache();
+  global.fetch = async () => ({ ok: true, json: async () => ({ results: [{
+    fsq_place_id: 'task1-unseeded-report', name: 'Report fixture outlet', latitude: 1.443,
+    longitude: 103.786, distance: 100, categories: [{ name: 'Restaurant' }],
+    location: { formatted_address: 'Fixture address' }
+  }] }) });
+  let merchants;
+  try { merchants = (await getNearbyMerchants({ latitude: 1.4428, longitude: 103.7854 }, 'report-fixture', '', 15)).merchants; }
+  finally { global.fetch = originalFetch; delete process.env.FOURSQUARE_API_KEY; }
+  assert.equal(merchants.length, 1);
+  const page = await report(visitor(), merchants[0].id);
+  assert.equal(page.status, 200); assert.match(page.html, /No sample totals are available/);
+  assert.match(page.html, /No weekly sample data is available/);
+  assert.match(page.html, /Hourly activity unavailable/); assert.match(page.html, /Busiest periods unavailable/);
+  assert.doesNotMatch(page.html, /NaN|Infinity/);
 });

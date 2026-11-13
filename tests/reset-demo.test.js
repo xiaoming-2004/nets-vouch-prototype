@@ -1,3 +1,4 @@
+const { database: fixtureDb } = require('./helpers/test-isolation.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { app, demoStore, getMerchantCampaigns, getNearbyMerchants,
@@ -51,6 +52,10 @@ function visitor() {
       const header = response.headers.get('set-cookie');
       if (header) cookie = header.split(';')[0];
       return { status: response.status, location: response.headers.get('location'), html: await response.text() };
+    },
+    async replaceState(state) {
+      const id = decodeURIComponent(cookie.split('=')[1]).slice(2).split('.')[0];
+      await new Promise((resolve, reject) => demoStore.set(id, state, error => error ? reject(error) : resolve()));
     },
     async state() {
       const id = decodeURIComponent(cookie.split('=')[1]).slice(2).split('.')[0];
@@ -295,4 +300,42 @@ test('Foursquare discovery cache is preserved across demo reset', async function
   await reset(v);
   await getNearbyMerchants(location, 'darren', '');
   assert.equal(calls, 1);
+});
+
+// Deferred production risk: this characterizes a broad UPDATE using fixtures only.
+test('reset updates every fixture user but preserves rows and migrated preference fields', async () => {
+  for (const id of ['jia', 'darren', 'unrelated-user']) fixtureDb.seedUser(id, {
+    budget_max: 4, max_walk_minutes: 3, dietary_preference: 'vegan', weight_price_sensitivity: 2,
+    weight_distance_sensitivity: 3, weight_quietness_affinity: 4, max_distance_minutes: 25,
+    mood_cuisine: 'rice', craving: 'laksa', notifications: 0, has_set_preferences: 1
+  });
+  const v = visitor(); await v.request('/home'); await reset(v);
+  assert.equal(fixtureDb.users.size, 3);
+  for (const row of fixtureDb.users.values()) {
+    assert.deepEqual([row.budget_max, row.max_walk_minutes, row.dietary_preference,
+      row.weight_price_sensitivity, row.weight_distance_sensitivity, row.weight_quietness_affinity], [10, 15, 'none', 1, 1, 1]);
+    assert.deepEqual([row.max_distance_minutes, row.mood_cuisine, row.craving, row.notifications, row.has_set_preferences], [25, 'rice', 'laksa', 0, 1]);
+  }
+  const writes = fixtureDb.calls.filter(c => /^(UPDATE|INSERT|DELETE)/.test(c.sql));
+  assert.equal(writes.length, 1); assert.doesNotMatch(writes[0].sql, /WHERE|rejection_feedback/);
+});
+
+test('current MemoryStore: stale in-flight state cannot restore a pre-reset payment', async () => {
+  const v = visitor(); await v.request('/home'); pinCampaign('felicia-chicken-rice', 0.50, 5);
+  await pay(v, 'felicia-chicken-rice', '6.00'); const stale = await v.state();
+  assert.equal(stale.demo.transactions.length, 1);
+  await reset(v); await v.replaceState(stale);
+  assert.equal((await v.state()).demo.transactions.length, 1);
+  assert.equal((await v.request('/profile/activity')).status, 200);
+  assert.deepEqual((await v.state()).demo.transactions, []);
+});
+
+test('current MemoryStore: a session save failure must not report reset success', async () => {
+  const v = visitor(); await v.request('/home'); const original = demoStore.set;
+  demoStore.set = function(id, state, callback) { callback(new Error('simulated session save failure')); };
+  try {
+    const response = await v.request('/reset-demo', {});
+    assert.equal(response.status, 500); assert.match(response.html, /could not be completed/);
+    assert.notEqual(response.location, '/home?reset=done');
+  } finally { demoStore.set = original; }
 });

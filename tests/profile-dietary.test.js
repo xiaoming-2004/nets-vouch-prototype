@@ -1,3 +1,4 @@
+require('./helpers/test-isolation.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { app, demoStore, getDietaryMatchState, MATCH_STATE, getMerchantCampaigns, clearDiscoveryCache, clearSearchIntentCache, resetMerchantCampaigns } = require('../app');
