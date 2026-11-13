@@ -1,24 +1,41 @@
 const mysql = require('mysql2/promise');
 
-// Create a connection pool to the NetsVouch MySQL database
-const pool = mysql.createPool({
-  host: 'localhost',
-  user: 'root',
-  password: 'RP738946$',
-  database: 'netsvouch',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
+// MySQL connection settings come from the environment only (see .env.example); credentials are
+// never written into source. With nothing configured this module stays inert: isConfigured() is
+// false and no pool is ever created, so the app and the test suite run cleanly without MySQL.
+function settings() {
+  return {
+    host: process.env.MYSQL_HOST,
+    user: process.env.MYSQL_USER,
+    password: process.env.MYSQL_PASSWORD,
+    database: process.env.MYSQL_DATABASE || 'netsvouch'
+  };
+}
 
-// Test the connection immediately
-pool.getConnection()
-  .then(connection => {
-    console.log('✅ Successfully connected to the netsvouch MySQL database from Database/db.js.');
-    connection.release();
-  })
-  .catch(err => {
-    console.error('❌ FATAL ERROR: Failed to connect to MySQL database:', err.message);
-  });
+function isConfigured() {
+  const config = settings();
+  return Boolean(config.host && config.user && typeof config.password === 'string');
+}
 
-module.exports = pool;
+let pool = null;
+function getPool() {
+  if (!pool) {
+    pool = mysql.createPool({
+      ...settings(),
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0
+    });
+  }
+  return pool;
+}
+
+function notConfigured() {
+  return Promise.reject(new Error('MySQL is not configured (set MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD)'));
+}
+
+module.exports = {
+  isConfigured: isConfigured,
+  query: function(sql, params) { return isConfigured() ? getPool().query(sql, params) : notConfigured(); },
+  execute: function(sql, params) { return isConfigured() ? getPool().execute(sql, params) : notConfigured(); }
+};
