@@ -14,7 +14,6 @@ DROP TABLE IF EXISTS transactions;
 DROP TABLE IF EXISTS merchant_activity_slots;
 DROP TABLE IF EXISTS merchants;
 DROP TABLE IF EXISTS users;
-DROP TABLE IF EXISTS rejection_feedback;
 DROP TABLE IF EXISTS user_exclusions;
 DROP TABLE IF EXISTS search_requests;
 DROP TABLE IF EXISTS recommendations;
@@ -29,34 +28,16 @@ DROP TABLE IF EXISTS campaigns;
 DROP TABLE IF EXISTS campaign_daily_counters;
 DROP TABLE IF EXISTS journeys;
 
--- 1. USERS TABLE (saved demo-user preferences; see preferences-store.js)
+-- 1. USERS TABLE
 CREATE TABLE users (
     user_id VARCHAR(32) PRIMARY KEY,
     display_name VARCHAR(60) NOT NULL,
-    dietary_preference ENUM('none', 'halal', 'vegetarian', 'vegan') NOT NULL DEFAULT 'none',
-    mood_cuisine VARCHAR(32) NOT NULL DEFAULT 'any',
-    craving VARCHAR(100) NOT NULL DEFAULT '',
     budget_max DECIMAL(6,2) NOT NULL DEFAULT 10.00,
-    max_distance_minutes INT NOT NULL DEFAULT 10,
-    notifications TINYINT(1) NOT NULL DEFAULT 1,
-    has_set_preferences TINYINT(1) NOT NULL DEFAULT 0,
+    max_walk_minutes INT NOT NULL DEFAULT 15,
+    dietary_preference ENUM('none', 'halal', 'vegetarian', 'vegan') NOT NULL DEFAULT 'none',
     weight_price_sensitivity DECIMAL(5,2) NOT NULL DEFAULT 1.00,
     weight_distance_sensitivity DECIMAL(5,2) NOT NULL DEFAULT 1.00,
     weight_quietness_affinity DECIMAL(5,2) NOT NULL DEFAULT 1.00
-);
-
--- 1b. REJECTION FEEDBACK (every "Not for me" reason, saved against the demo user)
-CREATE TABLE rejection_feedback (
-    feedback_id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id VARCHAR(32) NOT NULL,
-    merchant_id VARCHAR(64) NOT NULL,
-    reason ENUM('too-expensive', 'too-far', 'ate-recently', 'not-in-mood') NOT NULL,
-    category VARCHAR(64) NULL,
-    price DECIMAL(6,2) NULL,
-    distance_minutes INT NULL,
-    cuisine_tags TEXT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_rejection_user (user_id, feedback_id)
 );
 
 -- 2. MERCHANTS TABLE
@@ -105,10 +86,10 @@ CREATE TABLE transactions (
 -- ==========================================
 
 -- Seed Demo Users
-INSERT IGNORE INTO users (user_id, display_name, budget_max, max_distance_minutes, dietary_preference)
-VALUES
-('jia', 'Jia', 10.00, 10, 'none'),
-('darren', 'Darren', 10.00, 10, 'none');
+INSERT IGNORE INTO users (user_id, display_name, budget_max, max_walk_minutes, dietary_preference) 
+VALUES 
+('jia', 'Jia', 10.00, 15, 'none'), 
+('darren', 'Darren', 10.00, 15, 'none');
 
 -- Seed Merchants 
 INSERT IGNORE INTO merchants 

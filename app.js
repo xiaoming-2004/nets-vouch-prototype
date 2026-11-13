@@ -4,24 +4,22 @@ const session = require('express-session');
 const path = require('path');
 const { randomUUID } = require('node:crypto');
 const { Redis } = require('@upstash/redis');
+const mysql = require('mysql2/promise');
 // Smart Match RESULT presentation only (photo, demo Vouch count, walking map) - no matching logic.
 const smartMatchResult = require('./smart-match-result');
 // Smart Match request deadline (AsyncLocalStorage) and the shared dietary-evidence store.
 const requestBudget = require('./request-budget');
 
-// Load local environment variables when a .env file exists (Node.js 22+). Skipped inside the
-// built-in test runner so the suite never picks up real local credentials: tests must run against
-// injected fakes or nothing, never a developer's live database.
-if (!process.env.NODE_TEST_CONTEXT) {
-  try {
-    process.loadEnvFile(path.join(__dirname, '.env'));
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-  }
+// Load local environment variables when a .env file exists (Node.js 22+).
+try {
+  process.loadEnvFile(path.join(__dirname, '.env'));
+} catch (error) {
+  if (error.code !== 'ENOENT') throw error;
 }
 
-// Saved demo-user state in MySQL (optional): preferences, rejection feedback, discovered merchants.
-const preferencesStore = require('./preferences-store');
+// FIXED: Corrected relative path to load db.js from the Database folder
+const db = require('./Database/db');
+const { getAgentRecommendations } = require('./nets_agent');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -81,10 +79,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 // One Upstash Redis client (when configured) shared by the session store and the dietary-evidence
 // research store. Without it: MemoryStore sessions and memory-only research evidence.
 function createUpstashClient() {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
-  return new Redis({ url: url, token: token });
+  // HACKATHON FIX: Bypass Upstash Redis locally to prevent Node.js fetch polyfill crashes (res.text is not a function).
+  // The app will gracefully fall back to the native MemoryStore for the local demo.
+  return null;
 }
 const upstashRedis = createUpstashClient();
 
@@ -119,15 +116,11 @@ function buildSessionStore() {
 
 const demoStore = buildSessionStore();
 let demoResetGeneration = 0;
-// Vercel terminates TLS at its proxy; trusting it lets "secure: 'auto'" mark the session cookie
-// Secure on HTTPS while plain-HTTP local development and tests keep working.
-app.set('trust proxy', 1);
 app.use(session({
   store: demoStore,
   secret: process.env.SESSION_SECRET || 'nets-vouch-ai-demo-secret',
   resave: false,
-  saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: 'lax', secure: 'auto' }
+  saveUninitialized: false
 }));
 
 // Ensure demo session is always initialised before any route renders, even on fresh sessions
@@ -763,19 +756,27 @@ function registerDemoMerchant(merchant) {
   // Save API-discovered merchants (Google Places / Foursquare) into MySQL merchants table for future AI retrieval
   const rewardCfg = getRewardConfig(merchant.id);
   const caps = merchantDietaryCapabilities(merchant);
-  preferencesStore.syncDiscoveredMerchant({
-    id: String(merchant.id).slice(0, 64),
-    name: String(merchant.merchantName || merchant.name || 'Merchant').slice(0, 120),
-    locationLabel: String(merchant.address || 'Nearby Outlet').slice(0, 160),
-    distanceMetres: Number.isFinite(merchant.distanceMetres) ? merchant.distanceMetres : (merchant.distanceMinutes || 5) * 80,
-    cuisineType: String(merchant.categoryLabel || merchant.category || 'food').slice(0, 64),
-    typicalPrice: Number.isFinite(merchant.price) ? merchant.price : 6.50,
-    halal: Boolean(caps.halal),
-    vegetarian: Boolean(caps.vegetarian),
-    vegan: Boolean(caps.vegan),
-    rewardAmount: Number(rewardCfg.rewardAmount || 0.50),
-    minSpend: Number(rewardCfg.minimumEligibleSpend || 5.00)
-  }).catch(function() { /* non-blocking when MySQL is busy or offline */ });
+  db.execute(
+    `INSERT IGNORE INTO merchants 
+     (merchant_id, name, location_label, distance_metres, cuisine_type, typical_price, dietary_halal, dietary_vegetarian, dietary_vegan, reward_amount, min_spend, is_sample_data)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE)`,
+    [
+      String(merchant.id).slice(0, 64),
+      String(merchant.merchantName || merchant.name || 'Merchant').slice(0, 120),
+      String(merchant.address || 'Nearby Outlet').slice(0, 160),
+      Number.isFinite(merchant.distanceMetres) ? merchant.distanceMetres : (merchant.distanceMinutes || 5) * 80,
+      String(merchant.categoryLabel || merchant.category || 'food').slice(0, 64),
+      Number.isFinite(merchant.price) ? merchant.price : 6.50,
+      Boolean(caps.halal),
+      Boolean(caps.vegetarian),
+      Boolean(caps.vegan),
+      Number(rewardCfg.rewardAmount || 0.50),
+      Number(rewardCfg.minimumEligibleSpend || 5.00)
+    ]
+  ).catch(function(err) {
+    // Non-blocking log if MySQL table is busy or offline
+    console.error('MySQL merchant sync note:', err.message);
+  });
 }
 
 // Rule-based observations over the illustrative hourly/weekly baseline. These are deterministic
@@ -3605,59 +3606,44 @@ app.use(function(req, res, next) {
 async function hydratePreferences(demo) {
   if (demo.preferencesHydrated) return;
   if (demo.hasSetPreferences) { demo.preferencesHydrated = true; return; }
-  // A database error propagates to the caller BEFORE preferencesHydrated is set, so an unreachable
-  // database is retried on a later request instead of being misread as "nothing saved".
-  const saved = await preferencesStore.loadPreferences(demo.user.id);
-  const rejections = await preferencesStore.loadRecentRejections(demo.user.id, 10);
-  demo.preferencesHydrated = true;
-  if (saved) {
+  try {
+    const [rows] = await db.execute(
+      'SELECT budget_max, max_walk_minutes, dietary_preference FROM users WHERE user_id = ?',
+      [demo.user.id]
+    );
+    demo.preferencesHydrated = true;
+    if (!rows || !rows.length) return;
+    const saved = rows[0];
     const budget = Number(saved.budget_max);
-    const distance = Number(saved.max_distance_minutes);
+    const distance = Number(saved.max_walk_minutes);
     demo.profile.dietaryPreference = normaliseDietaryPreference(saved.dietary_preference);
-    demo.profile.moodCuisine = normaliseMoodCuisine(saved.mood_cuisine);
-    demo.profile.craving = sanitizeCraving(saved.craving);
     demo.profile.budget = Number.isFinite(budget) && budget > 0 && budget <= 100 ? budget : demo.profile.budget;
     demo.profile.maxDistanceMinutes = Number.isInteger(distance) && distance >= 1 && distance <= 60
       ? distance : demo.profile.maxDistanceMinutes;
-    if (saved.notifications !== null && saved.notifications !== undefined) {
-      demo.profile.notifications = Boolean(Number(saved.notifications));
-    }
-    demo.hasSetPreferences = Boolean(Number(saved.has_set_preferences));
-  }
-  // Saved rejection feedback keeps shaping the ranking after a restart. Only ranking signals are
-  // restored - hard exclusions stay per-session so the small demo pool cannot be emptied for good.
-  if (demo.recommendationFeedback.length === 0) {
-    // Rows arrive newest-first; the session feedback array is chronological (last = most recent).
-    rejections.slice().reverse().forEach(function(row) {
-      if (!isValidRejectionReason(row.reason) || typeof row.merchant_id !== 'string') return;
-      let tags = Array.isArray(row.cuisine_tags) ? row.cuisine_tags : [];
-      if (typeof row.cuisine_tags === 'string') {
-        try { tags = JSON.parse(row.cuisine_tags); } catch (e) { tags = []; }
-      }
-      const price = Number(row.price);
-      const distanceMinutes = Number(row.distance_minutes);
-      demo.recommendationFeedback.push({
-        merchantId: row.merchant_id, reason: row.reason, category: row.category || null,
-        price: Number.isFinite(price) ? price : null,
-        distanceMinutes: Number.isFinite(distanceMinutes) ? distanceMinutes : null,
-        distanceMetres: null, distanceLabel: null,
-        cuisineTags: Array.isArray(tags) ? tags : []
-      });
-    });
+  } catch (error) {
+    // If MySQL is unreachable, continue safely with session state
   }
 }
 
 // Stores the current persona's preferences. Never throws and never blocks a page on a database fault.
 async function persistPreferences(demo) {
   try {
-    await preferencesStore.savePreferences(demo.user, {
-      dietaryPreference: normaliseDietaryPreference(demo.profile.dietaryPreference),
-      moodCuisine: normaliseMoodCuisine(demo.profile.moodCuisine),
-      craving: sanitizeCraving(demo.profile.craving),
-      budget: demo.profile.budget,
-      maxDistanceMinutes: demo.profile.maxDistanceMinutes,
-      notifications: demo.profile.notifications
-    }, demo.hasSetPreferences);
+    await db.execute(
+      `INSERT INTO users (user_id, display_name, budget_max, max_walk_minutes, dietary_preference)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         display_name = VALUES(display_name),
+         budget_max = VALUES(budget_max),
+         max_walk_minutes = VALUES(max_walk_minutes),
+         dietary_preference = VALUES(dietary_preference)`,
+      [
+        demo.user.id,
+        demo.user.name,
+        demo.profile.budget,
+        demo.profile.maxDistanceMinutes,
+        normaliseDietaryPreference(demo.profile.dietaryPreference)
+      ]
+    );
   } catch (error) {
     console.error('MySQL preference save error:', error.message);
   }
@@ -3844,6 +3830,7 @@ app.get('/smart-match/result', async function(req, res) {
           demo.selectedMerchantId = recommendation.id;
           demo.selectedMerchantReason = result.reason;
           demo.selectedMerchantRelevance = result.relevance || null;
+          demo.matchBackups = result.backups || []; // Save backups to session memory
           if (!demo.shownMerchantIds.includes(recommendation.id)) {
             demo.shownMerchantIds.push(recommendation.id);
             const c = findCampaign(demo, recommendation.id);
@@ -3878,6 +3865,31 @@ app.get('/smart-match/result', async function(req, res) {
   } finally {
     budget.finish();
   }
+});
+
+// 3. ADD THIS NEW ROUTE ANYWHERE IN app.js
+// This listens for the silent JavaScript POST request from the Feedback Gate
+app.post('/api/feedback', async (req, res) => {
+    const demo = req.session.demo;
+    const { reason } = req.body;
+
+    try {
+        if (reason === 'too_expensive' || reason === 'too-expensive') {
+            await db.execute(
+                `UPDATE users SET weight_price_sensitivity = weight_price_sensitivity + 0.2 WHERE user_id = ?`,
+                [demo.user.id]
+            );
+        } else if (reason === 'too_far' || reason === 'too-far') {
+            await db.execute(
+                `UPDATE users SET weight_distance_sensitivity = weight_distance_sensitivity + 0.2 WHERE user_id = ?`,
+                [demo.user.id]
+            );
+        }
+        res.sendStatus(200);
+    } catch (error) {
+        console.error('Feedback sync error:', error);
+        res.sendStatus(500);
+    }
 });
 
 // Customer-facing dietary badges. They state ONLY what the registered merchant itself listed. All
@@ -3961,8 +3973,7 @@ app.get('/smart-match/static', async function(req, res) {
 //   budget        — max spend in dollars (e.g. 10)
 //   lat / lng     — user coordinates
 //   cuisine       — dietary preference id: none | halal | vegetarian | vegan
-//   diningTime    — HH:MM string (e.g. "12:30") — only merchants whose reward campaign window
-//                   covers that time are kept
+//   diningTime    — HH:MM string (e.g. "12:30") — stored as context, not a hard filter
 //   maxDistance   — max walking minutes (e.g. 15)
 app.get('/api/recommend', function(req, res) {
   const demo = req.session.demo;
@@ -3976,7 +3987,6 @@ app.get('/api/recommend', function(req, res) {
     const v = parseInt(req.query.maxDistance, 10);
     return Number.isFinite(v) && v > 0 && v <= 60 ? v : demo.profile.maxDistanceMinutes;
   }());
-  const diningMinutes = timeToMinutes(String(req.query.diningTime || ''));
 
   // Update discovery location if coordinates supplied
   const qLat = parseFloat(req.query.lat);
@@ -3997,28 +4007,11 @@ app.get('/api/recommend', function(req, res) {
     demo.nearbySource = 'local-fallback';
   }
 
-  let eligible = getEligibleMerchants(apiProfile, demo.nearbyMerchants, demo.rejectedMerchantIds, demo);
-
-  // Intended dining time is a hard filter: a merchant whose reward campaign is inactive or whose
-  // daily window does not cover that time is unsuitable for the planned visit.
-  if (diningMinutes !== null) {
-    eligible = eligible.filter(function(m) {
-      const campaign = findCampaignForMerchant(m, demo);
-      if (!campaign || campaign.status !== 'ACTIVE') return false;
-      const start = timeToMinutes(campaign.startTime);
-      const end = timeToMinutes(campaign.endTime);
-      if (start === null || end === null) return false;
-      return start <= end ? (diningMinutes >= start && diningMinutes <= end)
-        : (diningMinutes >= start || diningMinutes <= end);
-    });
-  }
-
-  const criteria = { budget: budget, cuisine: cuisine, maxDistanceMinutes: maxDistanceMinutes,
-    diningTime: diningMinutes === null ? null : String(req.query.diningTime) };
+  const eligible = getEligibleMerchants(apiProfile, demo.nearbyMerchants, demo.rejectedMerchantIds, demo);
 
   if (!eligible.length) {
     demo.lastApiRecommendations = [];
-    return res.json({ recommendations: [], criteria: criteria });
+    return res.json({ recommendations: [] });
   }
 
   const lastFeedback = getLastFeedback(demo.recommendationFeedback);
@@ -4034,13 +4027,6 @@ app.get('/api/recommend', function(req, res) {
     if (lastFeedback && lastFeedback.reason === 'too-expensive' && m.price !== null &&
         lastFeedback.price !== null) {
       score += Math.max(0, 20 - m.price);
-    }
-    if (lastFeedback && lastFeedback.reason === 'too-far' && Number.isFinite(m.distanceMinutes)) {
-      // After "Too far", closer places rank higher and anything at or beyond the rejected
-      // merchant's distance is pushed down.
-      if (Number.isFinite(lastFeedback.distanceMinutes) &&
-          m.distanceMinutes >= lastFeedback.distanceMinutes) score -= 30;
-      score += Math.max(0, 20 - 2 * m.distanceMinutes);
     }
     if (lastFeedback && (lastFeedback.reason === 'not-in-mood' || lastFeedback.reason === 'ate-recently')) {
       const sameSpecificCategory = m.category === lastFeedback.category &&
@@ -4077,7 +4063,7 @@ app.get('/api/recommend', function(req, res) {
 
   demo.lastApiRecommendations = recommendations.map(function(r) { return r.id; });
 
-  res.json({ recommendations: recommendations, criteria: criteria });
+  res.json({ recommendations: recommendations });
 });
 
 app.get('/recommendation', function(req, res) { res.redirect('/home'); });
@@ -4097,22 +4083,58 @@ app.post('/recommendation/reject', function(req, res) {
   }
   if (!demo.rejectedMerchantIds.includes(merchant.id)) demo.rejectedMerchantIds.push(merchant.id);
   demo.matchContinuation = { rejectedId: merchant.id, attempted: false };
-  const feedbackEntry = { merchantId: merchant.id, reason: req.body.reason,
+  demo.recommendationFeedback.push({ merchantId: merchant.id, reason: req.body.reason,
     category: merchant.category, price: merchant.price, distanceMinutes: merchant.distanceMinutes,
     distanceMetres: Number.isFinite(merchant.distanceMetres) ? merchant.distanceMetres : null,
-    distanceLabel: merchant.distanceLabel || null, cuisineTags: merchantCuisineTags(merchant) };
-  demo.recommendationFeedback.push(feedbackEntry);
-  // Every rejection reason is saved against the demo user profile; "Too expensive" and "Too far"
-  // additionally nudge the stored ranking weights. Fire-and-forget: a database fault never blocks
-  // the response.
-  preferencesStore.recordRejection(demo.user.id, feedbackEntry).catch(function() {});
-  preferencesStore.applyRejectionWeight(demo.user.id, req.body.reason).catch(function() {});
+    distanceLabel: merchant.distanceLabel || null, cuisineTags: merchantCuisineTags(merchant) });
+  // Sync rejection reason to MySQL user weights for future AI learning
+  if (req.body.reason === 'too-expensive') {
+    db.execute('UPDATE users SET weight_price_sensitivity = weight_price_sensitivity + 0.2 WHERE user_id = ?', [demo.user.id]).catch(function() {});
+  } else if (req.body.reason === 'too-far') {
+    db.execute('UPDATE users SET weight_distance_sensitivity = weight_distance_sensitivity + 0.2 WHERE user_id = ?', [demo.user.id]).catch(function() {});
+  }
   demo.selectedMerchantId = null;
   demo.recommendationAccepted = false;
   logDiscovery('Rejected: ' + merchant.id + '\nReason: ' + req.body.reason +
     '\nShown history size: ' + demo.shownMerchantIds.length + '\nContinuation: rerank unseen, then at most one uncached search');
   if (req.get('X-Requested-With') === 'smart-match') return res.sendStatus(204);
   res.redirect('/home?matching=again');
+
+  // Sync rejection reason to MySQL user weights for future AI learning
+  if (req.body.reason === 'too-expensive') {
+    db.execute('UPDATE users SET weight_price_sensitivity = weight_price_sensitivity + 0.2 WHERE user_id = ?', [demo.user.id]).catch(function() {});
+  } else if (req.body.reason === 'too-far') {
+    db.execute('UPDATE users SET weight_distance_sensitivity = weight_distance_sensitivity + 0.2 WHERE user_id = ?', [demo.user.id]).catch(function() {});
+  }
+
+  // --- NEW: Check if we have backups to pop instantly ---
+  if (demo.matchBackups && demo.matchBackups.length > 0) {
+    let backupMerchant = null;
+    let nextBackup = null;
+    
+    // Find the next backup that hasn't already been rejected
+    while (demo.matchBackups.length > 0 && !backupMerchant) {
+      nextBackup = demo.matchBackups.shift();
+      const potentialMerchant = findMerchantForDemo(demo, nextBackup.merchantId);
+      if (potentialMerchant && !demo.rejectedMerchantIds.includes(potentialMerchant.id)) {
+        backupMerchant = potentialMerchant;
+      }
+    }
+    
+    if (backupMerchant) {
+      demo.selectedMerchantId = backupMerchant.id;
+      demo.selectedMerchantReason = nextBackup.reason || 'Selected as a strong alternative match.';
+      demo.selectedMerchantRelevance = 'medium'; // Safe default
+      demo.recommendationAccepted = false;
+      logDiscovery('Popped backup merchant instantly: ' + backupMerchant.id);
+      
+      if (req.get('X-Requested-With') === 'smart-match') return res.sendStatus(204);
+      return res.redirect('/home?matching=again');
+    }
+  }
+  // --- END NEW BACKUP LOGIC ---
+
+  demo.matchContinuation = { rejectedId: merchant.id, attempted: false };
 });
 
 function restartMatch(req, res) {
@@ -4794,11 +4816,14 @@ app.post('/reset-demo', async function(req, res) {
   // This helper control has always reset shared campaign state, so reset all demo
   // sessions too. The generation also protects against an in-flight stale save.
   demoResetGeneration += 1;
-  // Clear saved demo users and their feedback in MySQL so old preferences and rejection history do
-  // not come straight back after the reset. Each delete is independent: the reset continues even if
-  // the database is offline.
-  try { await preferencesStore.deleteSavedUsers(Object.keys(demoIdentities)); } catch (e) { /* DB offline */ }
-  try { await preferencesStore.clearRejections(Object.keys(demoIdentities)); } catch (e) { /* DB offline */ }
+  // Reset saved user preferences in MySQL back to default values
+  try {
+    await db.execute(
+      `UPDATE users 
+       SET budget_max = 10.00, max_walk_minutes = 15, dietary_preference = 'none',
+           weight_price_sensitivity = 1.00, weight_distance_sensitivity = 1.00, weight_quietness_affinity = 1.00`
+    );
+  } catch (e) { /* continue reset even if DB is offline */ }
   sharedOffers.clear();
   referralCooldowns.clear();
   merchantPaymentFeed.splice(0, merchantPaymentFeed.length,
