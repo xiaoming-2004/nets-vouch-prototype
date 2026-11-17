@@ -22,6 +22,7 @@ const db = require('./Database/db');
 const merchantCatalogue = require('./merchant-catalogue');
 const merchantActivity = require('./merchant-activity');
 const rejectionFeedback = require('./rejection-feedback');
+const naturalLanguage = require('./natural-language-intent');
 const { getAgentRecommendations } = require('./nets_agent');
 
 const app = express();
@@ -4089,18 +4090,15 @@ function recommendationReasons(merchant, profile, activity) {
   return reasons;
 }
 
-app.get('/api/recommend', async function(req, res) {
+// Shared deterministic core for GET /api/recommend and POST /api/recommend/natural. `input` is the
+// already validated result of recommendationInput(). Returns { status, body }; the caller sends it.
+async function buildRecommendationResponse(req, input) {
   const demo = req.session.demo;
-  const input = recommendationInput(req.query, demo.profile);
-  if (input.errors) return res.status(400).json({ error: {
-    code: 'invalid-recommendation-input', fields: input.errors
-  } });
-
   let persistedFeedback;
   try {
     persistedFeedback = await rejectionFeedback.loadRecentFeedback(db, demo.user.id);
   } catch (error) {
-    return res.status(503).json({ error: { code: 'recommendation-feedback-unavailable' } });
+    return { status: 503, body: { error: { code: 'recommendation-feedback-unavailable' } } };
   }
   const learning = rejectionFeedback.buildLearningPolicy(persistedFeedback, input.explicit);
 
@@ -4159,7 +4157,7 @@ app.get('/api/recommend', async function(req, res) {
     demo.lastApiRecommendations = [];
     demo.catalogueBatch = [];
     demo.catalogueBatchProfile = { ...apiProfile };
-    return res.json({ recommendations: [], catalogue, metadata });
+    return { status: 200, body: { recommendations: [], catalogue, metadata } };
   }
 
   const scored = openEligible.map(function(m) {
@@ -4228,7 +4226,68 @@ app.get('/api/recommend', async function(req, res) {
 
   demo.lastApiRecommendations = recommendations.map(function(r) { return r.id; });
 
-  res.json({ recommendations: recommendations, catalogue, metadata });
+  return { status: 200, body: { recommendations: recommendations, catalogue, metadata } };
+}
+
+app.get('/api/recommend', async function(req, res) {
+  const input = recommendationInput(req.query, req.session.demo.profile);
+  if (input.errors) return res.status(400).json({ error: {
+    code: 'invalid-recommendation-input', fields: input.errors
+  } });
+  const result = await buildRecommendationResponse(req, input);
+  res.status(result.status).json(result.body);
+});
+
+// Natural-language request. The LLM only extracts a strict set of constraints (see
+// natural-language-intent.js); the existing deterministic engine then validates, filters and ranks.
+// Interpretation completes before any catalogue read or recommendation-batch replacement, and every
+// failure returns no recommendations and leaves the current batch untouched.
+function naturalLanguageFailure(res, error) {
+  const body = { error: { code: error.code } };
+  if (error.retryable) body.error.retryable = true;
+  if (Array.isArray(error.notApplied) && error.notApplied.length) body.notApplied = error.notApplied;
+  if (error.retryAfterSeconds) res.set('Retry-After', String(error.retryAfterSeconds));
+  return res.status(error.status || 502).json(body);
+}
+
+app.post('/api/recommend/natural', async function(req, res) {
+  const demo = req.session.demo;
+  let text;
+  try {
+    text = naturalLanguage.validateText(req.body && req.body.text);
+    if (!naturalLanguage.isConfigured()) throw new naturalLanguage.NaturalLanguageError('natural-language-not-configured');
+    // Kept on the session itself (not in demo) so Reset Demo does not clear the limit.
+    const limit = naturalLanguage.consumeRateLimit(req.session.naturalLanguageRequests, Date.now());
+    req.session.naturalLanguageRequests = limit.stamps;
+    if (limit.retryAfterSeconds) {
+      throw new naturalLanguage.NaturalLanguageError('natural-language-rate-limited', { retryAfterSeconds: limit.retryAfterSeconds });
+    }
+    const content = await naturalLanguage.callNaturalLanguageProvider(naturalLanguage.buildMessages(text));
+    const interpretation = naturalLanguage.validateInterpretation(content);
+    const resolution = naturalLanguage.resolveInterpretation(interpretation, {
+      savedMaxDistanceMinutes: demo.profile.maxDistanceMinutes, text: text
+    });
+    const input = recommendationInput(resolution.query, demo.profile);
+    if (input.errors) throw new naturalLanguage.NaturalLanguageError('natural-language-invalid-output');
+    let result;
+    try {
+      result = await buildRecommendationResponse(req, input);
+    } catch (engineError) {
+      // Interpretation already succeeded: this is the deterministic engine failing, not the provider.
+      throw new naturalLanguage.NaturalLanguageError('natural-language-recommendation-unavailable');
+    }
+    if (result.status !== 200) return res.status(result.status).json(result.body);
+    logDiscovery('Natural-language request accepted (' + text.length + ' characters)');
+    return res.json(Object.assign({}, result.body, { interpretation: {
+      source: 'llm', model: naturalLanguage.configuredModel(), understood: resolution.understood,
+      notApplied: resolution.notApplied, resolved: resolution.resolved
+    } }));
+  } catch (error) {
+    const known = error instanceof naturalLanguage.NaturalLanguageError ? error
+      : new naturalLanguage.NaturalLanguageError('natural-language-provider-failure');
+    logDiscovery('Natural-language request failed: ' + known.code);
+    return naturalLanguageFailure(res, known);
+  }
 });
 
 app.get('/recommendation', function(req, res) { res.redirect('/home'); });

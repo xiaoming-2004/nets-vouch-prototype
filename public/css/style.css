@@ -427,6 +427,21 @@ fieldset.field>legend.field-label+* { clear:both; }
 .dining-time-controls input { width:100%; min-height:44px; padding:9px 10px; border:1px solid var(--border); border-radius:var(--r-md); background:white; color:var(--text); font:inherit; }
 .dining-time-controls .button { width:auto; min-height:44px; margin:0; white-space:nowrap; }
 .dining-time-form .field-hint { margin:7px 0 0; }
+/* Natural-language request */
+.nl-form { margin:0 0 12px; padding:12px 14px; border:1px solid var(--border); border-radius:var(--r-lg); background:var(--surface); }
+.nl-form>label { display:block; margin-bottom:7px; font-size:13px; font-weight:650; }
+.nl-controls { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; }
+.nl-controls input { width:100%; min-height:44px; padding:9px 10px; border:1px solid var(--border); border-radius:var(--r-md); background:white; color:var(--text); font:inherit; }
+.nl-controls .button { width:auto; min-height:44px; margin:0; white-space:nowrap; }
+.nl-form .field-hint { margin:7px 0 0; }
+.nl-status { margin:8px 0 0; font-size:13px; color:var(--text-2); }
+.nl-status.error { color:var(--danger); background:var(--danger-bg); padding:10px 12px; border-radius:var(--r-sm); font-weight:550; }
+.nl-heading { margin:10px 0 4px; font-size:12px; font-weight:700; color:var(--text-2); text-transform:uppercase; letter-spacing:.04em; }
+.nl-chips,.nl-notapplied { list-style:none; margin:0; padding:0; display:flex; flex-wrap:wrap; gap:6px; }
+.nl-chips li { padding:5px 10px; border-radius:var(--r-pill); background:var(--nets-blue-soft); color:var(--nets-navy); font-size:12.5px; font-weight:600; overflow-wrap:anywhere; }
+.nl-notapplied li { padding:5px 10px; border-radius:var(--r-pill); background:var(--warn-bg); color:var(--warn); font-size:12.5px; font-weight:600; overflow-wrap:anywhere; }
+.nl-form[aria-busy="true"] .nl-controls input { opacity:.7; }
+@media (max-width:420px) { .nl-controls { grid-template-columns:1fr; } .nl-controls .button { width:100%; } }
 .rec-list { display:flex; flex-direction:column; gap:10px; }
 .rec-card { background:var(--surface); border-radius:var(--r-xl); border:1px solid var(--border); box-shadow:var(--shadow-sm); padding:16px 18px; }
 .rec-card.reveal { animation:rise .22s ease both; }

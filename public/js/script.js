@@ -353,6 +353,106 @@ async function loadMatch(again) {
   }
   matchRegion.setAttribute('aria-busy', 'false');
 }
+// ---------------------------------------------------------------------------
+// Natural-language request (Jolene Step 5). The server asks an LLM only to extract constraints;
+// fixed rules choose merchants. Every value shown here (typed text, interpretation chips, unsupported
+// phrases) is untrusted and is written with textContent only - never innerHTML.
+// ---------------------------------------------------------------------------
+const nlForm = document.querySelector('[data-nl-form]');
+const NL_ERROR_MESSAGES = {
+  'invalid-natural-language-input': 'Enter a request of up to 200 characters.',
+  'natural-language-not-configured': 'AI interpretation is not available right now. Use the manual filters instead.',
+  'natural-language-timeout': 'The AI took too long. Your text is kept; try again or use the manual filters.',
+  'natural-language-provider-failure': 'The AI service is unavailable right now. Your text is kept; try again or use the manual filters.',
+  'natural-language-invalid-output': 'We could not safely understand that request. Try rephrasing it or use the manual filters.',
+  'natural-language-no-usable-constraint': 'No supported constraint was found (budget, distance, cuisine, dietary, day or time). Try rephrasing or use the manual filters.',
+  'natural-language-rate-limited': 'Too many requests. Please wait a moment and try again.',
+  'natural-language-recommendation-unavailable': 'We understood your request but could not load recommendations just now. Your text is kept; try again or use the manual filters.'
+};
+
+function nlSetStatus(form, message, isError) {
+  const status = form.querySelector('[data-nl-status]');
+  status.textContent = message || '';
+  status.hidden = !message;
+  status.classList.toggle('error', Boolean(message) && Boolean(isError));
+}
+
+function nlAppendList(box, headingText, className, lines) {
+  const heading = document.createElement('p');
+  heading.className = 'nl-heading';
+  heading.textContent = headingText;
+  box.appendChild(heading);
+  const list = document.createElement('ul');
+  list.className = className;
+  lines.forEach(function(line) {
+    const item = document.createElement('li');
+    item.textContent = line;
+    list.appendChild(item);
+  });
+  box.appendChild(list);
+}
+
+function nlRenderInterpretation(form, interpretation, fallbackNotApplied) {
+  const box = form.querySelector('[data-nl-understood]');
+  box.textContent = '';
+  const understood = interpretation && Array.isArray(interpretation.understood) ? interpretation.understood : [];
+  const notApplied = interpretation && Array.isArray(interpretation.notApplied) ? interpretation.notApplied
+    : Array.isArray(fallbackNotApplied) ? fallbackNotApplied : [];
+  if (understood.length) {
+    nlAppendList(box, 'Understood as', 'nl-chips', understood.map(function(item) {
+      return String(item.label) + ': ' + String(item.value);
+    }));
+  }
+  if (notApplied.length) nlAppendList(box, 'Not applied', 'nl-notapplied', notApplied.map(String));
+  box.hidden = !(understood.length || notApplied.length);
+}
+
+async function submitNaturalLanguage(form) {
+  const input = form.querySelector('[name="text"]');
+  const button = form.querySelector('[data-nl-submit]');
+  const text = input.value.trim();
+  if (!text || text.length > 200) {
+    nlSetStatus(form, NL_ERROR_MESSAGES['invalid-natural-language-input'], true);
+    return;
+  }
+  form.setAttribute('aria-busy', 'true');
+  button.disabled = true;
+  nlSetStatus(form, 'Interpreting your request…', false);
+  try {
+    const response = await fetch('/api/recommend/natural', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text }) });
+    let body = null;
+    try { body = await response.json(); } catch (error) { body = null; }
+    if (!response.ok || !body || !Array.isArray(body.recommendations)) {
+      const code = body && body.error && typeof body.error.code === 'string' ? body.error.code : '';
+      // Typed text and manual filters stay as they are; the current recommendations are left untouched.
+      nlSetStatus(form, NL_ERROR_MESSAGES[code] || 'Something went wrong. Use the manual filters instead.', true);
+      nlRenderInterpretation(form, null, body && body.notApplied);
+      return;
+    }
+    nlSetStatus(form, '', false);
+    nlRenderInterpretation(form, body.interpretation, null);
+    const resolved = body.interpretation && body.interpretation.resolved;
+    const dining = diningTimeForm && diningTimeForm.querySelector('[name="diningDateTime"]');
+    if (dining && resolved && /^\d{4}-\d{2}-\d{2}$/.test(resolved.diningDate) && /^\d{2}:\d{2}$/.test(resolved.diningTime)) {
+      dining.value = resolved.diningDate + 'T' + resolved.diningTime;
+    }
+    clearMatchingStages();
+    matchRegion.innerHTML = renderRecommendationList(body.recommendations, body.catalogue, body.metadata);
+    matchRegion.setAttribute('aria-busy', 'false');
+    initMerchantMap();
+  } catch (error) {
+    nlSetStatus(form, 'We could not reach the server. Your text is kept; try again or use the manual filters.', true);
+  } finally {
+    form.setAttribute('aria-busy', 'false');
+    button.disabled = false;
+  }
+}
+if (nlForm) nlForm.addEventListener('submit', function(event) {
+  event.preventDefault();
+  submitNaturalLanguage(nlForm);
+});
+
 if (matchRegion) {
   matchRegion.addEventListener('click', function(event) {
     if (event.target.closest('[data-retry-location]')) loadMatch(false);

@@ -26,6 +26,16 @@
 <% if (resetComplete) { %><p class="badge badge--verified" role="status">✓ Demo reset successfully.</p><% } %>
 <% if (settingsError) { %><p class="error" role="status">Please choose valid filters.</p><% } %>
 <header class="greeting"><p><%= homeGreeting.greeting %>, <%= user.name %> 👋</p><h1><%= homeGreeting.prompt %></h1></header>
+<form class="nl-form" data-nl-form novalidate>
+  <label for="nl-text">Describe what you feel like</label>
+  <div class="nl-controls">
+    <input id="nl-text" name="text" type="text" maxlength="200" autocomplete="off" placeholder="e.g. Something light nearby under $10 at 2 pm" aria-describedby="nl-hint nl-status">
+    <button class="button" type="submit" data-nl-submit>Find matches</button>
+  </div>
+  <p class="field-hint" id="nl-hint">AI interprets your words; fixed rules choose merchants. Up to 200 characters. The manual filters below still work.</p>
+  <p class="nl-status" id="nl-status" data-nl-status role="status" aria-live="polite" hidden></p>
+  <div class="nl-understood" data-nl-understood hidden></div>
+</form>
 <form class="dining-time-form" data-dining-time-form>
   <label for="dining-date-time">When do you plan to eat?</label>
   <div class="dining-time-controls">

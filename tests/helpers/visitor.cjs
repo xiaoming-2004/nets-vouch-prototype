@@ -16,7 +16,7 @@ async function start() {
           body: body === undefined ? undefined : JSON.stringify(body) });
         const next = response.headers.get('set-cookie');
         if (next) cookie = next.split(';')[0];
-        return { status: response.status, location: response.headers.get('location'), html: await response.text() };
+        return { status: response.status, location: response.headers.get('location'), retryAfter: response.headers.get('retry-after'), html: await response.text() };
       },
       async state() {
         const id = decodeURIComponent(cookie.split('=')[1]).slice(2).split('.')[0];
