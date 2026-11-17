@@ -313,7 +313,7 @@ test('HEADER: no "Your match"/"AI Matched" line; name, details and tags sit besi
   mockGoogle({ photos: [] });
   const { html } = await matched();
   assert.ok(!/Your match|AI Matched/.test(html));
-  assert.match(html, /<div class="result-head">\s*<div class="result-photo is-empty">[\s\S]*<div class="result-info">\s*<h2 title="Neutral Noodle Stall">Neutral Noodle Stall<\/h2>/);
+  assert.match(html, /<div class="result-head">\s*<div class="result-photo is-empty">[\s\S]*<div class="result-info">\s*<h3 title="Neutral Noodle Stall">Neutral Noodle Stall<\/h3>/);
   assert.match(html, /<p class="result-meta"><span class="result-lead">Noodle Shop<\/span><span class="result-distance">\d+ m away<\/span><\/p>/);
   assert.match(html, /<p class="result-tags"><span class="result-vouches"/);
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'style.css'), 'utf8');
@@ -324,8 +324,8 @@ test('HEADER: no "Your match"/"AI Matched" line; name, details and tags sit besi
   assert.match(css, /--result-thumb:\d+px/, 'the thumbnail size is a design token');
   // A long name is never clipped: it wraps over as many lines as it needs, breaking inside a word
   // only when there is no other break point, and the result scrolls rather than truncating it.
-  assert.match(css, /\.result-info h2 \{[^}]*overflow-wrap:anywhere; \}/);
-  assert.ok(!/\.result-info h2 \{[^}]*line-clamp/.test(css), 'the merchant name is not line-clamped');
+  assert.match(css, /\.result-info h3 \{[^}]*overflow-wrap:anywhere;/);
+  assert.ok(!/\.result-info h3 \{[^}]*line-clamp/.test(css), 'the merchant name is not line-clamped');
 });
 
 test('DIET BADGE: the badge states only what the registered merchant listed', async function() {

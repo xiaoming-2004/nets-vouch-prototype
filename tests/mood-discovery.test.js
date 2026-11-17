@@ -130,8 +130,7 @@ test('MOOD 1: exactly six mood choices with stable values, and the old choices a
   await seedLegacyLocation(v, { status: 'fallback' });
   const card = (await v.request('/smart-match/result')).html;
   ['any', 'rice', 'noodles', 'pasta', 'soup', 'bread'].forEach(function(value) {
-    assert.match(home.html, new RegExp('name="moodCuisine" value="' + value + '"'));
-    assert.match(card, new RegExp('name="moodCuisine" value="' + value + '"'));
+    assert.match(card,new RegExp('name="moodCuisine" value="' + value + '"'));
   });
   ['healthy', 'indian', 'wraps'].forEach(function(removed) {
     assert.doesNotMatch(home.html, new RegExp('name="moodCuisine" value="' + removed + '"'));

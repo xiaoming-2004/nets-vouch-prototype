@@ -123,7 +123,7 @@ test('Jia Vouch → Darren link → claim → same-merchant scan/payment → rew
   const receiver = await darren();
   const open = await receiver.request(offer.path);
   assert.match(open.html, /Claim offer/);
-  assert.match(open.html, /Verified NETS Visit/);
+  assert.match(open.html, /Verified visit \(simulated\)/);
   assert.ok(!open.html.includes('$7.20'));
   assert.equal((await receiver.state()).transactions.length, 0);
   assert.equal((await receiver.state()).vouchCredits[merchantId] || 0, 0);

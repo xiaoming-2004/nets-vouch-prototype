@@ -5205,7 +5205,7 @@ app.use('/api/recommend', function(err, req, res, next) {
 // Start server. Export the app and demo factory for local automated tests.
 if (require.main === module) {
   app.listen(PORT, function() {
-    console.log('NETS Vouch AI running on http://localhost:' + PORT);
+    console.log('VouchAI running on http://localhost:' + PORT);
     console.log('FOURSQUARE_API_KEY configured: ' + (process.env.FOURSQUARE_API_KEY ? 'yes' : 'no'));
   });
 }

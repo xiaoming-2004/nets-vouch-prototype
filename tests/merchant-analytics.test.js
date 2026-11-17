@@ -174,7 +174,7 @@ test('Direct Scan gross sales, NETS-paid feed, merchant isolation and no success
   assert.equal(felicia.metrics.payments, 0);
   const html = await results(v, 'green-bowl');
   assert.match(html, /Gross purchase sales<\/small><b>\$6\.00/);
-  assert.match(html, /Recent live payments · NETS paid/);
+  assert.match(html, /Recent live payments · Paid/);
   assert.match(html, /\$5\.00/);
   // v17 keeps the live-payments card visible with an honest empty state instead of hiding it, so
   // isolation is asserted on the rows: Felicia must show no feed row and none of green-bowl's money.

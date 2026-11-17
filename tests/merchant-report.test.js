@@ -132,7 +132,7 @@ test('the live feed holds exactly the payments that were recorded, in recorded o
   await pay(second, 'felicia-chicken-rice', '9.00');
   html = (await report(v, 'felicia-chicken-rice')).html;
   assert.equal(liveFeedRowCount(html), 2, 'two payments, two rows');
-  // Newest first, and the amount shown is the NETS-paid portion of each recorded payment.
+  // Newest first, and the amount shown is the amount paid through the prototype for each recorded payment.
   assert.ok(html.indexOf('$9.00') < html.indexOf('$6.00'), 'newest recorded payment comes first');
 });
 

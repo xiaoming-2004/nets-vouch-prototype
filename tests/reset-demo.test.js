@@ -113,7 +113,7 @@ test('fresh and repeated global resets are safe and confirm on Home', async func
   const home = await v.request('/home?reset=done');
   assert.equal(home.status, 200);
   assert.match(home.html, /Demo reset successfully/);
-  assert.equal((await v.request('/profile/activity')).html.includes('No NETS activity yet'), true);
+  assert.equal((await v.request('/profile/activity')).html.includes('No payment activity yet'), true);
 });
 
 test('payment, credit, Vouch, daily marker, idempotency and stale URLs reset', async function() {
@@ -133,7 +133,7 @@ test('payment, credit, Vouch, daily marker, idempotency and stale URLs reset', a
   assert.deepEqual(clean.dailyMerchantRewards, {});
   assert.deepEqual(clean.processedPaymentAttempts, {});
   assert.equal(clean.currentScanPayment, null);
-  assert.equal((await v.request('/profile/activity')).html.includes('No NETS activity yet'), true);
+  assert.equal((await v.request('/profile/activity')).html.includes('No payment activity yet'), true);
   assert.match((await v.request('/profile/vouches')).html, /Your first Vouch starts/);
   assert.equal((await v.request('/transactions/' + tx.id)).status, 404);
   assert.equal((await v.request('/payment-success/' + tx.id)).status, 404);

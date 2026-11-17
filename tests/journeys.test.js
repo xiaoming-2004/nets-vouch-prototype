@@ -219,7 +219,7 @@ test('Smart Match Scan accepts actual amount, merchant credit and optional Vouch
   const pending = await scan(v);
   assert.equal(pending.merchantId, merchantId);
   const page = await v.request('/scan/payment');
-  assert.match(page.html, /Pay with NETS/);
+  assert.match(page.html, /Pay \(simulated\)/);
   assert.match(page.html, /\$0\.50 available/);
   const paid = await v.request('/scan/payment', { journeyId: pending.id, amount: '6.00', useCashback: 'on' });
   assert.match(paid.location, /^\/payment-success\/tx-/);
@@ -235,7 +235,7 @@ test('Smart Match Scan accepts actual amount, merchant credit and optional Vouch
   assert.equal(smartMatchCampaign.metrics.directScanPayments, 0);
   assert.equal(smartMatchCampaign.platformFeeAccrued, smartMatchCampaign.platformFeePerAttributedPayment);
   assert.equal(credit(state, merchantId), .5);
-  assert.match((await v.request('/payment-success/' + transaction.id)).html, /Paid with NETS/);
+  assert.match((await v.request('/payment-success/' + transaction.id)).html, /Paid \(simulated payment\)/);
   await Promise.all([
     v.request('/vouch/' + transaction.id, { action: 'create', tag: 'worth-it' }),
     v.request('/vouch/' + transaction.id, { action: 'create', tag: 'worth-it' })
@@ -307,7 +307,7 @@ test('Reward eligibility respects minimum spend and daily reward budget, and mer
   assert.equal(campaign.minimumEligibleSpend, 5);
   const initialMerchantPage = await v.request('/merchant?merchantId=green-bowl&tab=campaign');
   assert.match(initialMerchantPage.html, /Maximum merchant reward spend[\s\S]*\$10\.00/);
-  assert.match(initialMerchantPage.html, /Maximum NETS success fees[\s\S]*\$2\.00/);
+  assert.match(initialMerchantPage.html, /Maximum platform success fees \(illustrative\)[\s\S]*\$2\.00/);
   assert.match(initialMerchantPage.html, /Maximum campaign cost[\s\S]*\$12\.00/);
   assert.match(initialMerchantPage.html, /Referral rewards are included within the reward budget/);
   assert.ok(!initialMerchantPage.html.includes('Possible referral bonus cost'));
@@ -315,7 +315,7 @@ test('Reward eligibility respects minimum spend and daily reward budget, and mer
   // Below minimum spend: no reward, even though the cap and budget are untouched.
   const belowMinimum = await scan(v, 'green-bowl');
   const paymentPage = await v.request('/scan/payment');
-  assert.match(paymentPage.html, /Spend \$5\.00\+ and keep at least \$1 paid with NETS/);
+  assert.match(paymentPage.html, /Spend \$5\.00\+ and keep at least \$1 paid by simulated payment/);
   assert.ok(!paymentPage.html.includes('credit-toggle'));
   assert.ok(!paymentPage.html.includes('−$0.00'));
   const browserScript = await v.request('/js/script.js');
@@ -344,7 +344,7 @@ test('Reward eligibility respects minimum spend and daily reward budget, and mer
   const merchantPage = await v.request('/merchant?merchantId=green-bowl&tab=campaign');
   assert.match(merchantPage.html, /Estimated maximum daily cost/);
   assert.match(merchantPage.html, /Maximum merchant reward spend/);
-  assert.match(merchantPage.html, /Maximum NETS success fees/);
+  assert.match(merchantPage.html, /Maximum platform success fees \(illustrative\)/);
 });
 
 test('Merchant campaign cap is shared across different user sessions, not per browser', async function() {
@@ -720,11 +720,11 @@ test('Task 4 — the result card carries ONE compact "Why this match" line, not 
   // The old full-width `.why` panel stays gone; the one-screen card states the reason in a single
   // clamped line instead of a boxed section.
   assert.ok(!/class="why"/.test(result.html));
-  assert.match(result.html, /<span class="result-why-label">Why this match<\/span>/);
+  assert.match(result.html, /<summary class="why-match__summary">Why this match\?<\/summary>/);
   const lines = result.html.match(/class="result-why-text"/g) || [];
   assert.equal(lines.length, 1, 'exactly one reason line');
-  assert.match(result.html, /class="result-why-text" title="[^"]+"/,
-    'the full reason stays available even when the visible line is clamped');
+  assert.match(result.html, /<details class="why-match">[\s\S]*class="result-why-text">[^<]+</,
+    'the full reason lives inside the Why this match disclosure');
 });
 
 test('merchant results tab shows channel attribution chart', async function() {

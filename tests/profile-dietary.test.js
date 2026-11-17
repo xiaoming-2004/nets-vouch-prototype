@@ -136,21 +136,13 @@ function mockProviders(options) {
 }
 
 // DIETARY UI 1 ---------------------------------------------------------------------------------
-test('ONBOARD 1: first-time onboarding asks only for the current meal - no dietary controls', async function() {
+test('ONBOARD 1: a first visit opens the matching sheet; the saved diet is only a highlighted default and is never changed', async function() {
   const v = visitor();
   const home = await v.request('/home');
-  assert.match(home.html, /action="\/setup-preferences"/, 'the onboarding form is shown to a new user');
-  assert.match(home.html, /name="craving"/);
-  assert.match(home.html, /name="moodCuisine"/);
-  // No dietary question, and no dietary option of any kind.
-  assert.doesNotMatch(home.html, /name="dietaryPreference"/);
-  assert.doesNotMatch(home.html, /dietary requirements\?/i);
-  const onboardForm = home.html.slice(home.html.indexOf('action="/setup-preferences"'),
-    home.html.indexOf('Find my match'));
-  ['Halal', 'Vegetarian', 'Vegan', 'No dietary restriction'].forEach(function(label) {
-    assert.ok(!onboardForm.includes(label), 'onboarding must not offer ' + label);
-  });
-  // A new user starts at "none".
+  assert.match(home.html, /data-match-modal data-modal-auto="true"/, 'the matching sheet is offered to a new user');
+  assert.ok(home.html.includes('<label for="nl-text">What are you craving?</label>'));
+  assert.match(home.html, /data-chip-group="dietary" data-chip-default="none"/, 'a new user starts at none');
+  assert.doesNotMatch(home.html, /name="dietaryPreference"/, 'no editable profile control on Home');
   assert.equal((await v.state()).demo.profile.dietaryPreference, 'none');
 });
 

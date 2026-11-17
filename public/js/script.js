@@ -27,7 +27,7 @@ function wait(milliseconds) {
       video.srcObject = stream;
       video.play().catch(function() {});
       if (placeholder) placeholder.hidden = true;
-      setStatus('Point at a merchant NETS QR code');
+      setStatus('Point at a merchant QR code');
 
       let active = true;
       function tick() {
@@ -181,22 +181,22 @@ function activityText(activity) {
 
 function renderRecCard(r) {
   const tags = (r.dietary || []).map(function(d) { return DIETARY_LABELS[d]; }).filter(Boolean);
-  const tagHtml = tags.map(function(t) { return '<span class="rec-tag">' + escHtml(t) + '</span>'; }).join('');
+  const tagHtml = tags.length ? '<p class="rec-badges">' + tags.map(function(t) { return '<span class="rec-tag">' + escHtml(t) + '</span>'; }).join('') + '</p>' : '';
   const rewardHtml = r.campaign && Number.isFinite(r.campaign.rewardAmount) && Number.isFinite(r.campaign.minimumEligibleSpend)
-    ? '<p class="rec-reward">Earn $' + escHtml(r.campaign.rewardAmount.toFixed(2)) + ' ' +
-      escHtml(r.campaign.rewardLabel) + ' · Spend $' +
-      escHtml(r.campaign.minimumEligibleSpend.toFixed(2)) + '+</p>'
+    ? '<p class="rec-reward"><strong>Earn $' + escHtml(r.campaign.rewardAmount.toFixed(2)) + ' ' +
+      escHtml(r.campaign.rewardLabel) + '</strong><span>Once daily · Spend $' +
+      escHtml(r.campaign.minimumEligibleSpend.toFixed(2)) + '+</span></p>'
     : '';
   const priceHtml = Number.isFinite(r.price) ? '<strong>$' + r.price.toFixed(2) + '</strong>' : 'unavailable';
-  const distance = r.source === 'mysql' ? r.distanceLabel || 'Catalogue distance unavailable'
+  const distance = r.source === 'mysql' ? (r.distanceLabel ? r.distanceLabel + (/demo origin|RP demo/i.test(r.distanceLabel) ? '' : ' · RP demo estimate') : 'Catalogue distance unavailable')
     : 'Approx. demo distance: ' + r.distanceMinutes + ' min-equivalent (not routed)';
-  const sampleHtml = r.isSampleData === true ? '<p class="rec-meta">' +
-    (r.source === 'mysql' ? 'Sample catalogue data' : 'Demo merchant') + '</p>' : '';
+  const sampleLabel = r.isSampleData === true
+    ? '<p class="sample-label">' + (r.source === 'mysql' ? 'Fictional sample merchant' : 'Demo merchant') + '</p>' : '';
   const reasonHtml = REC_REJECTION_REASONS.map(function(reason) {
     return '<button type="submit" name="reason" value="' + escAttr(reason.id) + '">' +
       escHtml(reason.label) + '<span aria-hidden="true">→</span></button>';
   }).join('');
-  const cuisineHtml = r.cuisine ? '<span class="rec-cuisine">Cuisine: ' + escHtml(r.cuisine) + '</span>' : '';
+  const cuisineHtml = r.cuisine ? '<p class="rec-meta rec-cuisine">Cuisine: ' + escHtml(r.cuisine) + '</p>' : '';
   const activityHtml = '<p class="rec-activity" data-activity-state="' +
     escAttr(r.usualActivity && r.usualActivity.status || 'unavailable') + '">' +
     escHtml(activityText(r.usualActivity)) + '</p>';
@@ -204,30 +204,37 @@ function renderRecCard(r) {
     ? '<ul class="rec-reasons" aria-label="Why this matches">' + r.matchReasons.map(function(reason) {
       return '<li>' + escHtml(reason) + '</li>';
     }).join('') + '</ul>' : '';
+  const item = r.recommendedMenuItem && Number.isFinite(r.recommendedMenuItem.price) ? r.recommendedMenuItem : null;
+  const typicalDiffers = item && Number.isFinite(r.typicalPrice) && Math.abs(r.typicalPrice - item.price) >= 0.005;
+  const dishHtml = item
+    ? '<p class="rec-dish" data-recommended-item>Recommended: ' + escHtml(item.name) + ' · <strong>$' + item.price.toFixed(2) + '</strong></p>' +
+      '<p class="rec-meta">' + escHtml(item.label) + '. A recommendation, not a purchase.' +
+      (typicalDiffers ? ' Typical merchant price $' + r.typicalPrice.toFixed(2) + '.' : '') + '</p>'
+    : r.itemName
+    ? '<p class="rec-dish">' + escHtml(r.itemName) + (Number.isFinite(r.price) ? ' · ' + priceHtml : '') + '</p>'
+    : '<p class="rec-dish">Typical price: ' + priceHtml + '</p>';
+  const walkHtml = r.travel ? renderGoogleRoute(r.travel, r.id)
+    : '<div class="demo-distance"><svg class="demo-distance__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg><span class="demo-distance__text"><strong>RP demo distance</strong><span>' + escHtml(distance) + '</span></span></div>';
+  const methodology = r.travel
+    ? 'Walking times come from Google Maps for the starting point you chose. The destination is a fictional sample merchant coordinate, not a Google place.'
+    : 'Distances are estimates from the RP demo origin, not real walking times.';
+  const sampleNote = r.isSampleData === true
+    ? (r.source === 'mysql' ? 'Sample catalogue data: fictional merchants, menus and prices; dietary claims are unverified.' : 'Demo merchant.') : '';
+  const whyHtml = '<details class="why-match"><summary class="why-match__summary">Why this match?</summary><div class="why-match__body">' +
+    matchesHtml + cuisineHtml +
+    (sampleNote ? '<p class="rec-meta">' + escHtml(sampleNote) + '</p>' : '') +
+    '<p class="rec-meta">' + escHtml(methodology) + '</p></div></details>';
   return '<article class="rec-card reveal" data-merchant-id="' + escAttr(r.id) + '">' +
     '<div class="rec-header">' +
     '<div class="rec-initial" aria-hidden="true">' + escHtml((r.merchantName || '').charAt(0)) + '</div>' +
     '<div class="rec-info">' +
-    '<h2 class="rec-name">' + escHtml(r.merchantName) + '</h2>' +
-    (r.recommendedMenuItem && Number.isFinite(r.recommendedMenuItem.price)
-      ? '<p class="rec-dish" data-recommended-item>Recommended: ' + escHtml(r.recommendedMenuItem.name) + ' · <strong>$' +
-        r.recommendedMenuItem.price.toFixed(2) + '</strong></p>' +
-        '<p class="rec-meta">Recommended item price · Typical merchant price ' +
-        (Number.isFinite(r.typicalPrice) ? '$' + r.typicalPrice.toFixed(2) : 'unavailable') + '</p>' +
-        '<p class="rec-meta">' + escHtml(r.recommendedMenuItem.label) + '</p>'
-      : r.itemName
-      ? '<p class="rec-dish">' + escHtml(r.itemName) +
-        (Number.isFinite(r.price) ? ' · ' + priceHtml : '') + '</p>'
-      : '<p class="rec-dish">Typical price: ' + priceHtml + '</p>') +
-    '<p class="rec-meta">' + (r.travel ? '' : escHtml(distance)) +
-      (tagHtml ? (r.travel ? '' : ' · ') + tagHtml : '') + '</p>' +
-    cuisineHtml +
+    '<h3 class="rec-name">' + escHtml(r.merchantName) + '</h3>' + sampleLabel +
     '</div>' +
     '</div>' +
-    sampleHtml +
-    renderGoogleRoute(r.travel, r.id) +
+    dishHtml +
+    walkHtml +
+    tagHtml +
     activityHtml +
-    matchesHtml +
     rewardHtml +
     '<form method="POST" action="/recommendation/accept" data-single-submit>' +
     '<input type="hidden" name="merchantId" value="' + escAttr(r.id) + '">' +
@@ -246,6 +253,7 @@ function renderRecCard(r) {
     reasonHtml +
     '<p class="feedback-status" data-feedback-status role="status"></p>' +
     '</form></div></div></details>' +
+    whyHtml +
     '</article>';
 }
 
@@ -307,6 +315,18 @@ function foodRequested(metadata) {
   return Boolean(request && (request.foodCategory || (Array.isArray(request.dishTerms) && request.dishTerms.length)));
 }
 
+// One friendly state card: an icon, one explanation and at most one primary recovery action.
+// Titles and texts are fixed strings written here, never raw error codes, SQL or provider messages.
+const STATE_ICONS = {
+  search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>',
+  pin: '<svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>',
+  retry: '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg>'
+};
+function stateCardHtml(icon, title, text, action) {
+  return '<section class="card state-card reveal" data-state-card><div class="state-icon" aria-hidden="true">' + STATE_ICONS[icon] + '</div>' +
+    '<h2>' + escHtml(title) + '</h2><p>' + escHtml(text) + '</p>' + (action || '') + '</section>';
+}
+
 function renderRecommendationList(recommendations, catalogue, metadata) {
   const notice = catalogue && catalogue.source === 'demo-fallback'
     ? '<p class="report-note" role="status">Catalogue unavailable — showing demo merchants.</p>' : '';
@@ -314,16 +334,14 @@ function renderRecommendationList(recommendations, catalogue, metadata) {
     ? '<p class="report-note" role="status">Usual activity is unavailable. Recommendations remain based on suitable catalogue facts.</p>' : '';
   const emptyCatalogue = catalogue && catalogue.source === 'mysql' && catalogue.status === 'empty';
   if (!recommendations || !recommendations.length) {
-    return notice + activityNotice + '<section class="card state-card reveal">' +
-      '<div class="state-icon" aria-hidden="true">' +
-      '<svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/>' +
-      '<circle cx="12" cy="9.5" r="2.5"/></svg></div>' +
-      (emptyCatalogue ? '<h2>No merchants in the catalogue</h2><p>The catalogue is currently empty.</p>'
-        : foodRequested(metadata)
-        ? '<h2>No sample menu item fits</h2><p>Nothing on the fictional sample menu matches your food choice with your other filters.</p>' +
-          '<button class="button" type="button" data-clear-food>Clear food choice</button>'
-        : '<h2>No matches for your filters</h2><p>Try widening your distance or budget in <a href="/profile">Profile</a>.</p>') +
-      '</section>';
+    return notice + activityNotice + (emptyCatalogue
+      ? stateCardHtml('pin', 'No merchants to show yet', 'The sample catalogue is empty right now. Please check back soon.',
+        '<button class="button" type="button" data-retry-match>Try again</button>')
+      : foodRequested(metadata)
+      ? stateCardHtml('search', 'No sample menu item fits', 'No fictional sample menu item matches your food choice together with your other filters.',
+        '<button class="button" type="button" data-clear-food>Clear food choice</button>')
+      : stateCardHtml('search', 'No matches for your filters', 'Try a higher budget or a longer walking distance.',
+        '<button class="button" type="button" data-open-filters>Edit filters</button>'));
   }
   return notice + activityNotice + '<div class="rec-list">' + recommendations.map(renderRecCard).join('') + '</div>';
 }
@@ -374,7 +392,7 @@ async function loadMatch(again) {
   if (originModule.isLive()) return originModule.loadLive();
   const query = diningRecommendationQuery();
   if (query === null) {
-    matchRegion.innerHTML = '<p class="error" role="status">Choose a valid Singapore dining date and time.</p>';
+    matchRegion.innerHTML = stateCardHtml('retry', 'Check the date and time', 'Choose a valid Singapore dining date and time.', '<button class="button" type="button" data-open-filters>Edit filters</button>');
     return;
   }
   matchRegion.setAttribute('aria-busy', 'true');
@@ -387,7 +405,11 @@ async function loadMatch(again) {
       fetch('/api/recommend' + query).then(async function(response) {
         smartMatchDebug('recommend request status: ' + response.status);
         const body = await response.json();
-        if (!response.ok) throw new Error(response.status === 400 ? 'Invalid recommendation filters' : 'Unable to load recommendations');
+        if (!response.ok) {
+          const failure = new Error(response.status === 400 ? 'Invalid recommendation filters' : 'Unable to load recommendations');
+          failure.code = body && body.error && typeof body.error.code === 'string' ? body.error.code : '';
+          throw failure;
+        }
         return body;
       }),
       wait(2000)
@@ -400,10 +422,10 @@ async function loadMatch(again) {
   } catch (error) {
     smartMatchDebug('load failed: ' + error.message);
     clearMatchingStages();
-    matchRegion.innerHTML = '<section class="card state-card reveal"><div class="state-icon" aria-hidden="true">' +
-      '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg></div>' +
-      '<h2>Let\'s try that again.</h2><p>We couldn\'t load a match just now.</p>' +
-      '<a class="button" href="/home">Return Home</a></section>';
+    matchRegion.innerHTML = error.code === 'menu-catalogue-unavailable'
+      ? stateCardHtml('search', 'The sample menu isn\'t available right now', 'Try Anything, or use the other filters.', '<button class="button" type="button" data-clear-food>Use Anything</button>')
+      : stateCardHtml('retry', 'Let\'s try that again', 'We couldn\'t load a match just now.',
+      '<button class="button" type="button" data-retry-match>Try again</button>');
   }
   matchRegion.setAttribute('aria-busy', 'false');
   chipState.setBusy(false);
@@ -414,6 +436,9 @@ const originModule = (function() {
   const statusEl = panel && panel.querySelector('[data-origin-status]');
   const demoButton = panel && panel.querySelector('[data-origin-demo]');
   const searchBox = panel && panel.querySelector('[data-origin-search]');
+  const pillEl = panel && panel.querySelector('[data-origin-pill]');
+  const toggleEl = panel && panel.querySelector('[data-origin-toggle]');
+  const choicesEl = panel && panel.querySelector('.origin-choices');
   let origin = null;
   let label = '';
   let source = '';
@@ -427,13 +452,20 @@ const originModule = (function() {
     statusEl.textContent = message || '';
     statusEl.hidden = !message;
     statusEl.classList.toggle('error', Boolean(message) && Boolean(isError));
+    if (message && isError) expand(true);
   }
   function describeMode() {
     if (!modeEl) return;
     modeEl.textContent = !origin ? 'RP demo origin: estimated distances, not routed walking times.'
       : source === 'device' ? 'Your current location: Google Maps walking times (kept only in this tab).'
       : 'Starting place: ' + label + ' (Google Maps walking times, kept only in this tab).';
+    if (pillEl) pillEl.textContent = !origin ? 'RP demo origin' : source === 'device' ? 'Current location' : (label || 'Selected place');
     if (demoButton) demoButton.hidden = !origin;
+  }
+  function expand(open) {
+    if (!toggleEl || !choicesEl) return;
+    toggleEl.setAttribute('aria-expanded', open ? 'true' : 'false');
+    choicesEl.hidden = !open;
   }
   function clear() {
     origin = null; label = ''; source = '';
@@ -563,6 +595,8 @@ const originModule = (function() {
       loadMatch(false);
     });
     describeMode();
+    expand(false);
+    if (toggleEl) toggleEl.addEventListener('click', function() { expand(toggleEl.getAttribute('aria-expanded') !== 'true'); });
   }
   return {
     isLive: function() { return Boolean(origin); },
@@ -585,18 +619,39 @@ const NL_ERROR_MESSAGES = {
   'natural-language-timeout': 'The AI took too long. Your text is kept; try again or use the manual filters.',
   'natural-language-provider-failure': 'The AI service is unavailable right now. Your text is kept; try again or use the manual filters.',
   'natural-language-invalid-output': 'We could not safely understand that request. Try rephrasing it or use the manual filters.',
-  'natural-language-no-usable-constraint': 'No supported constraint was found (budget, distance, cuisine, dietary, day or time). Try rephrasing or use the manual filters.',
+  'natural-language-no-usable-constraint': 'We could not find a budget, distance, food, dietary need, day or time in that. Try rephrasing, or use the choices.',
   'natural-language-rate-limited': 'Too many requests. Please wait a moment and try again.',
   'natural-language-conflicts-with-selection': 'Your typed request and your selected choices disagree. Change one of them and try again.',
   'menu-catalogue-unavailable': 'The sample menu is unavailable right now. Try Anything or use the manual filters.',
   'natural-language-recommendation-unavailable': 'We understood your request but could not load recommendations just now. Your text is kept; try again or use the manual filters.'
 };
 
-function nlSetStatus(form, message, isError) {
+// One friendly recovery action next to a typed-request failure. Codes stay internal; the buttons only
+// re-run the existing chip-driven search or clear the food choice.
+const NL_RECOVERY = {
+  'natural-language-not-configured': ['Search with the choices', 'choices'],
+  'natural-language-timeout': ['Try again', 'retry'],
+  'natural-language-provider-failure': ['Search with the choices', 'choices'],
+  'natural-language-invalid-output': ['Search with the choices', 'choices'],
+  'natural-language-no-usable-constraint': ['Search with the choices', 'choices'],
+  'natural-language-conflicts-with-selection': ['Search with the choices', 'choices'],
+  'menu-catalogue-unavailable': ['Use Anything', 'anything'],
+  'natural-language-recommendation-unavailable': ['Try again', 'retry']
+};
+function nlSetStatus(form, message, isError, code) {
   const status = form.querySelector('[data-nl-status]');
   status.textContent = message || '';
   status.hidden = !message;
   status.classList.toggle('error', Boolean(message) && Boolean(isError));
+  const recovery = isError && code && NL_RECOVERY[code];
+  if (message && recovery) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'nl-recovery';
+    button.setAttribute('data-nl-recovery', recovery[1]);
+    button.textContent = recovery[0];
+    status.appendChild(button);
+  }
 }
 
 function nlAppendList(box, headingText, className, lines) {
@@ -640,6 +695,8 @@ async function submitNaturalLanguage(form) {
   if (!text) {
     // No typed request: the chips, dining time and starting point drive the same deterministic engine.
     nlSetStatus(form, '', false);
+    matchModal.markSeen();
+    matchModal.close(true);
     await loadMatch(false);
     return;
   }
@@ -662,7 +719,7 @@ async function submitNaturalLanguage(form) {
         return;
       }
       // Typed text and manual filters stay as they are; the current recommendations are left untouched.
-      nlSetStatus(form, NL_ERROR_MESSAGES[code] || 'Something went wrong. Use the manual filters instead.', true);
+      nlSetStatus(form, NL_ERROR_MESSAGES[code] || 'Something went wrong. Use the manual filters instead.', true, code);
       nlRenderInterpretation(form, null, body && body.notApplied);
       return;
     }
@@ -678,6 +735,8 @@ async function submitNaturalLanguage(form) {
     originModule.afterRender(body.recommendations);
     matchRegion.setAttribute('aria-busy', 'false');
     initMerchantMap();
+    matchModal.markSeen();
+    matchModal.close(true);
   } catch (error) {
     nlSetStatus(form, 'We could not reach the server. Your text is kept; try again or use the manual filters.', true);
   } finally {
@@ -746,6 +805,38 @@ document.addEventListener('click', function(event) {
   }
 });
 
+document.addEventListener('click', function(event) {
+  const target = event.target;
+  if (!target.closest) return;
+  if (target.closest('[data-retry-match]')) { loadMatch(false); return; }
+  if (target.closest('[data-open-filters]')) {
+    const panel = document.querySelector('[data-filters-panel]');
+    if (panel) { panel.open = true; const summary = panel.querySelector('summary'); if (summary) summary.focus(); }
+    return;
+  }
+  const recovery = target.closest('[data-nl-recovery]');
+  if (!recovery || !nlForm) return;
+  const kind = recovery.getAttribute('data-nl-recovery');
+  nlSetStatus(nlForm, '', false);
+  if (kind === 'anything') chipState.clearFood();
+  if (kind === 'retry') submitNaturalLanguage(nlForm);
+  else { matchModal.close(true); loadMatch(false); }
+});
+
+// The "Edit filters" summary shows the chosen dining time as a compact chip (presentation only).
+(function syncFilterTime() {
+  const chip = document.querySelector('[data-filter-time]');
+  const timeField = diningTimeForm && diningTimeForm.querySelector('[name="diningDateTime"]');
+  if (!chip || !timeField) return;
+  const show = function() {
+    const match = typeof timeField.value === 'string' && timeField.value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+    chip.textContent = match ? match[3] + '/' + match[2] + ' ' + match[4] + ':' + match[5] : 'Pick a time';
+  };
+  timeField.addEventListener('input', show);
+  timeField.addEventListener('change', show);
+  show();
+})();
+
 if (nlForm) nlForm.addEventListener('submit', function(event) {
   event.preventDefault();
   submitNaturalLanguage(nlForm);
@@ -757,6 +848,66 @@ if (diningTimeForm) diningTimeForm.addEventListener('submit', function(event) {
 });
 if (document.querySelector('[data-load-match]')) loadMatch(location.search.includes('matching=again'));
 initMerchantMap();
+
+// ---------------------------------------------------------------------------
+// Matching sheet (modal dialog). The form inside it is the same data-nl-form as before, so every request,
+// payload and chip rule is unchanged; this only opens, traps focus in, and closes it. While it is open the
+// rest of the app is inert; Escape or the backdrop closes it and focus returns to what opened it.
+// ---------------------------------------------------------------------------
+const matchModal = (function() {
+  const modal = document.querySelector('[data-match-modal]');
+  const panel = modal && modal.querySelector('[data-modal-panel]');
+  let opener = null;
+  const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary';
+  function isOpen() { return Boolean(modal) && !modal.hidden; }
+  function backgrounds() {
+    return Array.prototype.slice.call(document.querySelectorAll('.app-header, .navigation, .app-footer, .skip-link, main > *'))
+      .filter(function(element) { return element !== modal; });
+  }
+  function focusables() {
+    return Array.prototype.slice.call(panel.querySelectorAll(FOCUSABLE)).filter(function(element) { return element.offsetParent !== null; });
+  }
+  function seen() { try { return window.sessionStorage.getItem('vouchai-sheet-seen') === '1'; } catch (error) { return false; } }
+  function markSeen() { try { window.sessionStorage.setItem('vouchai-sheet-seen', '1'); } catch (error) { /* optional convenience only */ } }
+  function open(trigger) {
+    if (!modal || isOpen()) return;
+    opener = trigger || document.activeElement;
+    modal.hidden = false;
+    document.body.classList.add('modal-open');
+    backgrounds().forEach(function(element) { element.inert = true; });
+    const first = panel.querySelector('input[name="text"]') || focusables()[0];
+    if (first) first.focus({ preventScroll: true });
+  }
+  function close(restoreFocus) {
+    if (!isOpen()) return;
+    modal.hidden = true;
+    document.body.classList.remove('modal-open');
+    backgrounds().forEach(function(element) { element.inert = false; });
+    const target = opener && opener !== document.body && document.contains(opener) ? opener : document.querySelector('.match-bar__edit') || document.querySelector('[data-sheet-open]');
+    if (restoreFocus && target && target.focus) target.focus({ preventScroll: true });
+    opener = null;
+  }
+  if (modal) {
+    modal.addEventListener('keydown', function(event) {
+      if (event.key === 'Escape') { event.preventDefault(); close(true); return; }
+      if (event.key !== 'Tab') return;
+      const items = focusables();
+      if (!items.length) { event.preventDefault(); panel.focus(); return; }
+      const first = items[0]; const last = items[items.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    });
+    modal.addEventListener('click', function(event) {
+      if (event.target.closest && event.target.closest('[data-modal-close]')) close(true);
+    });
+    if (modal.getAttribute('data-modal-auto') === 'true' && !seen()) open(null);
+  }
+  document.addEventListener('click', function(event) {
+    const trigger = event.target.closest && event.target.closest('[data-sheet-open]');
+    if (trigger) open(trigger);
+  });
+  return { open: open, close: close, isOpen: isOpen, markSeen: markSeen };
+})();
 
 // ---------------------------------------------------------------------------
 // Result bottom sheets ("Edit filters" / "Not for me"). Plain <details> elements, so they open and
@@ -852,7 +1003,7 @@ if (paymentForm) {
     paymentForm.querySelector('[data-purchase-amount]').textContent = '$' + (cents / 100).toFixed(2);
     const creditUsed = paymentForm.querySelector('[data-cashback-used]');
     if (creditUsed) creditUsed.textContent = used > 0 ? '−$' + (used / 100).toFixed(2) : 'Not applied';
-    paymentForm.querySelector('[data-nets-total]').textContent = '$' + paid.toFixed(2);
+    paymentForm.querySelector('[data-paid-total]').textContent = '$' + paid.toFixed(2);
     paymentForm.querySelector('[data-pay-button]').textContent = valid ? 'Pay $' + paid.toFixed(2) : 'Pay';
     if (eligibility) {
       const minimum = Number(eligibility.dataset.minimumSpend);
@@ -860,11 +1011,11 @@ if (paymentForm) {
       const merchant = eligibility.dataset.merchantName;
       eligibility.classList.toggle('is-ineligible', valid && amount < minimum);
       if (!valid) {
-        eligibility.textContent = 'Earn $' + reward + ' ' + merchant + ' Vouch Credit. Once daily · Spend $' + minimum.toFixed(2) + '+ and keep at least $1 paid with NETS.';
+        eligibility.textContent = 'Earn $' + reward + ' ' + merchant + ' Vouch Credit. Once daily · Spend $' + minimum.toFixed(2) + '+ and keep at least $1 paid by simulated payment.';
       } else if (amount < minimum) {
         eligibility.textContent = "This payment won't earn Vouch Credit. Minimum spend is $" + minimum.toFixed(2) + '.';
       } else if (paid < 1) {
-        eligibility.textContent = "This payment won't earn Vouch Credit. Keep at least $1 paid with NETS.";
+        eligibility.textContent = "This payment won't earn Vouch Credit. Keep at least $1 paid by simulated payment.";
       } else {
         eligibility.textContent = "You'll earn $" + reward + ' ' + merchant + ' Vouch Credit.';
       }
@@ -890,7 +1041,7 @@ if (shareGrid) {
     const button = event.target.closest('[data-share-platform]');
     if (!button) return;
     const link = new URL(shareGrid.dataset.sharePath, window.location.origin).href;
-    const text = 'I Vouched for ' + shareGrid.dataset.shareMerchant + ' on NETS Vouch. Claim the offer: ';
+    const text = 'I Vouched for ' + shareGrid.dataset.shareMerchant + ' on VouchAI. Claim the offer: ';
     const platform = button.dataset.sharePlatform;
     if (platform === 'copy') {
       await copyShareLink(link);
@@ -948,7 +1099,7 @@ document.addEventListener('submit', function(event) {
   if (form.matches('[data-payment], [data-scan]')) {
     form.classList.add('is-processing');
     const status = form.querySelector('.form-status');
-    status.textContent = form.matches('[data-scan]') ? 'Scanning...' : 'Processing NETS payment...';
+    status.textContent = form.matches('[data-scan]') ? 'Scanning...' : 'Processing simulated payment...';
     delay = form.matches('[data-scan]') ? 900 : 800;
   }
   window.setTimeout(function() { HTMLFormElement.prototype.submit.call(form); }, delay);
@@ -958,17 +1109,6 @@ document.addEventListener('submit', function(event) {
 window.addEventListener('pageshow', function(event) {
   if (event.persisted) window.location.reload();
 });
-
-// Simulated iOS status bar clock (presentation only).
-const statusTime = document.querySelector('[data-status-time]');
-if (statusTime) {
-  const renderTime = function() {
-    const now = new Date();
-    statusTime.textContent = now.getHours() + ':' + String(now.getMinutes()).padStart(2, '0');
-  };
-  renderTime();
-  window.setInterval(renderTime, 30000);
-}
 
 // Close the header account menu when tapping anywhere outside it.
 document.addEventListener('click', function(event) {

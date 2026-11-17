@@ -36,7 +36,7 @@ test('catalogue strings are escaped in text and attributes', () => {
 
 test('empty catalogue and filtered-empty responses display distinct honest states', () => {
   const empty = sandbox.renderRecommendationList([], { source: 'mysql', status: 'empty' });
-  assert.match(empty, /No merchants in the catalogue/); assert.doesNotMatch(empty, /widening|demo merchants/);
+  assert.match(empty, /No merchants to show yet/); assert.doesNotMatch(empty, /widening|demo merchants/);
   const filtered = sandbox.renderRecommendationList([], { source: 'mysql', status: 'ok' });
   assert.match(filtered, /No matches for your filters/); assert.doesNotMatch(filtered, /Catalogue unavailable/);
 });

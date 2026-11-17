@@ -343,7 +343,7 @@ test('interpretation text is rendered with textContent only', () => {
   assert.equal(box.hidden, false);
 
   const template = fs.readFileSync(path.join(ROOT, 'views/home.ejs'), 'utf8');
-  const formSource = template.slice(template.indexOf('data-nl-form'), template.indexOf('data-dining-time-form'));
+  const formSource = template.slice(template.indexOf('data-nl-form'), template.indexOf('</form>', template.indexOf('data-nl-form')));
   assert.equal(/<%-/.test(formSource), false);
 });
 
@@ -573,7 +573,7 @@ test('interpretation and recommendation perform no database writes', async () =>
 // ---------------------------------------------------------------------------
 test('Home exposes a labelled 200-character input with loading, error and disclosure states', async () => {
   const page = (await http.visitor().request('/home')).html;
-  assert.match(page, /<label for="nl-text">Describe what you feel like<\/label>/);
+  assert.match(page, /<label for="nl-text">What are you craving\?<\/label>/);
   assert.match(page, /id="nl-text"[^>]*maxlength="200"/);
   assert.match(page, /AI interprets your words; fixed rules choose merchants\./);
   assert.match(page, /data-nl-status role="status" aria-live="polite"/);

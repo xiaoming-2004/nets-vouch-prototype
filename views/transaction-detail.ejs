@@ -7,12 +7,12 @@
 <% if (transaction.outlet) { %><p class="receipt-outlet"><%= transaction.outlet %></p><% } %>
 <p class="receipt-meta"><%= transaction.date %> · <%= transaction.time %></p>
 <div class="receipt-amount-hero">$<%= transaction.netsPaid.toFixed(2) %></div>
-<p class="receipt-method">Paid with NETS</p>
+<p class="receipt-method">Paid (simulated payment)</p>
 <% if (transaction.merchantCreditUsed > 0) { %>
 <dl class="receipt-lines receipt-breakdown">
 <div><dt>Purchase total</dt><dd>$<%= transaction.purchaseAmount.toFixed(2) %></dd></div>
 <div><dt><%= transaction.merchantName %> Vouch Credit used</dt><dd class="credit-applied">−$<%= transaction.merchantCreditUsed.toFixed(2) %></dd></div>
-<div class="receipt-net"><dt>Paid with NETS</dt><dd>$<%= transaction.netsPaid.toFixed(2) %></dd></div>
+<div class="receipt-net"><dt>Paid (simulated payment)</dt><dd>$<%= transaction.netsPaid.toFixed(2) %></dd></div>
 </dl>
 <% } %>
 <% if (transaction.merchantRewardEarned > 0) { %>

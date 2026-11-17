@@ -612,7 +612,7 @@ test('LAYOUT: the dietary checkbox CSS overrides width, min-height and padding f
   assert.match(scoped, /min-height:0/, 'the 48px minimum is cancelled');
   assert.match(scoped, /padding:0/, 'the 12px padding is cancelled');
   assert.match(scoped, /flex:0 0 20px/, 'a fixed flex size, so it never stretches');
-  assert.match(scoped, /accent-color:var\(--nets-red\)/, 'NETS red checked colour');
+  assert.match(scoped, /accent-color:var\(--brand-red\)/, 'brand red checked colour');
 
   // Compact, accessible rows: checkbox then label, tappable height, consistent spacing.
   const row = (css.match(/^\.dietary-check \{[^}]*\}/m) || [])[0];

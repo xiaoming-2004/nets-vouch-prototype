@@ -104,7 +104,7 @@ function merchantId(html) {
 
 async function onboardAndMatch(v) {
   const home = await v.request('/home');
-  assert.match(home.html, /action="\/setup-preferences"/);
+  assert.match(home.html, /data-match-modal data-modal-auto="true"/, 'a new visitor is offered the matching sheet');
   assert.match(home.html, /href="\/scan"/);
   assert.match(home.html, /href="\/profile"/);
   assert.equal((await v.request('/setup-preferences', {
@@ -156,7 +156,7 @@ test('Jia completes rejection → Choose this → Scan → Pay → Vouch → sha
   assert.deepEqual(fresh.transactions, []);
   assert.deepEqual(fresh.vouchCredits, {});
   assert.deepEqual(fresh.paymentVerifiedVouches, []);
-  assert.match((await jia.request('/profile/activity')).html, /No NETS activity yet/);
+  assert.match((await jia.request('/profile/activity')).html, /No payment activity yet/);
   assert.match((await jia.request('/profile/vouches')).html, /Your first Vouch starts/);
   const firstCard = await onboardAndMatch(jia);
   const rejectedId = merchantId(firstCard.html);
@@ -231,7 +231,7 @@ test('Jia completes rejection → Choose this → Scan → Pay → Vouch → sha
   assert.ok(!activity.html.includes('Vouch Credit used: $0.00'));
   const detail = await jia.request('/transactions/' + tx.id);
   assert.equal(detail.status, 200);
-  assert.match(detail.html, /Paid with NETS/);
+  assert.match(detail.html, /Paid \(simulated payment\)/);
   assert.match(detail.html, /\+\$0\.50 Vouch Credit[^<]* earned/);
   assert.ok(!detail.html.includes(tx.id), 'detail should not surface an internal ID');
   const vouches = await jia.request('/profile/vouches');
@@ -255,7 +255,7 @@ test('Jia completes rejection → Choose this → Scan → Pay → Vouch → sha
   assert.equal(clean.currentScanPayment, null);
   assert.equal(c.metrics.payments, 0);
   assert.equal(c.metrics.rewardCost, 0);
-  assert.match((await jia.request('/profile/activity')).html, /No NETS activity yet/);
+  assert.match((await jia.request('/profile/activity')).html, /No payment activity yet/);
   assert.equal((await jia.request('/transactions/' + tx.id)).status, 404);
 });
 
@@ -324,7 +324,7 @@ test('another browser never inherits Jia selection, transaction, credit or Vouch
   assert.deepEqual(state.transactions, []);
   assert.deepEqual(state.vouchCredits, {});
   assert.deepEqual(state.paymentVerifiedVouches, []);
-  assert.match((await other.request('/profile/activity')).html, /No NETS activity yet/);
+  assert.match((await other.request('/profile/activity')).html, /No payment activity yet/);
   assert.match((await other.request('/profile/vouches')).html, /Your first Vouch starts/);
   assert.equal((await other.request('/transactions/' + paid.transaction.id)).status, 404);
   assert.equal((await other.request('/payment-success/' + paid.transaction.id)).status, 404);

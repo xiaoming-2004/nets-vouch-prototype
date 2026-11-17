@@ -805,7 +805,9 @@ test('Google route block: facts, then attribution "Google Maps" with translate="
   // A live card renders the route block, keeps fictional merchant facts outside it and shows no RP estimate.
   const card = api.renderRecCard({ id: 'x', merchantName: 'N', price: 5, source: 'mysql', isSampleData: true,
     distanceLabel: null, dietary: [], feedbackToken: 't', travel, usualActivity: null, matchReasons: [] });
-  assert.ok(card.indexOf('Sample catalogue data') < card.indexOf('data-google-route'));
+  assert.ok(card.indexOf('Fictional sample merchant') >= 0 && card.indexOf('Fictional sample merchant') < card.indexOf('data-google-route'), 'the fictional label stays visible before the route block');
+  assert.ok(card.indexOf('data-google-route') < card.indexOf('why-match'), 'the route block (attribution and warning) is never inside the collapsed Why this match disclosure');
+  assert.match(card.slice(card.indexOf('why-match')), /Sample catalogue data/);
   assert.equal(/demo origin|catalogue estimate|not routed/.test(card), false);
   // Demo cards keep their label and show no Google content.
   const demoCard = api.renderRecCard({ id: 'x', merchantName: 'N', price: 5, source: 'mysql', isSampleData: true,

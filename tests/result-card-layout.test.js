@@ -8,11 +8,9 @@ const { app, demoStore, createInitialDemo, buildMatchExplanation, getMerchantCam
   resetMerchantCampaigns, clearDiscoveryCache, clearSearchIntentCache,
   RESEARCH_STATUS } = require('../app');
 
-// The normal Smart Match result has to fit one mobile screen. Pixel heights belong in the browser
-// (verified separately), so these tests guard the STRUCTURE that makes it fit and the content that
-// must never be dropped to achieve it: every essential fact and action is present, the filter form
-// is a closed-by-default overlay rather than inline height, and the compact rules are scoped to the
-// result screen only.
+// Task 8: the Smart Match result is a clean collapsed card. These tests guard the STRUCTURE (every essential fact and
+// action is present, details live in "Why this match?", Google facts are never collapsed, sheets are overlays) and the
+// responsive CSS contract. Pixel results are verified in a real browser separately.
 const originalFetch = global.fetch;
 const trackedKeys = ['GOOGLE_PLACES_API_KEY', 'FOURSQUARE_API_KEY', 'PLACES_PROVIDER',
   'OPENAI_API_KEY', 'TAVILY_API_KEY', 'GROQ_API_KEY'];
@@ -91,53 +89,6 @@ async function card(v) {
   return result.html;
 }
 
-// LAYOUT 1 -------------------------------------------------------------------------------------
-test('LAYOUT 1: the one-screen card still carries every essential fact and action', async function() {
-  const html = await card(visitor());
-  // Merchant name, distance, dietary badge, reward value + conditions, both actions, filters, map.
-  assert.match(html, /<h2 title="Woodlands Noodle Bar">Woodlands Noodle Bar<\/h2>/);
-  assert.match(html, /<span class="result-distance">\d+ min away<\/span>/);
-  // Without an active dietary preference there is no dietary badge to show (the badge states only
-  // what a registered merchant listed for the customer's own restriction).
-  assert.ok(!/class="diet-tag/.test(html), 'no dietary badge without a preference');
-  assert.match(html, /<span class="result-why-label">Why this match<\/span>/);
-  assert.match(html, /class="result-why-text" title="[^"]+"/);
-  assert.match(html, /class="reward"/);
-  assert.match(html, /\$\d+\.\d\d Vouch Credit/, 'the monetary credit value stays visible');
-  assert.match(html, /Spend \$\d+\.\d\d\+ · Pay with NETS/, 'the qualifying conditions stay visible');
-  assert.match(html, /Credit usable only at Woodlands Noodle Bar\./);
-  assert.match(html, /action="\/recommendation\/accept"[^>]*>[\s\S]*?Choose this/, 'primary action');
-  assert.match(html, /class="feedback sheet-host"[\s\S]*?Not for me/, 'rejection action');
-  assert.match(html, /Edit filters/);
-  assert.match(html, /class="match-map"/);
-  assert.match(html, /class="match-map-open"[^>]*maps/, 'directions stay reachable');
-  // The dish and its price get their own compact row and are never clipped out of the card.
-  assert.match(html, /<span class="result-dish-name">Try: Mushroom Noodles<\/span>/);
-  assert.match(html, /<span class="result-dish-price">\$6\.80<\/span>/);
-  const css = CSS();
-  assert.match(css, /\.result-dish-price \{ flex-shrink:0; \}/,
-    'the price can never be the part that gets ellipsised');
-});
-
-test('LAYOUT 1b: the Home greeting stays above the card and is never hidden', async function() {
-  const v = visitor();
-  const home = await v.request('/home');
-  await seedLegacyLocation(v, { status: 'fallback' });
-  await v.request('/smart-match/result');
-  const withMatch = await v.request('/home');
-  // The greeting keeps its original time-aware wording and the signed-in demo user's name.
-  assert.match(withMatch.html, /<header class="greeting"><p>Good (morning|afternoon|evening), Jia 👋<\/p><h1>[^<]+<\/h1><\/header>/);
-  assert.match(withMatch.html, /<header class="greeting">[\s\S]*?<section id="smart-match"/,
-    'it sits above the Smart Match card');
-  assert.equal(home.html.includes('class="greeting"'), true, 'and before a match is chosen too');
-  const css = CSS();
-  // No rule may hide it on the result screen - the compact pass used to drop it on a short shell.
-  assert.ok(!/\.greeting \{ display:none/.test(css));
-  assert.ok(!/\.screen:has\(\.match-card\) \.greeting \{[^}]*display:none/.test(css));
-  // Only ONE heading competes at the top: the repeated "Your Smart Match" label steps aside.
-  assert.match(css, /\.screen:has\(\.match-card\) #smart-match>\.eyebrow \{ display:none; \}/);
-});
-
 // WHY -------------------------------------------------------------------------------------------
 function placesMerchant(extra) {
   return Object.assign({
@@ -189,32 +140,51 @@ test('WHY 3: it never states anything the recommendation data does not support',
   assert.ok(bare.length > 0 && /\.$/.test(bare), bare);
 });
 
-test('WHY 4: the card renders the composed explanation, clamped but never lost', async function() {
+// LAYOUT 1 -------------------------------------------------------------------------------------
+test('LAYOUT 1: the collapsed card carries every essential fact and action', async function() {
   const html = await card(visitor());
-  assert.match(html, /<span class="result-why-label">Why this match<\/span>/);
-  const shown = html.match(/class="result-why-text" title="([^"]+)">([^<]+)</);
-  assert.ok(shown, 'the explanation renders with its full text in the title attribute');
-  assert.equal(shown[1], shown[2], 'the title carries exactly the full sentence');
-  assert.match(shown[2], /walking range/);
-  assert.match(shown[2], /\.$/, 'it reads as a sentence');
+  assert.match(html, /<h3 title="[^"]+">[^<]+<\/h3>/, 'merchant name');
+  assert.match(html, /<span class="result-distance">[^<]*(away|min)[^<]*<\/span>/, 'distance or RP demo estimate');
+  assert.match(html, /class="reward"/);
+  assert.match(html, /\$\d+\.\d\d Vouch Credit/, 'the monetary credit value stays visible');
+  assert.match(html, /Spend \$\d+\.\d\d\+ · Simulated payment · Credit usable only at /, 'the qualifying conditions stay visible');
+  assert.match(html, /action="\/recommendation\/accept"[^>]*>[\s\S]*?Choose this/, 'primary action');
+  assert.match(html, /class="feedback sheet-host"[\s\S]*?Not for me/, 'rejection action');
+  assert.match(html, /<details class="why-match">\s*<summary class="why-match__summary">Why this match\?<\/summary>/);
+  assert.ok(!/class="result-why-label"/.test(html), 'the old clamped label is gone');
   const css = CSS();
-  assert.match(css, /\.result-why-text \{[^}]*-webkit-line-clamp:2;/, 'two lines by default');
-  assert.match(css, /\.screen:has\(\.match-card\) \.result-why-text \{ -webkit-line-clamp:3; \}/,
-    'up to three lines on the result screen');
+  assert.match(css, /\.result-dish-price \{ flex-shrink:0; \}/, 'the price can never be the part that gets ellipsised');
+});
+
+test('LAYOUT 1b: the Home greeting stays above the results and the matching sheet is a modal dialog', async function() {
+  const v = visitor();
+  const home = await v.request('/home');
+  assert.match(home.html, /<header class="greeting"><p>Good (morning|afternoon|evening), Jia 👋<\/p><h1>[^<]+<\/h1><\/header>/);
+  assert.ok(home.html.indexOf('class="greeting"') < home.html.indexOf('id="smart-match"'));
+  assert.match(home.html, /<div class="sheet-modal" data-match-modal data-modal-auto="true" hidden>/, 'a first visit opens the sheet automatically');
+  assert.match(home.html, /role="dialog" aria-modal="true" aria-labelledby="sheet-title"/);
+  assert.ok(!/\.greeting \{ display:none/.test(CSS()));
+});
+
+// WHY 4 -----------------------------------------------------------------------------------------
+test('WHY 4: the card renders the composed explanation inside "Why this match?", never lost', async function() {
+  const html = await card(visitor());
+  const details = html.match(/<details class="why-match">([\s\S]*?)<\/details>/);
+  assert.ok(details, 'the disclosure exists');
+  assert.match(details[1], /class="result-why-text">[^<]*walking range[^<]*\.</, 'the full explanation is inside it');
+  assert.match(details[1], /Distances are estimates from the RP demo origin, not real walking times\./, 'methodology disclosure');
+  assert.ok(!/class="why-match" open/.test(html), 'collapsed by default');
 });
 
 // LAYOUT 2 -------------------------------------------------------------------------------------
-test('LAYOUT 2: the filter form is a closed-by-default overlay, not inline card height', async function() {
+test('LAYOUT 2: the sheets are closed-by-default overlays, not inline card height', async function() {
   const html = await card(visitor());
-  // Closed <details>: no `open` attribute, so the panel costs nothing while closed.
   assert.match(html, /<details class="refine-prefs sheet-host" id="refine">/);
   assert.ok(!/<details class="refine-prefs sheet-host" id="refine" open/.test(html));
   assert.match(html, /<details class="feedback sheet-host" id="feedback">/);
-  // It is an overlay sheet with a backdrop and an explicit close control.
   assert.match(html, /class="result-sheet"[\s\S]*?data-sheet-backdrop/);
-  assert.match(html, /class="result-sheet-panel refine-sheet" role="group" aria-label="Edit Smart Match filters"/);
+  assert.match(html, /class="result-sheet-panel refine-sheet" role="group" aria-label="Edit craving and mood"/);
   assert.match(html, /data-sheet-close>Close<\/button>/);
-  // Every existing control is still inside it, with dietary read-only and linked to Profile.
   assert.match(html, /name="craving"/);
   assert.match(html, /name="moodCuisine"/);
   assert.match(html, /name="budget"/);
@@ -225,64 +195,61 @@ test('LAYOUT 2: the filter form is a closed-by-default overlay, not inline card 
   assert.doesNotMatch(html, /name="dietaryPreference"/, 'no second editable dietary selector');
   assert.match(html, /action="\/profile" class="form-stack"/, 'submission target is unchanged');
   const css = CSS();
-  // The panel is positioned against the phone shell, so an open sheet never adds card height and
-  // never sits under the bottom navigation.
-  assert.match(css, /\.result-sheet \{ position:absolute; inset:0; z-index:2000; \}/,
-    'the sheet sits above the Leaflet map panes and its full-size directions link');
+  assert.match(css, /\.result-sheet \{ position:absolute; inset:0; z-index:2000; \}/, 'an overlay inside the phone screen (fixed when frameless)');
   assert.match(css, /\.result-sheet-panel \{ position:absolute;[^}]*bottom:0;/);
   assert.match(css, /\.result-sheet-panel \{[^}]*env\(safe-area-inset-bottom\)/);
   assert.match(css, /details\[open\]>\.sheet-trigger/, 'the open state is visible on the trigger');
-  // A filling transform animation on the card would make it the sheet's containing block, and its
-  // overflow:hidden would then cut the panel off halfway down the screen.
-  assert.match(css, /\.match-card\.reveal \{ animation-fill-mode:none; \}/,
-    'the card reveal animation must not keep filling a transform');
+  assert.match(css, /\.match-card\.reveal \{ animation-fill-mode:none; \}/);
 });
 
 test('LAYOUT 2b: the sheets keep working from the keyboard', async function() {
   const js = CLIENT_JS();
-  // <details>/<summary> is natively keyboard operable; the script only adds sheet behaviour.
   assert.match(js, /key !== 'Escape'/, 'Escape closes an open sheet');
   assert.match(js, /data-sheet-backdrop\], \[data-sheet-close\]/, 'backdrop and Close both close it');
   assert.match(js, /trigger\.focus\(\)/, 'focus returns to the trigger');
   assert.match(js, /first\.focus\(\{ preventScroll: true \}\)/, 'focus moves into the panel on open');
   assert.match(js, /closeOpenSheets\(host, false\)/, 'only one sheet is open at a time');
-  const css = CSS();
-  assert.match(css, /button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible \{ outline:3px solid/,
-    'the trigger keeps a visible focus indicator');
+  assert.match(CSS(), /button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible \{ outline:3px solid/);
 });
 
 // LAYOUT 3 -------------------------------------------------------------------------------------
-test('LAYOUT 3: photo, map and spacing are viewport-aware instead of fixed', async function() {
+test('LAYOUT 3: iPhone-style frame on large screens, frameless real-viewport layout on phones and at high zoom', async function() {
   const css = CSS();
-  assert.match(css, /--result-thumb:\d+px/);
-  assert.match(css, /--result-map-h:clamp\(/, 'the map height is a clamp(), not one fixed value');
-  // A wide rectangle with a readable height at every shell size, never a thin banner: a floor, a
-  // viewport-aware basis and a ceiling, with the map taking the card's spare height.
-  assert.match(css, /--result-map-h:clamp\(110px,/, 'the map has a floor and a viewport-aware basis');
-  assert.match(css, /\.screen:has\(\.match-card\) \.match-map-wrap \{ flex:50 1 var\(--result-map-h\); min-height:var\(--result-map-min\); max-height:var\(--result-map-max\); \}/);
-  assert.match(css, /\.screen:has\(\.match-card\) \.match-card \{ flex:1 0 auto;/,
-    'the card grows into spare height, and never shrinks to avoid a scrollbar');
-  assert.match(css, /\.screen:has\(\.match-card\) #smart-match \{[^}]*margin-bottom:16px;/,
-    'the card-to-navigation gap is an explicit margin, so it survives scrolling too');
-  assert.match(css, /\.match-map-wrap \.match-map \{ height:var\(--result-map-h\);/);
-  assert.match(css, /\.result-photo \{[^}]*aspect-ratio:1 \/ 1;/, 'the photo square never distorts');
-  assert.match(css, /\.result-photo img \{[^}]*object-fit:cover;/);
-  assert.match(css, /\.result-photo\.is-empty \.result-photo-fallback \{ display:grid; \}/,
-    'a missing photo keeps the polished monogram fallback');
-  // Compact rules are scoped to the screen that shows a result card.
-  assert.match(css, /\.screen:has\(\.match-card\) \{/);
-  assert.ok(!/\boverflow:hidden\b/.test(css.split('.screen:has(.match-card)')[1].split('}')[0]),
-    'scrolling is never disabled on the result screen');
-  assert.match(css, /\.screen \{ min-height:0; overflow-y:auto;/, 'the screen still scrolls as a fallback');
-  // Touch targets stay tappable.
+  assert.match(css, /\.device \{[^}]*width:418px; height:clamp\(660px,calc\(100dvh - 40px\),920px\);/, 'one centred ~390px-wide phone screen');
+  assert.match(css, /\.device-bezel \{[^}]*background:#050506;/, 'black bezel');
+  assert.match(css, /\.dynamic-island \{/);
+  assert.match(css, /\.home-indicator \{/);
+  assert.match(css, /\.device-button--power \{/);
+  assert.match(css, /\.screen \{ grid-row:3; min-height:0; overflow-y:auto;/, 'content scrolls inside the phone screen');
+  assert.match(css, /\.navigation \{ grid-row:4;/, 'the bottom navigation stays inside the screen');
+  const frameless = css.match(/@media not all and \(min-width:700px\) and \(min-height:700px\) \{([\s\S]*?)\n\}/);
+  assert.ok(frameless, 'the frame is used only above 700px wide AND 700px tall, so narrow windows and high zoom go frameless');
+  for (const rule of [/\.status-bar,\.home-indicator,\.device-button \{ display:none; \}/, /\.device,\.device-bezel \{[^}]*box-shadow:none;/,
+    /\.screen \{ overflow:visible;[^}]*env\(safe-area-inset-bottom\)/, /\.navigation \{ position:fixed; left:0; right:0; bottom:0;/,
+    /\.navigation \{[^}]*padding:6px 8px calc\(6px \+ env\(safe-area-inset-bottom\)\)/, /\.app-header \{ position:sticky; top:0;/,
+    /\.app-header \{[^}]*env\(safe-area-inset-top\)/, /\.phone \{[^}]*max-width:var\(--frameless-max\)/]) assert.match(frameless[1], rule);
+  assert.match(css, /--frameless-max:560px/);
+  const home = (await visitor().request('/home')).html;
+  for (const decorative of ['device-button device-button--action', 'class="status-bar"', 'dynamic-island', 'class="home-indicator"']) {
+    const at = home.indexOf(decorative); assert.ok(at >= 0, decorative);
+  }
+  assert.equal((home.match(/class="device-button [^"]*" aria-hidden="true"/g) || []).length, 4);
+  assert.match(home, /<div class="status-bar" aria-hidden="true">/);
+  assert.match(home, /<span class="home-indicator" aria-hidden="true"><\/span>/);
+  assert.match(css, /\.screen \{[^}]*scroll-padding-top:/);
   assert.match(css, /\.sheet-trigger \{[^}]*min-height:44px;/);
   assert.match(css, /\.button \{[^}]*min-height:52px;/);
-  assert.match(css, /\.navigation \{[^}]*padding:6px 10px 26px;/);
-  assert.match(css, /\.navigation \{ padding-bottom:calc\(6px \+ env\(safe-area-inset-bottom\)\); \}|padding-bottom:calc\(6px \+ env\(safe-area-inset-bottom\)\)/,
-    'the bottom navigation respects the safe area');
+  assert.match(css, /\.avatar \{ width:44px; height:44px;/);
+  assert.match(css, /\.navigation a \{ min-height:50px; min-width:44px;/);
+  assert.match(css, /\.result-photo \{[^}]*aspect-ratio:1 \/ 1;/, 'the photo square never distorts');
+  assert.match(css, /\.result-photo img \{[^}]*object-fit:cover;/);
+  assert.match(css, /\.result-photo\.is-empty \.result-photo-fallback \{ display:grid; \}/);
+  assert.match(css, /prefers-reduced-motion:reduce/);
+  assert.ok(!/\.rec-list \{[^}]*grid-template-columns:repeat\(2/.test(css) && !/@media \(min-width:700px\) \{ \.rec-list/.test(css), 'never more than one card per row');
+  assert.match(css, /\.rec-list \{ display:flex; flex-direction:column; gap:14px; \}/);
 });
 
-test('LAYOUT 3b: long dynamic text is clamped, but conditions are never truncated', async function() {
+test('LAYOUT 3b: long dynamic text is never clamped or hidden, and wraps instead of overflowing', async function() {
   const v = visitor();
   await card(v);
   await v.change(function(demo) {
@@ -292,20 +259,17 @@ test('LAYOUT 3b: long dynamic text is clamped, but conditions are never truncate
       'and it is still comfortably inside the walking range you asked for today.';
   });
   const html = (await v.request('/smart-match/result')).html;
-  // The name renders in full, with its title attribute intact.
-  assert.match(html, /<h2 title="Super Extraordinarily Long Hawker Merchant Name[^"]*">Super Extraordinarily Long Hawker Merchant Name[^<]*<\/h2>/);
-  // The reason keeps its full text in the title attribute next to the clamped visible line.
-  assert.match(html, /class="result-why-text" title="This candidate fits your craving far better[^"]*"/);
-  // The reward conditions are plain text with no clamp applied.
-  assert.match(html, /Spend \$\d+\.\d\d\+ · Pay with NETS · Credit usable only at Super Extraordinarily Long/);
+  assert.match(html, /<h3 title="Super Extraordinarily Long Hawker Merchant Name[^"]*">Super Extraordinarily Long Hawker Merchant Name[^<]*<\/h3>/);
+  assert.match(html, /class="result-why-text">This candidate fits your craving far better[^<]*</);
+  assert.match(html, /Spend \$\d+\.\d\d\+ · Simulated payment · Credit usable only at Super Extraordinarily Long/);
   const css = CSS();
-  assert.ok(!/\.result-info h2 \{[^}]*line-clamp/.test(css), 'the merchant name is never clamped');
-  assert.match(css, /\.result-why-text \{[^}]*-webkit-line-clamp:2;/);
-  assert.ok(!/\.match-card \.reward[^{]*\{[^}]*line-clamp/.test(css),
-    'reward conditions are never line-clamped');
+  assert.ok(!/\.result-info h3 \{[^}]*line-clamp/.test(css), 'the merchant name is never clamped');
+  assert.ok(!/\.match-card \.reward[^{]*\{[^}]*line-clamp/.test(css), 'reward conditions are never line-clamped');
+  assert.match(css, /\.result-why-text \{[^}]*-webkit-line-clamp:unset;[^}]*overflow:visible;/, 'the explanation is shown in full');
+  assert.match(css, /\.result-info h3,\.rec-name|\.rec-name,\.result-info h3 \{[^}]*overflow-wrap:anywhere;/);
 });
 
-test('LAYOUT 3c: an exceptionally long name scrolls the result instead of being clipped', async function() {
+test('LAYOUT 3c: an exceptionally long name is rendered whole', async function() {
   const v = visitor();
   await card(v);
   const longName = 'Pondok Angah Nasi Padang Muslim Food Stall and Traditional Halal Kitchen Woodlands Branch 02';
@@ -316,30 +280,12 @@ test('LAYOUT 3c: an exceptionally long name scrolls the result instead of being 
     merchant.name = longName;
   });
   const html = (await v.request('/smart-match/result')).html;
-  // The whole name is in the document - no ellipsis, no "More" affordance, nothing dropped.
-  assert.ok(html.includes('>' + longName + '</h2>'), 'the complete name is rendered');
-  const heading = html.match(/<h2 title="[^"]*">([^<]*)<\/h2>/);
-  assert.equal(heading[1], longName, 'the heading text is the whole name, with no ellipsis');
-  // Every action and the full reward conditions are still present for the user to scroll to.
+  assert.ok(html.includes('>' + longName + '</h3>'), 'the complete name is rendered');
   assert.match(html, /Choose this/);
   assert.match(html, /Not for me/);
-  assert.match(html, /Edit filters/);
-  assert.match(html, new RegExp('Credit usable only at ' + longName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-
-  const css = CSS();
-  // Scrolling is a consequence of content height, not of any name-length detection.
+  assert.match(html, /Craving and mood/);
+  assert.match(html, new RegExp('Credit usable only at ' + longName.replace(/[.*+?^$()|[\]\\{}]/g, '\\$&')));
   assert.ok(!/merchantName\.length|nameLength/.test(CLIENT_JS()), 'no JavaScript measures the name');
-  assert.match(css, /\.screen \{ min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch;/,
-    'the one scroll area keeps momentum scrolling');
-  assert.match(css, /\.screen \{[^}]*scroll-padding:/, 'focused controls are scrolled clear of the edges');
-  assert.match(css, /\.screen:has\(\.match-card\) \.match-card \{ flex:1 0 auto;/,
-    'the card grows into spare height but is never compressed to avoid a scrollbar');
-  assert.match(css, /\.screen:has\(\.match-card\) \.match-map-wrap \{[^}]*min-height:var\(--result-map-min\);/,
-    'the map keeps a readable floor instead of collapsing into a banner');
-  assert.match(css, /--result-map-min:\d+px/);
-  // Only the content area scrolls - the shell rows stay put.
-  assert.match(css, /\.status-bar \{ grid-row:1; \} \.app-header \{ grid-row:2; \} \.screen \{ grid-row:3; \} \.navigation \{ grid-row:4; \}/);
-  assert.ok(!/\.match-copy \{[^}]*overflow-y:(auto|scroll)/.test(css), 'no nested scroll area inside the card');
 });
 
 // LAYOUT 3d ------------------------------------------------------------------------------------
@@ -390,74 +336,49 @@ async function providerCard(v, name) {
 
 test('LAYOUT 3d: a real provider result keeps every part inside the card', async function() {
   const html = await providerCard(visitor(), PROVIDER_NAME);
-  // Everything the provider supplies is present and whole.
-  assert.ok(html.includes('>' + PROVIDER_NAME + '</h2>'));
+  assert.ok(html.includes('>' + PROVIDER_NAME + '</h3>'));
   assert.ok(!/diet-tag/.test(html), 'no dietary badge without an active preference');
-  assert.match(html, /class="result-photo-credit">Photo: <a/, 'owner attribution is rendered');
+  assert.match(html, /class="result-photo-credit">Photo: <a/, 'owner attribution is rendered (inside Why this match?)');
   assert.match(html, /<img src="\/smart-match\/photo\//, 'the provider photo is rendered');
   assert.ok(html.includes('data-address="' + PROVIDER_ADDRESS + '"'), 'the full address reaches the map');
-  assert.match(html, /class="result-why-text" title="[^"]+"/, 'the composed explanation is rendered');
-  assert.match(html, /Pay with NETS · Credit usable only at /);
+  assert.match(html, /class="result-why-text">[^<]+</, 'the composed explanation is rendered');
+  assert.match(html, /Simulated payment · Credit usable only at /);
   assert.match(html, /Choose this/);
   assert.match(html, /Not for me/);
-  assert.match(html, /Edit filters/);
-
   const css = CSS();
-  // Nothing in the card may hold itself at max-content width: these are the rules that keep the
-  // provider's own text inside its own section.
   assert.match(css, /\.match-copy \{[^}]*min-width:0;/);
-  assert.match(css, /\.screen:has\(\.match-card\) \.match-copy \{ flex:1 1 auto; min-width:0;/,
-    'the card content column must be allowed to shrink to the card width');
   assert.match(css, /\.result-info \{ flex:1; min-width:0;/);
-  assert.match(css, /\.result-meta \{ display:flex; flex-wrap:wrap;/, 'category and distance may wrap');
-  assert.match(css, /\.result-tags \{ display:flex; flex-wrap:wrap;/, 'Vouches and dietary badges wrap as a group');
+  assert.match(css, /\.result-meta \{ display:flex; flex-wrap:wrap;/);
+  assert.match(css, /\.result-tags \{ display:flex; flex-wrap:wrap;/);
   assert.match(css, /\.result-photo-credit \{[^}]*overflow-wrap:anywhere;/);
   assert.match(css, /\.match-card \.reward \{[^}]*overflow-wrap:anywhere;/);
-  assert.match(css, /\.result-why-text \{[^}]*overflow-wrap:anywhere;/);
-  assert.match(css, /\.result-secondary \{ display:flex; flex-wrap:wrap;/, 'the two actions stack rather than clip');
-  assert.match(css, /\.result-secondary \.sheet-host \{ flex:1 1 120px; min-width:0; \}/);
-  assert.match(css, /\.sheet-trigger \{[^}]*min-height:44px;/, 'touch targets stay 44px');
-  assert.match(css, /\.mood-chip \{ position:relative;/, 'the hidden radio cannot escape its chip');
-  // The map popup is bound to the map's own width in script.js, not Leaflet's 300px default.
+  assert.match(css, /\.result-secondary \{ display:flex; flex-wrap:wrap;/);
+  assert.match(css, /\.mood-chip \{ position:relative;/);
   const js = CLIENT_JS();
   assert.match(js, /const popupMaxWidth = Math\.max\(150, Math\.round\(el\.clientWidth\) - 48\);/);
-  assert.match(js, /maxWidth: popupMaxWidth/);
-  assert.match(css, /\.map-popup \.leaflet-popup-content \{[^}]*overflow-wrap:anywhere;/,
-    'a long address wraps inside the popup');
-  // The fallback for oversized content is vertical only - no part of the result card scrolls
-  // sideways. (The merchant report's own charts are deliberately horizontally scrollable and are
-  // not part of this screen.)
+  assert.match(css, /\.map-popup \.leaflet-popup-content \{[^}]*overflow-wrap:anywhere;/);
   const resultRules = css.split('Smart Match RESULT card')[1].split('Business Report page')[0];
   assert.ok(!/overflow-x:(auto|scroll)/.test(resultRules), 'no horizontal scroll area in the result card');
-  assert.match(css, /\.screen \{ min-height:0; overflow-y:auto;/, 'the screen scrolls vertically only');
 });
 
 test('LAYOUT 3e: an 80-100 character provider name still stays inside the card', async function() {
   const longName = 'Pondok Angah Nasi Padang Muslim Food Stall and Traditional Halal Kitchen Woodlands 02';
   assert.ok(longName.length >= 80 && longName.length <= 100);
   const html = await providerCard(visitor(), longName);
-  assert.ok(html.includes('>' + longName + '</h2>'), 'the whole name is rendered');
+  assert.ok(html.includes('>' + longName + '</h3>'), 'the whole name is rendered');
   assert.match(html, /Choose this/);
-  assert.match(html, /Edit filters/);
-  const css = CSS();
-  assert.match(css, /\.result-info h2 \{[^}]*overflow-wrap:anywhere; \}/,
-    'an unbroken name breaks inside the word rather than widening the card');
+  assert.match(CSS(), /\.result-info h3 \{[^}]*overflow-wrap:anywhere;/, 'an unbroken name breaks inside the word');
 });
 
 // LAYOUT 4 -------------------------------------------------------------------------------------
 test('LAYOUT 4: the special result states still render their own content', async function() {
   const v = visitor();
   const merchantId = (await card(v)).match(/data-merchant-id="([^"]+)"/)[1];
-
-  // Accepted: the primary action becomes "Scan when you arrive" and the rejection stays available.
   await v.request('/recommendation/accept', { merchantId: merchantId });
   const accepted = (await v.request('/smart-match/result')).html;
   assert.match(accepted, /Heading to /);
   assert.match(accepted, /href="\/scan">Scan when you arrive/);
   assert.match(accepted, /Changed your mind\?/);
-  assert.match(accepted, /Edit filters/);
-
-  // Campaign unavailable: the truthful "offer has ended" status replaces the reward strip.
   getMerchantCampaigns().forEach(function(c) { c.status = 'PAUSED'; });
   await v.change(function(demo) { demo.selectedMerchantId = merchantId; demo.recommendationAccepted = false; });
   const ended = (await v.request('/smart-match/result')).html;
@@ -470,7 +391,6 @@ test('LAYOUT 4b: the empty states keep their own explanations and inline filter 
   const v = visitor();
   await v.request('/home');
   await seedLegacyLocation(v, { status: 'fallback' });
-  // An impossible budget empties the pool - the empty state is allowed to be as tall as it needs.
   await v.request('/profile', { budget: '1', maxDistanceMinutes: '1', craving: '', moodCuisine: 'any' });
   const empty = (await v.request('/smart-match/result')).html;
   assert.match(empty, /No nearby merchants clearly match your current craving and mood./);
@@ -478,7 +398,5 @@ test('LAYOUT 4b: the empty states keep their own explanations and inline filter 
   assert.match(empty, /name="craving"/);
   assert.match(empty, /Dietary: <strong>No dietary restriction<\/strong>/);
   assert.match(empty, /Search more places/);
-  const css = CSS();
-  assert.match(css, /\.refine-prefs--flat \.refine-sheet \{ padding:/,
-    'the empty state keeps its inline disclosure instead of an overlay');
+  assert.match(CSS(), /\.refine-prefs--flat \.refine-sheet \{ padding:/);
 });

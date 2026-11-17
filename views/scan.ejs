@@ -1,7 +1,7 @@
 <%- include('partials/start', { title: 'Scan to Pay' }) %>
 <header class="page-heading">
   <h1>Scan to pay</h1>
-  <p>Point your camera at the merchant's NETS QR code.</p>
+  <p>Point your camera at the merchant's QR code.</p>
 </header>
 <% var headingTo = activeMerchantId ? merchants.find(function(m) { return m.id === activeMerchantId; }) : null; %>
 <% if (headingTo) { %><section class="heading-to"><span class="scan-merchant-mono" aria-hidden="true"><%= headingTo.merchantName.charAt(0) %></span><span><small>You're paying at</small><strong><%= headingTo.merchantName %></strong><em><%= headingTo.parentVenueName || headingTo.address %></em></span></section><% } %>
@@ -32,7 +32,7 @@
       <span id="placeholder-text">Starting camera…</span>
     </div>
   </div>
-  <p class="camera-status" id="camera-status" role="status">Point at a merchant NETS QR code</p>
+  <p class="camera-status" id="camera-status" role="status">Point at a merchant QR code</p>
 </div>
 
 <canvas id="qr-canvas" hidden></canvas>

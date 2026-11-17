@@ -10,7 +10,7 @@
 <div class="dietary-checks">
 <% merchantDietaryOptions.forEach(function(opt) { %><label class="dietary-check"><input type="checkbox" name="<%= opt.value %>" <%= dietaryCapabilities[opt.value] ? 'checked' : '' %>><span><%= opt.label %></span></label><% }); %>
 </div>
-<small class="dietary-hint">Tick everything that applies. Customers see these as information you provided — NETS Vouch does not verify them on your behalf.</small>
+<small class="dietary-hint">Tick everything that applies. Customers see these as information you provided — VouchAI does not verify them on your behalf.</small>
 </fieldset>
 <button class="button dietary-save" type="submit">Save dietary options</button>
 <% if (dietarySaved) { %><small class="dietary-hint" role="status">Dietary options saved.</small><% } %>
@@ -27,7 +27,7 @@
 <input type="hidden" name="merchantId" value="<%= merchant.id %>">
 <fieldset class="field">
 <legend class="field-label" id="rewardTypeLabel">Reward type</legend>
-<small class="field-hint" id="rewardTypeHint">Customers earn a merchant-funded Vouch Credit: a cash balance usable only at your outlet on a later NETS payment. There is no item redemption in this prototype, so a label may only say what the credit is towards.</small>
+<small class="field-hint" id="rewardTypeHint">Customers earn a merchant-funded Vouch Credit: a cash balance usable only at your outlet on a later simulated payment. There is no item redemption in this prototype, so a label may only say what the credit is towards.</small>
 <div class="mood-grid mood-grid--2 reward-chip-grid" role="radiogroup" aria-labelledby="rewardTypeLabel" aria-describedby="rewardTypeHint">
 <% rewardOptions.forEach(function(opt) { %><label class="mood-chip"><input type="radio" name="rewardLabel" value="<%= opt %>" <%= campaign.rewardLabel === opt ? 'checked' : '' %>><span><%= rewardCreditText(campaign.rewardAmount, opt) %></span></label><% }); %>
 <label class="mood-chip"><input type="radio" name="rewardLabel" value="__custom__" id="rewardCustomRadio" aria-controls="rewardCustomInput" <%= _isCustomLabel ? 'checked' : '' %>><span>Custom…</span></label>
@@ -56,8 +56,8 @@
 })();
 </script>
 <section class="card qr-card">
-<p class="eyebrow">Your NETS QR code</p>
-<p>Display this at your counter. Customers scan it to pay with NETS Vouch.</p>
+<p class="eyebrow">Your QR code</p>
+<p>Display this at your counter. Customers scan it to make a simulated payment.</p>
 <div class="merchant-qr-wrap">
   <img class="merchant-qr-img" src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=10&data=<%= encodeURIComponent(merchant.id) %>" alt="QR code for <%= merchant.merchantName %>" width="160" height="160">
   <p class="merchant-qr-id"><%= merchant.id %></p>
@@ -69,10 +69,10 @@
 <p>Highest possible cost if every reward slot is used today. Not a guarantee of profit or return — actual cost is usually lower.</p>
 <dl class="receipt-lines">
 <div><dt>Maximum merchant reward spend</dt><dd>$<%= maxDailyCost.rewardBudget.toFixed(2) %></dd></div>
-<div><dt>Maximum NETS success fees</dt><dd>$<%= maxDailyCost.platformFee.toFixed(2) %></dd></div>
+<div><dt>Maximum platform success fees (illustrative)</dt><dd>$<%= maxDailyCost.platformFee.toFixed(2) %></dd></div>
 <div><dt>Maximum campaign cost</dt><dd>$<%= maxDailyCost.total.toFixed(2) %></dd></div>
 </dl>
-<small>Referral rewards are included within the reward budget. NETS success fee: $<%= campaign.platformFeePerAttributedPayment.toFixed(2) %> per Smart Match or Shared Vouch payment. Illustrative prototype pricing only.</small>
+<small>Referral rewards are included within the reward budget. Platform success fee (illustrative): $<%= campaign.platformFeePerAttributedPayment.toFixed(2) %> per Smart Match or Shared Vouch payment. Illustrative prototype pricing only.</small>
 </section>
 <% } else { %>
 <p class="eyebrow">Illustrative Prototype Data · sample history, not Open House activity</p>
@@ -141,7 +141,7 @@
 </section>
 <% if (recentPayments && recentPayments.length) { %>
 <section class="card">
-<p class="eyebrow">Recent live payments · NETS paid</p>
+<p class="eyebrow">Recent live payments · Paid</p>
 <div class="payment-feed">
 <% if (recentPayments && recentPayments.length) { %>
 <% recentPayments.forEach(function(p) { %><div class="feed-row"><span class="feed-source feed-source--<%= p.source.toLowerCase().replace('_','-') %>"><%= p.source === 'SMART_MATCH' ? 'Smart Match' : p.source === 'SHARED_VOUCH' ? 'Shared Vouch' : 'Direct Scan' %></span><span class="feed-item"><%= p.itemName || 'In-store purchase' %></span><span class="feed-meta"><%= p.date %> · <%= p.time %></span><b><%= p.displayAmount %></b></div><% }); %>

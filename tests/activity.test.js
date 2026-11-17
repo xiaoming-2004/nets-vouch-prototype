@@ -98,7 +98,7 @@ test('fresh Activity is empty; incomplete and foreign records remain hidden', as
   const v = visitor();
   const fresh = await v.request('/profile/activity');
   assert.equal(rowCount(fresh.html), 0);
-  assert.match(fresh.html, /No NETS activity yet/);
+  assert.match(fresh.html, /No payment activity yet/);
   assert.ok(!fresh.html.includes('tx-h1'));
   await v.change(function(demo) {
     demo.transactions.push({ id: 'pending', ownerUserId: 'jia', merchantName: 'Incomplete',
@@ -122,7 +122,7 @@ test('one successful Direct Scan shows one owned NETS amount and no zero-credit 
   assert.equal(rowCount(activity.html), 1);
   assert.match(activity.html, /Green Bowl/);
   assert.match(activity.html, /\$3\.00/);
-  assert.match(activity.html, /NETS · Successful/);
+  assert.match(activity.html, /Simulated payment · Successful/);
   assert.ok(!activity.html.includes('+$0.00'));
   assert.ok(!activity.html.includes('−$0.00'));
   assert.ok(!activity.html.includes('Vouch Credit used:'));
@@ -146,7 +146,7 @@ test('merchant credit used and earned display factual two-decimal amounts', asyn
   const detail = await v.request('/transactions/' + tx.id);
   assert.match(detail.html, /Purchase total<\/dt><dd>\$5\.00/);
   assert.match(detail.html, /Vouch Credit used<\/dt><dd class="credit-applied">−\$1\.00/);
-  assert.match(detail.html, /Paid with NETS<\/dt><dd>\$4\.00/);
+  assert.match(detail.html, /Paid \(simulated payment\)<\/dt><dd>\$4\.00/);
 });
 
 test('Activity and detail stay private across sessions', async function() {

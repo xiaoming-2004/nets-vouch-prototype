@@ -305,7 +305,7 @@ const script = read('public/js/script.js');
 
 test('Home renders six food chips, four dietary chips and one Find my match action accessibly', async () => {
   const home = (await http.visitor().request('/home')).html;
-  const form = home.slice(home.indexOf('data-nl-form'), home.indexOf('data-dining-time-form'));
+  const form = home.slice(home.indexOf('data-nl-form'), home.indexOf('</form>', home.indexOf('data-nl-form')));
   const food = form.slice(form.indexOf('data-chip-group="food"'), form.indexOf('data-chip-group="dietary"'));
   const labels = group => [...group.matchAll(/<button type="button" class="chip" data-chip-value="([^"]+)" aria-pressed="(true|false)">([^<]+)<\/button>/g)];
   const foodChips = labels(food);
@@ -321,7 +321,7 @@ test('Home renders six food chips, four dietary chips and one Find my match acti
   assert.match(form, /id="food-chip-title"/);
   assert.equal((form.match(/type="submit"/g) || []).length, 1);
   assert.match(form, /<button class="button" type="submit" data-nl-submit>Find my match<\/button>/);
-  assert.match(form, /<label for="nl-text">Describe what you feel like<\/label>/);
+  assert.match(form, /<label for="nl-text">What are you craving\?<\/label>/);
   assert.match(form, /your saved profile is not changed/);
   assert.equal(/<%-/.test(fs.readFileSync(path.join(ROOT, 'views/home.ejs'), 'utf8').slice(fs.readFileSync(path.join(ROOT, 'views/home.ejs'), 'utf8').indexOf('data-chip-group="food"'), fs.readFileSync(path.join(ROOT, 'views/home.ejs'), 'utf8').indexOf('data-nl-submit'))), false);
   // The saved dietary preference is the highlighted, untouched default.
@@ -345,7 +345,7 @@ test('chip styling meets the touch, keyboard and state requirements', () => {
   assert.match(rule('.chip:focus-visible'), /outline:\s*3px solid/);
   assert.match(rule('.chip:disabled'), /cursor:\s*not-allowed/);
   assert.match(css, /\.chip-group\[aria-busy="true"\]/);
-  assert.match(css, /@media \(max-width:360px\) \{ \.chip-grid--food \{ grid-template-columns:repeat\(2,/);
+  assert.match(css, /@media \(max-width:340px\) \{ \.chip-grid--food \{ grid-template-columns:repeat\(3,/);
 });
 
 function chipSandbox(defaults) {
@@ -434,7 +434,7 @@ test('Find my match sends the chips with every route and keeps all text escaped'
     distanceLabel: 'near', dietary: [], feedbackToken: 't', usualActivity: null, matchReasons: [], campaign: null,
     recommendedMenuItem: { name: '<img src=x onerror=alert(1)>', price: 6.8, label: 'Fictional <b>sample</b>' } });
   assert.ok(card.includes('Recommended: &lt;img src=x onerror=alert(1)&gt; · <strong>$6.80</strong>'));
-  assert.ok(card.includes('Recommended item price · Typical merchant price $5.00'));
+  assert.ok(card.includes('Typical merchant price $5.00'));
   assert.equal(/<img|<b>/.test(card), false);
   const empty = sandbox.api.renderRecommendationList([], { source: 'mysql', status: 'ok' }, { request: { foodCategory: 'indian' } });
   assert.match(empty, /data-clear-food>Clear food choice<\/button>/);

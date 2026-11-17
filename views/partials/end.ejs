@@ -1,4 +1,5 @@
 </main>
+<footer class="app-footer"><p class="app-disclaimer">Student prototype for demonstration. Not an official NETS application.</p><p class="app-footnote">Open House demo · Merchant offers &amp; payments simulated</p></footer></div>
 <% if (locals.merchantNav) { %>
 <nav class="navigation" aria-label="Merchant navigation">
 <a href="/merchant?merchantId=<%= merchantNav.merchantId %>&tab=campaign" <%- active === 'campaign' ? 'aria-current="page"' : '' %>><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>Campaign</a>
@@ -12,5 +13,4 @@
 <a href="/profile/activity" <%- active === 'activity' ? 'aria-current="page"' : '' %>><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Activity</a>
 <a href="/profile" <%- active === 'profile' ? 'aria-current="page"' : '' %>><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></svg>Profile</a>
 </nav>
-<% } %><span class="home-indicator" aria-hidden="true"></span></section></div></div>
-<p class="stage-caption">Open House demo · Merchant offers &amp; payments simulated</p></div><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script><script src="/js/script.js"></script></body></html>
+<% } %><span class="home-indicator" aria-hidden="true"></span></div></div></div></div><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script><script src="/js/script.js"></script></body></html>

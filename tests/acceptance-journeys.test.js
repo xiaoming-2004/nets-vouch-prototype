@@ -122,7 +122,7 @@ test('JOURNEY 1: no dietary restriction, full Smart Match to Vouch to Activity w
     await v.request('/scan', { merchantId: merchantId });
     return v.request('/scan/payment');
   })();
-  assert.match(paymentPage.html, /Pay with NETS/);
+  assert.match(paymentPage.html, /Pay \(simulated\)/);
   assert.match(paymentPage.html, /Earn \$0\.50/, 'the payment screen states the credit, not an item');
 
   // Enter the actual amount and pay.
@@ -138,7 +138,7 @@ test('JOURNEY 1: no dietary restriction, full Smart Match to Vouch to Activity w
 
   // Receipt states a truthful, merchant-specific credit.
   const receipt = await v.request('/payment-success/' + tx.id);
-  assert.match(receipt.html, /Paid with NETS/);
+  assert.match(receipt.html, /Paid \(simulated payment\)/);
   assert.match(receipt.html, /\+\$0\.50 Vouch Credit/);
   assert.match(receipt.html, /usable only at/);
   assert.doesNotMatch(receipt.html, /\bfree\b/i);
@@ -466,7 +466,7 @@ test('JOURNEY 5: Reset Demo clears customer state and live metrics, keeps campai
   assert.equal(demo.currentScanPayment, null);
   assert.equal(demo.activeVouchClaim, null);
   assert.equal(demo.selectedMerchantId, null);
-  assert.match((await v.request('/profile/activity')).html, /No NETS activity yet/);
+  assert.match((await v.request('/profile/activity')).html, /No payment activity yet/);
   assert.equal((await v.request('/payment-success/' + tx.id)).status, 404, 'a stale URL must not resolve');
 
   // Live merchant counters are gone.
@@ -530,8 +530,9 @@ test('UI: the merchant campaign and report pages carry mobile-safe layout hooks'
                       '/merchant/report?merchantId=felicia-chicken-rice']) {
     const page = await v.request(path);
     assert.equal(page.status, 200, path);
-    // Every screen renders inside the fixed-width phone frame, so nothing is laid out full-bleed.
-    assert.match(page.html, /class="phone"/, path + ' must render in the phone frame');
+    // Every screen renders inside the centred app workspace (no device frame), so nothing is laid out full-bleed.
+    assert.match(page.html, /<div class="phone app">/, path + ' must render in the app workspace');
+    assert.match(page.html, /<a class="skip-link" href="#main">/, path + ' must offer a skip link');
     assert.match(page.html, /name="viewport" content="width=device-width/, path + ' must set the viewport');
     assert.ok(!/style="[^"]*width:\s*\d{4,}px/.test(page.html),
       path + ' must not hard-code a width wider than a phone');
