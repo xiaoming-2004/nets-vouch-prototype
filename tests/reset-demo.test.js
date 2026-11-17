@@ -149,12 +149,9 @@ test('Smart Match, preferences, location, selected merchant and partial scan res
   await v.request('/profile', { dietaryPreference: 'halal', budget: '9', maxDistanceMinutes: '7', craving: '' });
   await v.request('/smart-match/location', { status: 'fallback' });
   await v.request('/smart-match/result');
-  const selected = (await v.state()).demo.selectedMerchantId;
-  await v.request('/recommendation/reject', { merchantId: selected, reason: 'too-far' });
   await v.request('/scan', { merchantId: 'green-bowl' });
   const before = (await v.state()).demo;
   assert.ok(before.shownMerchantIds.length > 0);
-  assert.ok(before.rejectedMerchantIds.length > 0);
   assert.ok(before.currentScanPayment);
   const clean = await reset(v);
   assert.equal(clean.selectedMerchantId, null);
@@ -170,7 +167,7 @@ test('Smart Match, preferences, location, selected merchant and partial scan res
   assert.equal(clean.hasSetPreferences, false);
 });
 
-test('Smart Match payment attribution and live success fees reset without changing campaign settings', async function() {
+test('persona reset leaves shared campaign metrics and settings unchanged', async function() {
   const v = visitor();
   await reset(v);
   pinAllCampaigns(0.50, 5.00);
@@ -184,15 +181,15 @@ test('Smart Match payment attribution and live success fees reset without changi
   assert.equal(c.metrics.smartMatchPayments, 1);
   assert.ok(c.metrics.smartMatchShown > 0);
   assert.equal(c.platformFeeAccrued, c.platformFeePerAttributedPayment);
+  const beforeReset = { payments: c.metrics.smartMatchPayments, shown: c.metrics.smartMatchShown,
+    sales: c.metrics.smartMatchSales, fee: c.platformFeeAccrued };
   await reset(v);
-  assert.equal(c.metrics.smartMatchPayments, 0);
-  assert.equal(c.metrics.smartMatchShown, 0);
-  assert.equal(c.metrics.smartMatchSales, 0);
-  assert.equal(c.platformFeeAccrued, 0);
+  assert.deepEqual({ payments: c.metrics.smartMatchPayments, shown: c.metrics.smartMatchShown,
+    sales: c.metrics.smartMatchSales, fee: c.platformFeeAccrued }, beforeReset);
   assert.equal(c.platformFeePerAttributedPayment, 0.10);
 });
 
-test('global reset clears both sessions, referral claim/cooldown and sender pending credit', async function() {
+test('persona reset does not clear another session or its shared offer', async function() {
   const sender = visitor();
   await reset(sender);
   pinCampaign('green-bowl', 0.50, 5.00);
@@ -207,22 +204,14 @@ test('global reset clears both sessions, referral claim/cooldown and sender pend
   assert.equal((await receiver.state()).demo.activeVouchClaim.status, 'REDEEMED');
   await reset(receiver);
   assert.equal((await sender.state()).demo.user.id, 'jia');
-  assert.deepEqual((await sender.state()).demo.transactions, []);
-  assert.deepEqual((await sender.state()).demo.paymentVerifiedVouches, []);
-  assert.equal((await receiver.state()).demo.user.id, 'jia');
+  assert.equal((await sender.state()).demo.transactions.length, 1);
+  assert.equal((await sender.state()).demo.paymentVerifiedVouches.length, 1);
+  assert.equal((await receiver.state()).demo.user.id, 'darren');
   assert.equal((await receiver.state()).demo.activeVouchClaim, null);
-  assert.equal((await sender.request('/offers/' + token)).status, 404);
-  const freshTx = await pay(sender, 'green-bowl', '6.00');
-  await sender.request('/vouch/' + freshTx.id, { action: 'create' });
-  const freshToken = (await sender.state()).demo.paymentVerifiedVouches[0].shareToken;
-  await receiver.request('/demo/identity', { userId: 'darren' });
-  await receiver.request('/offers/' + freshToken + '/claim', {});
-  const converted = await pay(receiver, 'green-bowl', '6.00');
-  assert.equal(converted.source, 'SHARED_VOUCH', 'referral cooldown must be cleared');
-  assert.equal(converted.merchantRewardEarned, 0.50);
+  assert.equal((await sender.request('/offers/' + token)).status, 200);
 });
 
-test('a pending Shared Vouch claim and both personas in one browser reset cleanly', async function() {
+test('reset clears only the selected persona in a multi-persona browser session', async function() {
   const v = visitor();
   await reset(v);
   const tx = await pay(v, 'green-bowl', '6.00');
@@ -233,17 +222,15 @@ test('a pending Shared Vouch claim and both personas in one browser reset cleanl
   assert.equal((await v.state()).demo.activeVouchClaim.status, 'CLAIMED');
   await reset(v);
   const state = await v.state();
-  assert.equal(state.demo.user.id, 'jia');
+  assert.equal(state.demo.user.id, 'darren');
   assert.equal(state.demo.activeVouchClaim, null);
   assert.deepEqual(state.demo.transactions, []);
-  assert.deepEqual(state.demoUserStates, {});
-  await v.request('/demo/identity', { userId: 'darren' });
-  assert.deepEqual((await v.state()).demo.transactions, []);
-  assert.equal((await v.state()).demo.activeVouchClaim, null);
-  assert.equal((await v.request('/offers/' + token)).status, 404);
+  await v.request('/demo/identity', { userId: 'jia' });
+  assert.equal((await v.state()).demo.transactions.length, 1);
+  assert.equal((await v.request('/offers/' + token)).status, 200);
 });
 
-test('campaign configuration and illustrative baseline survive; live caps, fees, metrics and feed reset', async function() {
+test('campaign configuration, live metrics and merchant feed survive persona reset', async function() {
   const v = visitor();
   await reset(v);
   const c = campaign('felicia-chicken-rice');
@@ -270,15 +257,14 @@ test('campaign configuration and illustrative baseline survive; live caps, fees,
   assert.deepEqual([c.rewardAmount, c.minimumEligibleSpend, c.maxRewardedPaymentsPerDay,
     c.maxRewardBudgetPerDay, c.platformFeePerAttributedPayment, c.senderReferralReward,
     c.status, c.startTime, c.endTime], [0.70, 4, 7, 9, 0.15, 0.25, 'INACTIVE', '01:00', '22:00']);
-  assert.equal(live.redemptionsToday, 0);
-  assert.equal(live.rewardBudgetSpentToday, 0);
-  assert.equal(live.platformFeeAccrued, 0);
-  assert.equal(live.metrics.payments, 0);
-  assert.equal(live.metrics.directScanPayments, 0);
-  assert.equal(live.metrics.rewardCost, 0);
+  assert.equal(live.redemptionsToday, 1);
+  assert.equal(live.rewardBudgetSpentToday, 0.50);
+  assert.equal(live.metrics.payments, 1);
+  assert.equal(live.metrics.directScanPayments, 1);
+  assert.equal(live.metrics.rewardCost, 0.50);
   const results = await v.request('/merchant?merchantId=green-bowl&tab=results');
   assert.equal(results.status, 200);
-  assert.ok(!results.html.includes('$5.37'));
+  assert.ok(results.html.includes('$5.37'));
   assert.match(results.html, /Illustrative Prototype Data/i);
 });
 
@@ -302,8 +288,7 @@ test('Foursquare discovery cache is preserved across demo reset', async function
   assert.equal(calls, 1);
 });
 
-// Deferred production risk: this characterizes a broad UPDATE using fixtures only.
-test('reset updates every fixture user but preserves rows and migrated preference fields', async () => {
+test('reset updates only the current fixture user and uses scoped writes', async () => {
   for (const id of ['jia', 'darren', 'unrelated-user']) fixtureDb.seedUser(id, {
     budget_max: 4, max_walk_minutes: 3, dietary_preference: 'vegan', weight_price_sensitivity: 2,
     weight_distance_sensitivity: 3, weight_quietness_affinity: 4, max_distance_minutes: 25,
@@ -311,23 +296,26 @@ test('reset updates every fixture user but preserves rows and migrated preferenc
   });
   const v = visitor(); await v.request('/home'); await reset(v);
   assert.equal(fixtureDb.users.size, 3);
-  for (const row of fixtureDb.users.values()) {
-    assert.deepEqual([row.budget_max, row.max_walk_minutes, row.dietary_preference,
-      row.weight_price_sensitivity, row.weight_distance_sensitivity, row.weight_quietness_affinity], [10, 15, 'none', 1, 1, 1]);
-    assert.deepEqual([row.max_distance_minutes, row.mood_cuisine, row.craving, row.notifications, row.has_set_preferences], [25, 'rice', 'laksa', 0, 1]);
-  }
+  const jia = fixtureDb.users.get('jia');
+  assert.deepEqual([jia.budget_max, jia.max_walk_minutes, jia.dietary_preference,
+    jia.weight_price_sensitivity, jia.weight_distance_sensitivity, jia.weight_quietness_affinity], [10, 15, 'none', 2, 3, 4]);
+  for (const id of ['darren', 'unrelated-user']) assert.deepEqual([
+    fixtureDb.users.get(id).budget_max, fixtureDb.users.get(id).max_walk_minutes,
+    fixtureDb.users.get(id).dietary_preference], [4, 3, 'vegan']);
   const writes = fixtureDb.calls.filter(c => /^(UPDATE|INSERT|DELETE)/.test(c.sql));
-  assert.equal(writes.length, 1); assert.doesNotMatch(writes[0].sql, /WHERE|rejection_feedback/);
+  assert.equal(writes.length, 2);
+  assert.ok(writes.every(write => /WHERE user_id = \?/.test(write.sql)));
+  assert.ok(writes.every(write => write.params[0] === 'jia'));
 });
 
-test('current MemoryStore: stale in-flight state cannot restore a pre-reset payment', async () => {
+test('persona-scoped reset does not sweep or rewrite separately saved session state', async () => {
   const v = visitor(); await v.request('/home'); pinCampaign('felicia-chicken-rice', 0.50, 5);
   await pay(v, 'felicia-chicken-rice', '6.00'); const stale = await v.state();
   assert.equal(stale.demo.transactions.length, 1);
   await reset(v); await v.replaceState(stale);
   assert.equal((await v.state()).demo.transactions.length, 1);
   assert.equal((await v.request('/profile/activity')).status, 200);
-  assert.deepEqual((await v.state()).demo.transactions, []);
+  assert.equal((await v.state()).demo.transactions.length, 1);
 });
 
 test('current MemoryStore: a session save failure must not report reset success', async () => {

@@ -21,6 +21,7 @@ try {
 const db = require('./Database/db');
 const merchantCatalogue = require('./merchant-catalogue');
 const merchantActivity = require('./merchant-activity');
+const rejectionFeedback = require('./rejection-feedback');
 const { getAgentRecommendations } = require('./nets_agent');
 
 const app = express();
@@ -117,7 +118,6 @@ function buildSessionStore() {
 }
 
 const demoStore = buildSessionStore();
-let demoResetGeneration = 0;
 app.use(session({
   store: demoStore,
   secret: process.env.SESSION_SECRET || 'nets-vouch-ai-demo-secret',
@@ -900,7 +900,6 @@ const merchantPaymentFeed = [
   { merchantId: 'spice-lane', displayAmount: '$8.50', source: 'SMART_MATCH', date: '2026-09-15', time: '13:05', itemName: 'Chicken Biryani' }
 ];
 merchantPaymentFeed.forEach(function(payment) { payment.illustrative = true; });
-const initialMerchantPaymentFeed = merchantPaymentFeed.map(function(payment) { return { ...payment }; });
 
 const seedPromotionalRedemptions = [
   { transactionId: 'tx-h1', merchantName: "Felicia's Chicken Rice", itemName: 'Chicken Rice', rewardAmount: 0.50, date: '2026-09-13', status: 'Redeemed' },
@@ -931,12 +930,6 @@ function createInitialDemo(userId) {
 }
 
 function initialiseDemoSession(req) {
-  if (req.session.demoResetGeneration !== demoResetGeneration &&
-      (req.session.demoResetGeneration !== undefined || demoResetGeneration > 0)) {
-    req.session.demo = createInitialDemo('jia');
-    req.session.demoUserStates = {};
-  }
-  req.session.demoResetGeneration = demoResetGeneration;
   if (!req.session.demo || req.session.demo.version !== 19) {
     req.session.demo = createInitialDemo('jia');
     req.session.demoUserStates = {};
@@ -3901,31 +3894,6 @@ app.get('/smart-match/result', async function(req, res) {
   }
 });
 
-// 3. ADD THIS NEW ROUTE ANYWHERE IN app.js
-// This listens for the silent JavaScript POST request from the Feedback Gate
-app.post('/api/feedback', async (req, res) => {
-    const demo = req.session.demo;
-    const { reason } = req.body;
-
-    try {
-        if (reason === 'too_expensive' || reason === 'too-expensive') {
-            await db.execute(
-                `UPDATE users SET weight_price_sensitivity = weight_price_sensitivity + 0.2 WHERE user_id = ?`,
-                [demo.user.id]
-            );
-        } else if (reason === 'too_far' || reason === 'too-far') {
-            await db.execute(
-                `UPDATE users SET weight_distance_sensitivity = weight_distance_sensitivity + 0.2 WHERE user_id = ?`,
-                [demo.user.id]
-            );
-        }
-        res.sendStatus(200);
-    } catch (error) {
-        console.error('Feedback sync error:', error);
-        res.sendStatus(500);
-    }
-});
-
 // Customer-facing dietary badges. They state ONLY what the registered merchant itself listed. All
 // verification and certification wording was removed along with the research system, deliberately:
 // nothing here is checked on the merchant's behalf. Returns null when the merchant listed nothing
@@ -4085,7 +4053,8 @@ function recommendationInput(query, profile) {
   }
   if (Object.keys(errors).length) return { errors };
   return { budget, maxDistanceMinutes, cuisine, dietaryPreference, diningDate, diningTime,
-    isoWeekday: singaporeIsoWeekday(diningDate), coordinates };
+    isoWeekday: singaporeIsoWeekday(diningDate), coordinates,
+    explicit: { budget: supplied('budget'), maxDistance: supplied('maxDistance'), cuisine: supplied('cuisine') } };
 }
 
 function activityScore(activity) {
@@ -4127,7 +4096,15 @@ app.get('/api/recommend', async function(req, res) {
     code: 'invalid-recommendation-input', fields: input.errors
   } });
 
-  // Validation completes before this first session mutation and before the catalogue read.
+  let persistedFeedback;
+  try {
+    persistedFeedback = await rejectionFeedback.loadRecentFeedback(db, demo.user.id);
+  } catch (error) {
+    return res.status(503).json({ error: { code: 'recommendation-feedback-unavailable' } });
+  }
+  const learning = rejectionFeedback.buildLearningPolicy(persistedFeedback, input.explicit);
+
+  // Validation and durable-feedback loading complete before this first session mutation and catalogue read.
   if (input.coordinates) {
     demo.discoveryLocation = input.coordinates;
     demo.locationAttempted = true;
@@ -4153,7 +4130,7 @@ app.get('/api/recommend', async function(req, res) {
   }
 
   const eligible = getEligibleMerchants(apiProfile, merchants.filter(m => Number.isFinite(m.price)),
-    demo.rejectedMerchantIds, demo);
+    Array.from(learning.excludedMerchantIds), demo);
   let activities = [];
   if (eligible.length) {
     activities = await merchantActivity.loadUsualActivity(db, eligible.map(function(m) { return m.id; }), {
@@ -4173,7 +4150,9 @@ app.get('/api/recommend', async function(req, res) {
         hour: Number(input.diningTime.slice(0, 2)), timezone: merchantActivity.TIMEZONE }
     },
     distance: { basis: 'demo-origin-estimate', origin: 'Republic Polytechnic demo origin', routed: false },
-    activity: recommendationActivityMetadata(activities)
+    activity: recommendationActivityMetadata(activities),
+    feedback: { status: 'applied', basis: 'rules-based-preference-learning',
+      historyWindowDays: rejectionFeedback.HISTORY_DAYS }
   };
 
   if (!openEligible.length) {
@@ -4183,7 +4162,6 @@ app.get('/api/recommend', async function(req, res) {
     return res.json({ recommendations: [], catalogue, metadata });
   }
 
-  const lastFeedback = getLastFeedback(demo.recommendationFeedback);
   const scored = openEligible.map(function(m) {
     let score = 150 - distancePenalty(m);
     if (classifyMealEligibility(m) === MEAL_ELIGIBILITY.UNCERTAIN) score -= 60;
@@ -4193,18 +4171,7 @@ app.get('/api/recommend', async function(req, res) {
     if (getMoodMatchState(m, apiProfile.moodCuisine) === MATCH_STATE.MATCH) {
       score += isSpecificCraving(apiProfile.craving) ? 15 : 45;
     }
-    if (lastFeedback && lastFeedback.reason === 'too-expensive' && m.price !== null &&
-        lastFeedback.price !== null) {
-      score += Math.max(0, 20 - m.price);
-    }
-    if (lastFeedback && (lastFeedback.reason === 'not-in-mood' || lastFeedback.reason === 'ate-recently')) {
-      const sameSpecificCategory = m.category === lastFeedback.category &&
-        knownSpecificCategories.indexOf(m.category) !== -1;
-      const rejectedTags = Array.isArray(lastFeedback.cuisineTags) ? lastFeedback.cuisineTags : [];
-      const overlapsCuisine = rejectedTags.length > 0 &&
-        merchantCuisineTags(m).some(function(tag) { return rejectedTags.indexOf(tag) !== -1; });
-      if (sameSpecificCategory || overlapsCuisine) score -= 30;
-    }
+    score += learning.score(m, merchantCuisineTags(m));
     const activity = activityByMerchant.get(m.id) || null;
     score += activityScore(activity);
     return { merchant: m, activity, score: score };
@@ -4218,12 +4185,14 @@ app.get('/api/recommend', async function(req, res) {
     if (price) return price;
     return a.merchant.id < b.merchant.id ? -1 : a.merchant.id > b.merchant.id ? 1 : 0;
   });
-  const top3 = scored.slice(0, 3);
+  const top3 = scored.slice(0, 3).map(function(item) {
+    return Object.assign({}, item, { feedbackToken: randomUUID() });
+  });
 
   demo.catalogueBatch = top3.map(item => {
     const merchant = item.merchant;
     const campaign = findCampaignForMerchant(merchant, demo);
-    return { ...merchant, usualActivity: item.activity,
+    return { ...merchant, feedbackToken: item.feedbackToken, usualActivity: item.activity,
       matchReasons: recommendationReasons(merchant, apiProfile, item.activity),
       catalogueTerms: { rewardAmount: campaign.rewardAmount,
         rewardLabel: campaign.rewardLabel, minimumEligibleSpend: campaign.minimumEligibleSpend } };
@@ -4246,6 +4215,7 @@ app.get('/api/recommend', async function(req, res) {
       dietary: Array.isArray(m.dietary) ? m.dietary : [],
       category: m.category || null,
       cuisine: m.category || null,
+      feedbackToken: item.feedbackToken,
       usualActivity: item.activity,
       matchReasons: recommendationReasons(m, apiProfile, item.activity),
       campaign: campaign ? {
@@ -4263,38 +4233,41 @@ app.get('/api/recommend', async function(req, res) {
 
 app.get('/recommendation', function(req, res) { res.redirect('/home'); });
 app.get('/recommendation/reject', function(req, res) { res.redirect('/home#feedback'); });
-app.post('/recommendation/reject', function(req, res) {
+app.post('/recommendation/reject', async function(req, res) {
   const demo = req.session.demo;
-  let merchant = Array.isArray(demo.lastApiRecommendations) && demo.lastApiRecommendations.includes(req.body.merchantId)
-    ? findMerchantById(demo.catalogueBatch || [], req.body.merchantId) : null;
-  merchant = merchant || findMerchantForDemo(demo, demo.selectedMerchantId);
-  // Allow rejecting any card from the last /api/recommend batch, not just the selected one.
-  if ((!merchant || merchant.id !== req.body.merchantId) &&
-      Array.isArray(demo.lastApiRecommendations) && demo.lastApiRecommendations.includes(req.body.merchantId)) {
-    merchant = findMerchantForDemo(demo, req.body.merchantId);
+  const merchantId = req.body.merchantId;
+  const reason = req.body.reason;
+  const token = req.body.feedbackToken;
+  if (typeof merchantId !== 'string' || !merchantId.trim() || typeof reason !== 'string' ||
+      !isValidRejectionReason(reason) || typeof token !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(token)) {
+    return res.status(400).send('Invalid rejection feedback.');
   }
-  if (!merchant || req.body.merchantId !== merchant.id ||
-      !isValidRejectionReason(req.body.reason)) {
-    if (req.get('X-Requested-With') === 'smart-match') return res.status(409).send('Refresh Home and try again.');
-    return res.redirect('/home');
+  const shown = Array.isArray(demo.lastApiRecommendations) && demo.lastApiRecommendations.includes(merchantId);
+  const merchant = shown ? findMerchantById(demo.catalogueBatch || [], merchantId) : null;
+  if (!merchant || merchant.feedbackToken !== token) {
+    return res.status(409).send('Refresh Home and try again.');
   }
-  if (!demo.rejectedMerchantIds.includes(merchant.id)) demo.rejectedMerchantIds.push(merchant.id);
-  demo.matchContinuation = { rejectedId: merchant.id, attempted: false };
-  demo.recommendationFeedback.push({ merchantId: merchant.id, reason: req.body.reason,
-    category: merchant.category, price: merchant.price, distanceMinutes: merchant.distanceMinutes,
-    distanceMetres: Number.isFinite(merchant.distanceMetres) ? merchant.distanceMetres : null,
-    distanceLabel: merchant.distanceLabel || null, cuisineTags: merchantCuisineTags(merchant) });
-  // Sync rejection reason to MySQL user weights for future AI learning
-  if (req.body.reason === 'too-expensive') {
-    db.execute('UPDATE users SET weight_price_sensitivity = weight_price_sensitivity + 0.2 WHERE user_id = ?', [demo.user.id]).catch(function() {});
-  } else if (req.body.reason === 'too-far') {
-    db.execute('UPDATE users SET weight_distance_sensitivity = weight_distance_sensitivity + 0.2 WHERE user_id = ?', [demo.user.id]).catch(function() {});
+  let result;
+  try {
+    result = await rejectionFeedback.recordRejection(db, {
+      userId: demo.user.id, merchantId: merchant.id, reason,
+      category: merchant.category || null,
+      price: Number.isFinite(merchant.price) ? merchant.price : null,
+      distanceMinutes: Number.isFinite(merchant.distanceMinutes) ? merchant.distanceMinutes : null,
+      distanceMetres: Number.isFinite(merchant.distanceMetres) ? merchant.distanceMetres : null,
+      cuisineTags: merchantCuisineTags(merchant), token,
+      rejectedAtSingapore: rejectionFeedback.singaporeParts().dateTime
+    });
+  } catch (error) {
+    return res.status(503).send('Feedback could not be saved. Please try again.');
   }
+  if (result.status === 'conflict') return res.status(409).send('Refresh Home and try again.');
   demo.selectedMerchantId = null;
   demo.selectedMerchantSnapshot = null;
   demo.recommendationAccepted = false;
-  logDiscovery('Rejected: ' + merchant.id + '\nReason: ' + req.body.reason +
-    '\nShown history size: ' + demo.shownMerchantIds.length + '\nContinuation: rerank unseen, then at most one uncached search');
+  logDiscovery('Rejected recommendation: ' + merchant.id + '\nReason: ' + reason +
+    '\nDurable rules-based feedback saved for persona: ' + demo.user.id);
   if (req.get('X-Requested-With') === 'smart-match') return res.sendStatus(204);
   return res.redirect('/home?matching=again');
 });
@@ -4902,88 +4875,22 @@ app.post('/merchant/offer', function(req, res) {
   if (validatedLabel) campaign.rewardLabel = validatedLabel;
   res.redirect(destination);
 });
-// Clears the demo state of every OTHER stored session, where the configured store can enumerate
-// them. MemoryStore implements all(); the Upstash store deliberately implements only get/set/destroy
-// because the Upstash REST API has no cheap key scan, so there is nothing to enumerate there.
-//
-// Enumeration is therefore an optimisation, not the mechanism. What actually makes the reset global
-// is the reset generation: initialiseDemoSession runs on every request and replaces the demo state
-// of any session whose stored generation is behind the current one. So on either store every other
-// session is reset the moment it is next used - including a session whose in-flight save lands
-// *after* this reset, because that save carries the superseded generation and is replaced on its
-// next read rather than restoring pre-reset state.
-//
-// Limitation, deliberately not papered over: the generation counter lives in this process. With
-// Upstash configured across several server instances, a reset on one instance does not reach
-// sessions being served by another. Single instance (including local and a single Vercel lambda)
-// resets completely. See handover.md.
-function resetOtherStoredSessions(currentSessionId, generation, done) {
-  if (typeof demoStore.all !== 'function') {
-    // Not enumerable: the reset generation covers these sessions lazily on their next request.
-    return done(null, { swept: 0, enumerable: false });
-  }
-  demoStore.all(function(error, sessions) {
-    if (error) return done(error);
-    const ids = Object.keys(sessions || {}).filter(function(id) { return id !== currentSessionId; });
-    if (!ids.length) return done(null, { swept: 0, enumerable: true });
-    let remaining = ids.length;
-    let failure = null;
-    ids.forEach(function(id) {
-      const stored = sessions[id];
-      if (!stored || typeof stored !== 'object') {
-        remaining -= 1;
-        if (!remaining) done(failure, { swept: ids.length, enumerable: true });
-        return;
-      }
-      stored.demo = createInitialDemo('jia');
-      stored.demoUserStates = {};
-      stored.demoResetGeneration = generation;
-      demoStore.set(id, stored, function(saveError) {
-        if (saveError && !failure) failure = saveError;
-        remaining -= 1;
-        if (!remaining) done(failure, { swept: ids.length, enumerable: true });
-      });
-    });
-  });
-}
-
 app.post('/reset-demo', async function(req, res) {
-  // This helper control has always reset shared campaign state, so reset all demo
-  // sessions too. The generation also protects against an in-flight stale save.
-  demoResetGeneration += 1;
-  // Reset saved user preferences in MySQL back to default values
+  const currentUserId = req.session.demo.user.id;
   try {
-    await db.execute(
-      `UPDATE users 
-       SET budget_max = 10.00, max_walk_minutes = 15, dietary_preference = 'none',
-           weight_price_sensitivity = 1.00, weight_distance_sensitivity = 1.00, weight_quietness_affinity = 1.00`
-    );
-  } catch (e) { /* continue reset even if DB is offline */ }
-  sharedOffers.clear();
-  referralCooldowns.clear();
-  merchantPaymentFeed.splice(0, merchantPaymentFeed.length,
-    ...initialMerchantPaymentFeed.map(function(payment) { return { ...payment }; }));
-  merchantCampaignStore.forEach(function(campaign) {
-    const clean = createDemoCampaign(campaign.merchantId, campaign.participationMode);
-    campaign.redemptionsToday = 0;
-    campaign.rewardBudgetSpentToday = 0;
-    campaign.platformFeeAccrued = 0;
-    campaign.day = clean.day;
-    campaign.metrics = clean.metrics;
-  });
-  req.session.demo = createInitialDemo('jia');
-  req.session.demoUserStates = {};
-  req.session.demoResetGeneration = demoResetGeneration;
-  resetOtherStoredSessions(req.sessionID, demoResetGeneration, function(error) {
-    // A store failure is reported, never swallowed: the operator must not be told the demo was
-    // reset when part of it was not. The requesting session is saved explicitly here rather than
-    // left to the session middleware's save at response end, because that save completes after the
-    // redirect has been sent - so a failed write would otherwise still show "reset=done".
-    if (error) return res.status(500).send('Demo reset could not be completed');
-    req.session.save(function(saveError) {
-      if (saveError) return res.status(500).send('Demo reset could not be completed');
-      res.redirect('/home?reset=done');
-    });
+    await rejectionFeedback.resetPersona(db, currentUserId);
+  } catch (error) {
+    return res.status(500).send('Demo reset could not be completed');
+  }
+  for (const [token, offer] of sharedOffers) {
+    if (offer.senderUserId === currentUserId) sharedOffers.delete(token);
+  }
+  const resetDemo = createInitialDemo(currentUserId);
+  req.session.demo = resetDemo;
+  req.session.demoUserStates[currentUserId] = resetDemo;
+  req.session.save(function(saveError) {
+    if (saveError) return res.status(500).send('Demo reset could not be completed');
+    res.redirect('/home?reset=done');
   });
 });
 

@@ -58,6 +58,7 @@ var noteInRow = locationNotice && !whyText;
 <% if (campaign && !recommendationAccepted) { %><form method="POST" action="/recommendation/accept" data-single-submit><input type="hidden" name="merchantId" value="<%= recommendation.id %>"><button class="button" type="submit">Choose this</button></form><% } %>
 <% if (campaign && recommendationAccepted) { %><a class="button" href="/scan">Scan when you arrive</a><% } %>
 <div class="result-secondary">
+<% if (recommendation.feedbackToken) { %>
 <details class="feedback sheet-host" id="feedback">
 <summary class="sheet-trigger"><%= recommendationAccepted ? 'Changed your mind?' : 'Not for me' %></summary>
 <div class="result-sheet">
@@ -66,10 +67,13 @@ var noteInRow = locationNotice && !whyText;
 <div class="result-sheet-head"><h3>What didn't fit?</h3><button class="sheet-close" type="button" data-sheet-close>Close</button></div>
 <form method="POST" action="/recommendation/reject" data-feedback>
 <input type="hidden" name="merchantId" value="<%= recommendation.id %>">
+<input type="hidden" name="feedbackToken" value="<%= recommendation.feedbackToken || '' %>">
 <% rejectionReasons.forEach(function(reason) { %><button type="submit" name="reason" value="<%= reason.id %>"><%= reason.label %><span aria-hidden="true">→</span></button><% }); %>
+<p class="feedback-status" data-feedback-status role="status"></p>
 </form>
 </div></div>
 </details>
+<% } %>
 <% if (profile) { %>
 <details class="refine-prefs sheet-host" id="refine">
 <summary class="sheet-trigger sheet-trigger--quiet"><span class="refine-edit">Edit filters</span></summary>

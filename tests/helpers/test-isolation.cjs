@@ -82,11 +82,21 @@ const defaults = () => ({ budget_max: 10, max_walk_minutes: 15, dietary_preferen
   max_distance_minutes: 10, mood_cuisine: 'any', craving: '', notifications: 1, has_set_preferences: 0 });
 const database = {
   users: new Map(), merchants: new Map(), calls: [], failing: false, catalogueFailing: false,
-  activityFailing: false, sampleActivityRows: task3.activityRows(),
+  activityFailing: false, feedbackReadFailing: false, feedbackWriteFailing: false,
+  resetFailing: false, resetDeleteFailing: false, feedbackRows: [], nextFeedbackId: 1, sampleActivityRows: task3.activityRows(),
   reset() { this.users.clear(); this.merchants.clear(); this.calls.length = 0; this.failing = false;
-    this.catalogueFailing = false; this.activityFailing = false; this.sampleActivityRows = task3.activityRows(); },
+    this.catalogueFailing = false; this.activityFailing = false; this.feedbackReadFailing = false;
+    this.feedbackWriteFailing = false; this.resetFailing = false; this.resetDeleteFailing = false; this.feedbackRows = [];
+    this.nextFeedbackId = 1; this.sampleActivityRows = task3.activityRows(); },
   seedMerchant(row) { this.merchants.set(row.merchant_id, { ...row }); },
   seedUser(id, values = {}) { this.users.set(id, { ...defaults(), user_id: id, display_name: id, ...values }); },
+  seedFeedback(values = {}) {
+    const row = { feedback_id: this.nextFeedbackId++, user_id: 'jia', merchant_id: 'merchant-1',
+      reason: 'too-expensive', category: null, price: null, distance_minutes: null,
+      distance_metres: null, cuisine_tags: '[]', submission_token: `00000000-0000-4000-8000-${String(this.nextFeedbackId).padStart(12, '0')}`,
+      rejected_at_sg: '2026-11-17 12:00:00', ...values };
+    this.feedbackRows.push(row); return row;
+  },
   async execute(sql, params = []) {
     const text = sql.replace(/\s+/g, ' ').trim();
     this.calls.push({ sql: text, params: [...params] });
@@ -134,6 +144,28 @@ const database = {
           transaction_count: row.transactionCount
         })), []];
     }
+    if (text === 'SELECT feedback_id, user_id, merchant_id, reason, category, price, distance_minutes, distance_metres, cuisine_tags, submission_token, rejected_at_sg FROM rejection_feedback WHERE user_id = ? AND rejected_at_sg >= ? ORDER BY rejected_at_sg DESC, feedback_id DESC') {
+      if (this.feedbackReadFailing) throw new Error('simulated private feedback read detail');
+      const [userId, cutoff] = params;
+      return [this.feedbackRows.filter(row => row.user_id === userId && row.rejected_at_sg >= cutoff)
+        .sort((a, b) => b.rejected_at_sg.localeCompare(a.rejected_at_sg) || b.feedback_id - a.feedback_id)
+        .map(row => ({ ...row })), []];
+    }
+    if (text === 'INSERT INTO rejection_feedback (user_id, merchant_id, reason, category, price, distance_minutes, distance_metres, cuisine_tags, submission_token, rejected_at_sg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE feedback_id = feedback_id') {
+      if (this.feedbackWriteFailing) throw new Error('simulated private feedback write detail');
+      const [user_id, merchant_id, reason, category, price, distance_minutes, distance_metres,
+        cuisine_tags, submission_token, rejected_at_sg] = params;
+      const duplicate = this.feedbackRows.find(row => row.user_id === user_id && row.submission_token === submission_token);
+      if (duplicate) return [{ affectedRows: 0 }, []];
+      this.feedbackRows.push({ feedback_id: this.nextFeedbackId++, user_id, merchant_id, reason, category,
+        price, distance_minutes, distance_metres, cuisine_tags, submission_token, rejected_at_sg });
+      return [{ affectedRows: 1 }, []];
+    }
+    if (text === 'SELECT user_id, merchant_id, reason FROM rejection_feedback WHERE user_id = ? AND submission_token = ?') {
+      if (this.feedbackWriteFailing) throw new Error('simulated private feedback verification detail');
+      const row = this.feedbackRows.find(item => item.user_id === params[0] && item.submission_token === params[1]);
+      return [row ? [{ user_id: row.user_id, merchant_id: row.merchant_id, reason: row.reason }] : [], []];
+    }
     if (/^SELECT (budget_max, max_walk_minutes, dietary_preference|\*) FROM users WHERE user_id = \?$/.test(text)) {
       const row = this.users.get(params[0]);
       return [row ? [{ ...row }] : [], []];
@@ -150,10 +182,17 @@ const database = {
       if (row) row[weight[1]] = Number(row[weight[1]]) + 0.2;
       return [{ affectedRows: row ? 1 : 0 }, []];
     }
-    if (text === "UPDATE users SET budget_max = 10.00, max_walk_minutes = 15, dietary_preference = 'none', weight_price_sensitivity = 1.00, weight_distance_sensitivity = 1.00, weight_quietness_affinity = 1.00") {
-      for (const row of this.users.values()) Object.assign(row, { budget_max: 10, max_walk_minutes: 15,
-        dietary_preference: 'none', weight_price_sensitivity: 1, weight_distance_sensitivity: 1, weight_quietness_affinity: 1 });
-      return [{ affectedRows: this.users.size }, []];
+    if (text === "UPDATE users SET budget_max = 10.00, max_walk_minutes = 15, dietary_preference = 'none' WHERE user_id = ?") {
+      if (this.resetFailing) throw new Error('simulated reset failure');
+      const row = this.users.get(params[0]);
+      if (row) Object.assign(row, { budget_max: 10, max_walk_minutes: 15, dietary_preference: 'none' });
+      return [{ affectedRows: row ? 1 : 0 }, []];
+    }
+    if (text === 'DELETE FROM rejection_feedback WHERE user_id = ?') {
+      if (this.resetFailing || this.resetDeleteFailing) throw new Error('simulated reset failure');
+      const before = this.feedbackRows.length;
+      this.feedbackRows = this.feedbackRows.filter(row => row.user_id !== params[0]);
+      return [{ affectedRows: before - this.feedbackRows.length }, []];
     }
     if (text === 'INSERT IGNORE INTO merchants (merchant_id, name, location_label, distance_metres, cuisine_type, typical_price, dietary_halal, dietary_vegetarian, dietary_vegan, reward_amount, min_spend, is_sample_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE)') {
       if (!this.merchants.has(params[0])) this.merchants.set(params[0], [...params]);
@@ -161,7 +200,24 @@ const database = {
     }
     deny('unrecognized fixture SQL');
   },
-  query(sql, params) { return this.execute(sql, params); }
+  query(sql, params) { return this.execute(sql, params); },
+  async getConnection() {
+    const target = this;
+    let snapshot = null;
+    return {
+      async beginTransaction() {
+        snapshot = { users: new Map([...target.users].map(([id, row]) => [id, { ...row }])),
+          feedbackRows: target.feedbackRows.map(row => ({ ...row })) };
+      },
+      execute(sql, params) { return target.execute(sql, params); },
+      async commit() { snapshot = null; },
+      async rollback() {
+        if (!snapshot) return;
+        target.users = snapshot.users; target.feedbackRows = snapshot.feedbackRows; snapshot = null;
+      },
+      release() {}
+    };
+  }
 };
 const dbPath = require.resolve('../../Database/db');
 assert.equal(require.cache[dbPath], undefined, 'isolation must precede the database module');

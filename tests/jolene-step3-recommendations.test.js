@@ -176,7 +176,7 @@ test('all three cards retain exact accept and reject actions and display-only sn
     const rejecting = http.visitor();
     const rejectBatch = (await recommend(rejecting, '?diningDate=2026-11-02&diningTime=14:00')).body.recommendations;
     const rejected = await rejecting.request('/recommendation/reject', {
-      merchantId: rejectBatch[index].id, reason: 'not-in-mood'
+      merchantId: rejectBatch[index].id, feedbackToken: rejectBatch[index].feedbackToken, reason: 'not-in-mood'
     }, { 'X-Requested-With': 'smart-match' });
     assert.equal(rejected.status, 204);
   }

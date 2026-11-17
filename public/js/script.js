@@ -292,7 +292,9 @@ function renderRecCard(r) {
     '<button class="sheet-close" type="button" data-sheet-close>Close</button></div>' +
     '<form method="POST" action="/recommendation/reject" data-feedback>' +
     '<input type="hidden" name="merchantId" value="' + escAttr(r.id) + '">' +
+    '<input type="hidden" name="feedbackToken" value="' + escAttr(r.feedbackToken || '') + '">' +
     reasonHtml +
+    '<p class="feedback-status" data-feedback-status role="status"></p>' +
     '</form></div></div></details>' +
     '</article>';
 }
@@ -422,14 +424,25 @@ document.addEventListener('submit', async function(event) {
   const data = new FormData(form);
   data.set('reason', event.submitter.value);
   form.dataset.busy = 'true';
+  const status = form.querySelector('[data-feedback-status]');
+  if (status) status.textContent = '';
   try {
     const response = await fetch(form.action, {
       method: 'POST', headers: { 'X-Requested-With': 'smart-match' },
       body: new URLSearchParams(data)
     });
-    if (!response.ok) throw new Error('Feedback state changed');
+    if (!response.ok) {
+      if (status) status.textContent = response.status === 503
+        ? 'We could not save that yet. Please try again.'
+        : 'This recommendation changed. Refresh Home and try again.';
+      return;
+    }
     await loadMatch(true);
-  } catch (error) { window.location.assign('/home'); }
+  } catch (error) {
+    if (status) status.textContent = 'We could not save that yet. Please try again.';
+  } finally {
+    delete form.dataset.busy;
+  }
 });
 
 const paymentForm = document.querySelector('[data-payment]');
@@ -581,49 +594,3 @@ document.addEventListener('change', function(event) {
   const form = select.closest('form');
   if (form) form.submit();
 });
-
-// Add this to the bottom of your existing public/js/script.js file
-
-/**
- * Handles the "Show Another" 3-to-1 buffer logic and trains the DB.
- * @param {string} merchantId - The rejected merchant
- * @param {number} currentIndex - The index (0, 1, or 2) of the current card
- * @param {string} reason - The specific rejection reason for the AI
- */
-async function handleRejection(merchantId, currentIndex, reason) {
-    // 1. Visually hide the current card instantly (0ms latency)
-    const currentCard = document.getElementById(`match-card-${currentIndex}`);
-    if (currentCard) {
-        currentCard.style.display = 'none';
-        // Also close the details sheet if it is open
-        const detailsSheet = document.getElementById(`feedback-${currentIndex}`);
-        if (detailsSheet) detailsSheet.removeAttribute('open');
-    }
-
-    // 2. Instantly show the NEXT card in the buffer
-    const nextIndex = currentIndex + 1;
-    const nextCard = document.getElementById(`match-card-${nextIndex}`);
-    
-    if (nextCard) {
-        nextCard.style.display = 'block';
-    } else {
-        // If we ran out of 3 merchants, show the empty state
-        const emptyState = document.getElementById('buffer-empty-state');
-        if (emptyState) emptyState.style.display = 'block';
-    }
-
-    // 3. Asynchronously train the MySQL AI weights in the background
-    try {
-        await fetch('/api/feedback', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                merchantId: merchantId,
-                reason: reason 
-            })
-        });
-        console.log(`✅ Feedback sent to DB for ${merchantId}: ${reason}`);
-    } catch (error) {
-        console.error("❌ Failed to sync feedback to database:", error);
-    }
-}
