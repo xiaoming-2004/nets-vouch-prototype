@@ -1,4 +1,5 @@
 require('./helpers/test-isolation.cjs');
+const seedLegacyLocation = require('./helpers/legacy-location.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { app, demoStore, getMerchantCampaigns, clearDiscoveryCache,
@@ -47,6 +48,7 @@ test.afterEach(function() {
 function visitor() {
   let cookie = '';
   return {
+    cookieValue() { return cookie; },
     async request(path, body, extraHeaders) {
       const isJson = extraHeaders && extraHeaders['Content-Type'] === 'application/json';
       const response = await realFetch(base + path, {
@@ -109,8 +111,7 @@ async function onboardAndMatch(v) {
     moodCuisine: 'any', dietaryPreference: 'none', craving: ''
   })).location, '/home');
   // Mirrors the visible "Use demo location" control when a real GPS fix is unavailable.
-  assert.equal((await v.request('/smart-match/location', { status: 'fallback' },
-    { 'Content-Type': 'application/json' })).status, 204);
+  await seedLegacyLocation(v, { status: 'fallback' });
   const result = await v.request('/smart-match/result');
   assert.equal(result.status, 200);
   assert.match(result.html, /Choose this/);
@@ -346,8 +347,7 @@ test('rejecting from a loaded Foursquare batch makes no extra provider request',
   };
   const jia = visitor();
   await jia.request('/setup-preferences', { moodCuisine: 'any', dietaryPreference: 'none' });
-  assert.equal((await jia.request('/smart-match/location',
-    { latitude: 1.451, longitude: 103.821 }, { 'Content-Type': 'application/json' })).status, 204);
+  await seedLegacyLocation(jia, { latitude: 1.451, longitude: 103.821 });
   const first = merchantId((await jia.request('/smart-match/result')).html);
   assert.equal(providerCalls, 1);
   await jia.request('/recommendation/reject', { merchantId: first, reason: 'not-in-mood' });

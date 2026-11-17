@@ -1,4 +1,5 @@
 require('./helpers/test-isolation.cjs');
+const seedLegacyLocation = require('./helpers/legacy-location.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -52,6 +53,7 @@ const CLIENT_JS = function() {
 function visitor() {
   let cookie = '';
   return {
+    cookieValue() { return cookie; },
     async request(requestPath, body) {
       const response = await originalFetch(base + requestPath, {
         method: body === undefined ? 'GET' : 'POST', redirect: 'manual',
@@ -82,7 +84,7 @@ function visitor() {
 
 async function card(v) {
   await v.request('/home');
-  await v.request('/smart-match/location', { status: 'fallback' });
+  await seedLegacyLocation(v, { status: 'fallback' });
   const result = await v.request('/smart-match/result');
   assert.equal(result.status, 200);
   assert.match(result.html, /data-merchant-id="/);
@@ -120,7 +122,7 @@ test('LAYOUT 1: the one-screen card still carries every essential fact and actio
 test('LAYOUT 1b: the Home greeting stays above the card and is never hidden', async function() {
   const v = visitor();
   const home = await v.request('/home');
-  await v.request('/smart-match/location', { status: 'fallback' });
+  await seedLegacyLocation(v, { status: 'fallback' });
   await v.request('/smart-match/result');
   const withMatch = await v.request('/home');
   // The greeting keeps its original time-aware wording and the signed-in demo user's name.
@@ -379,7 +381,7 @@ async function providerCard(v, name) {
   mockRealProvider(name);
   await v.request('/home');
   await v.request('/profile', { dietaryPreference: 'none', budget: '30', maxDistanceMinutes: '30', craving: '', moodCuisine: 'any' });
-  await v.request('/smart-match/location', { latitude: 1.4428, longitude: 103.7854 });
+  await seedLegacyLocation(v, { latitude: 1.4428, longitude: 103.7854 });
   await v.request('/smart-match/result');          // warms the one photo lookup
   const result = await v.request('/smart-match/result');
   assert.match(result.html, /data-merchant-id="google-/, 'a real provider merchant is recommended');
@@ -467,7 +469,7 @@ test('LAYOUT 4: the special result states still render their own content', async
 test('LAYOUT 4b: the empty states keep their own explanations and inline filter form', async function() {
   const v = visitor();
   await v.request('/home');
-  await v.request('/smart-match/location', { status: 'fallback' });
+  await seedLegacyLocation(v, { status: 'fallback' });
   // An impossible budget empties the pool - the empty state is allowed to be as tall as it needs.
   await v.request('/profile', { budget: '1', maxDistanceMinutes: '1', craving: '', moodCuisine: 'any' });
   const empty = (await v.request('/smart-match/result')).html;

@@ -1,4 +1,5 @@
 require('./helpers/test-isolation.cjs');
+const seedLegacyLocation = require('./helpers/legacy-location.cjs');
 const rankingFixture = require('./ranking-fixture');
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -39,7 +40,7 @@ test.after(function() { server.close(); });
 
 function visitor() {
   let cookie = '';
-  return { async request(path, body) {
+  return { cookieValue() { return cookie; }, async request(path, body) {
     const response = await originalFetch(base + path, {
       method: body === undefined ? 'GET' : 'POST', redirect: 'manual',
       headers: { Cookie: cookie, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
@@ -260,12 +261,12 @@ test('TEST A: valid browser coordinates reach the backend and drive discovery', 
   global.fetch = mock.fetchFn;
   const v = visitor();
   assert.match((await v.request('/home')).html, /data-location-ready="false"/);
-  assert.equal((await v.request('/smart-match/location', { latitude: 1.30, longitude: 103.85 })).status, 204);
+  await seedLegacyLocation(v, { latitude: 1.30, longitude: 103.85 });
   assert.match((await v.request('/home')).html, /data-location-ready="true"/);
   await v.request('/smart-match/result');
   assert.equal(mock.getRequests()[0].ll, '1.3,103.85');
-  assert.equal((await v.request('/smart-match/location', { latitude: 999, longitude: 103.89 })).status, 400);
-  assert.equal((await v.request('/smart-match/location', { latitude: 1.3, longitude: -181 })).status, 400);
+  assert.equal((await v.request('/smart-match/location', { latitude: 999, longitude: 103.89 })).status, 410);
+  assert.equal((await v.request('/smart-match/location', { latitude: 1.3, longitude: -181 })).status, 410);
 });
 
 // ---------------------------------------------------------------------------
@@ -478,7 +479,7 @@ test('TEST N: Too far remains a hard constraint - only strictly closer candidate
   clearDiscoveryCache(); // Independent fixture: do not reuse the first scenario's Places response.
   global.fetch = noneCloser.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(v, { latitude: 1.45, longitude: 103.82 });
   await v.request('/profile', { dietaryPreference: 'none', budget: '10', maxDistanceMinutes: '30' });
   const first = await v.request('/smart-match/result');
   const firstId = merchantIdOf(first.html);
@@ -518,7 +519,7 @@ test('TEST P: Not for me reuses the current batch - no new Foursquare request', 
   ]);
   global.fetch = mock.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(v, { latitude: 1.45, longitude: 103.82 });
   const first = await v.request('/smart-match/result');
   const firstId = merchantIdOf(first.html);
   assert.ok(firstId);
@@ -543,7 +544,7 @@ test('multiple rejections consume the same batch with no extra provider calls', 
   ]);
   global.fetch = mock.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(v, { latitude: 1.45, longitude: 103.82 });
   const seen = new Set();
   for (let i = 0; i < 3; i++) {
     const page = await v.request('/smart-match/result');
@@ -565,8 +566,8 @@ test('rejection state is per-session - Darren is unaffected by Jia', async funct
   global.fetch = mock.fetchFn;
   const jia = visitor();
   const darren = visitor();
-  await jia.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
-  await darren.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(jia, { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(darren, { latitude: 1.45, longitude: 103.82 });
 
   const jiaFirst = merchantIdOf((await jia.request('/smart-match/result')).html);
   await rejectCurrent(jia, jiaFirst, 'too-far');
@@ -587,7 +588,7 @@ test('batch exhaustion bypasses discovery cache once to find a new merchant', as
     return { ok: true, json: async function() { return { results: results }; } };
   };
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(v, { latitude: 1.45, longitude: 103.82 });
   const firstId = merchantIdOf((await v.request('/smart-match/result')).html);
   assert.equal(firstId, 'foursquare-a');
   assert.equal(call, 1);
@@ -606,7 +607,7 @@ test('a refresh returning only already-seen merchants shows a clean exhaustion s
   const mock = mockFoursquare([fsqPlace('a', 'Merchant A', 'Restaurant')]);
   global.fetch = mock.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(v, { latitude: 1.45, longitude: 103.82 });
   const firstId = merchantIdOf((await v.request('/smart-match/result')).html);
   await rejectCurrent(v, firstId, 'not-in-mood');
   const result = await v.request('/smart-match/result');
@@ -678,7 +679,7 @@ test('TEST R/S: a successful recommendation renders into the existing Smart Matc
   ]);
   global.fetch = mock.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.44891, longitude: 103.83236 });
+  await seedLegacyLocation(v, { latitude: 1.44891, longitude: 103.83236 });
   const match = await v.request('/smart-match/result');
   assert.match(match.html, /data-merchant-id="foursquare-flying-wok"/);
   assert.match(match.html, /Flying Wok/);
@@ -693,7 +694,7 @@ test('TEST T: parent venue displays alongside distance when Foursquare supplies 
   ]);
   global.fetch = mock.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.44891, longitude: 103.83236 });
+  await seedLegacyLocation(v, { latitude: 1.44891, longitude: 103.83236 });
   const match = await v.request('/smart-match/result');
   assert.match(match.html, /Kalsom Street Food/);
   assert.match(match.html, /Yong Li Coffee Station/);
@@ -705,7 +706,7 @@ test('TEST U: Choose this continues into Scan when you arrive', async function()
   const mock = mockFoursquare([fsqPlace('flying-wok', 'Flying Wok', 'Chinese Restaurant')]);
   global.fetch = mock.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.44891, longitude: 103.83236 });
+  await seedLegacyLocation(v, { latitude: 1.44891, longitude: 103.83236 });
   const id = merchantIdOf((await v.request('/smart-match/result')).html);
   assert.equal((await v.request('/recommendation/accept', { merchantId: id })).status, 302);
   const again = await v.request('/smart-match/result');
@@ -742,7 +743,7 @@ test('TEST V: Foursquare failure (missing key, error, timeout, malformed) keeps 
   assert.equal((await getNearbyMerchants()).source, 'local-fallback');
 
   const v = visitor();
-  await v.request('/smart-match/location', { status: 'fallback' });
+  await seedLegacyLocation(v, { status: 'fallback' });
   const match = await v.request('/smart-match/result');
   assert.equal(match.status, 200);
   assert.match(match.html, new RegExp('data-merchant-id="' + NEAREST_DEMO_MERCHANT_ID + '"'));
@@ -758,7 +759,7 @@ test('TEST W: only one Smart Match recommendation region renders, never a duplic
   const mock = mockFoursquare([fsqPlace('flying-wok', 'Flying Wok', 'Chinese Restaurant')]);
   global.fetch = mock.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.44891, longitude: 103.83236 });
+  await seedLegacyLocation(v, { latitude: 1.44891, longitude: 103.83236 });
   await v.request('/smart-match/result');
   const home = await v.request('/home');
   const matches = home.html.match(/data-match-region/g) || [];
@@ -841,7 +842,7 @@ test('1.9 TEST A: real supplied coordinates become the Foursquare ll parameter',
   const mock = mockFoursquare([fsqPlace('a', 'Real Place', 'Restaurant')]);
   global.fetch = mock.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.3521, longitude: 103.8198 });
+  await seedLegacyLocation(v, { latitude: 1.3521, longitude: 103.8198 });
   await v.request('/smart-match/result');
   assert.equal(mock.getRequests()[0].ll, '1.3521,103.8198');
 });
@@ -852,8 +853,8 @@ test('1.9 TEST B: two sessions retain independent locations - no cross-contamina
   global.fetch = mock.fetchFn;
   const sessionA = visitor();
   const sessionB = visitor();
-  await sessionA.request('/smart-match/location', { latitude: 1.44891, longitude: 103.83236 }); // Sembawang/Canberra
-  await sessionB.request('/smart-match/location', { latitude: 1.3526, longitude: 103.9448 }); // Tampines
+  await seedLegacyLocation(sessionA, { latitude: 1.44891, longitude: 103.83236 }); // Sembawang/Canberra
+  await seedLegacyLocation(sessionB, { latitude: 1.3526, longitude: 103.9448 }); // Tampines
   await sessionA.request('/smart-match/result');
   await sessionB.request('/smart-match/result');
   const requests = mock.getRequests();
@@ -878,9 +879,9 @@ test('1.9 TEST D: starting a new Smart Match with new coordinates updates the se
   const mock = mockFoursquare([fsqPlace('a', 'Some Place', 'Restaurant')]);
   global.fetch = mock.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.30, longitude: 103.85 });
+  await seedLegacyLocation(v, { latitude: 1.30, longitude: 103.85 });
   await v.request('/smart-match/result');
-  await v.request('/smart-match/location', { latitude: 1.40, longitude: 103.90 });
+  await seedLegacyLocation(v, { latitude: 1.40, longitude: 103.90 });
   await v.request('/smart-match/result');
   const requests = mock.getRequests();
   assert.equal(requests.length, 2);
@@ -896,7 +897,7 @@ test('1.9 TEST E: rejection (Not for me) does not reacquire location or re-searc
   ]);
   global.fetch = mock.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.30, longitude: 103.85 });
+  await seedLegacyLocation(v, { latitude: 1.30, longitude: 103.85 });
   const first = merchantIdOf((await v.request('/smart-match/result')).html);
   await rejectCurrent(v, first, 'not-in-mood');
   await v.request('/smart-match/result');
@@ -929,7 +930,7 @@ test('1.9 TEST G: the child merchant keeps its own identity with the parent as d
   ]);
   global.fetch = mock.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(v, { latitude: 1.45, longitude: 103.82 });
   const match = await v.request('/smart-match/result');
   assert.match(match.html, /data-merchant-id="foursquare-child-a"/);
   assert.match(match.html, /Flying Wok/);
@@ -1071,8 +1072,9 @@ test('TEST G: geolocation failure does not automatically call Foursquare around 
   const scriptSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'script.js'), 'utf8');
   // The old auto-fallback behaviour posted {status:'fallback'} whenever geolocation failed.
   // It must now require an explicit "Use demo location" tap instead.
-  assert.match(scriptSource, /data-use-demo-location/);
-  assert.match(scriptSource, /data-retry-location/);
+  assert.doesNotMatch(scriptSource, /data-use-demo-location/);
+  assert.doesNotMatch(scriptSource, /data-retry-location/);
+  assert.doesNotMatch(scriptSource, /smart-match\/location/);
   assert.ok(!/resolve\(location \|\| \{ status: 'fallback' \}\)/.test(scriptSource),
     'geolocation failure must not silently substitute a fallback location');
 });
@@ -1082,7 +1084,7 @@ test('TEST H: a shown merchant is excluded from the very next recommendation', a
   const mock = mockFoursquare([fsqPlace('a', 'Merchant A', 'Restaurant'), fsqPlace('b', 'Merchant B', 'Restaurant')]);
   global.fetch = mock.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(v, { latitude: 1.45, longitude: 103.82 });
   const first = merchantIdOf((await v.request('/smart-match/result')).html);
   await rejectCurrent(v, first, 'not-in-mood');
   const next = merchantIdOf((await v.request('/smart-match/result')).html);
@@ -1097,7 +1099,7 @@ test('TEST I: a repeated rejection sequence exhausts unseen merchants before any
   ]);
   global.fetch = mock.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(v, { latitude: 1.45, longitude: 103.82 });
   const seen = [];
   for (let i = 0; i < 4; i++) {
     const id = merchantIdOf((await v.request('/smart-match/result')).html);
@@ -1135,10 +1137,10 @@ test('TEST K: editing filters preserves shown history - unseen merchants are pre
   ]);
   global.fetch = mock.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(v, { latitude: 1.45, longitude: 103.82 });
   const first = merchantIdOf((await v.request('/smart-match/result')).html);
   await v.request('/profile', { dietaryPreference: 'none', budget: '10', maxDistanceMinutes: '30' });
-  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(v, { latitude: 1.45, longitude: 103.82 });
   const afterEdit = merchantIdOf((await v.request('/smart-match/result')).html);
   assert.notEqual(afterEdit, first, 'the merchant already shown before the filter edit must not reappear immediately');
 });
@@ -1151,11 +1153,11 @@ test('TEST L: changing craving preserves history - a merchant already shown stay
   });
   global.fetch = mock.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(v, { latitude: 1.45, longitude: 103.82 });
   const first = merchantIdOf((await v.request('/smart-match/result')).html);
   assert.equal(first, 'foursquare-a');
   await v.request('/profile', { dietaryPreference: 'none', budget: '10', maxDistanceMinutes: '30', craving: 'noodles' });
-  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(v, { latitude: 1.45, longitude: 103.82 });
   const afterCravingChange = merchantIdOf((await v.request('/smart-match/result')).html);
   assert.equal(afterCravingChange, 'foursquare-noodle',
     'Merchant A was already shown, so the unseen Corner Noodle House should be preferred');
@@ -1167,11 +1169,11 @@ test('TEST M: shown history does not leak across sessions', async function() {
   global.fetch = mock.fetchFn;
   const sessionA = visitor();
   const sessionB = visitor();
-  await sessionA.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(sessionA, { latitude: 1.45, longitude: 103.82 });
   const shownToA = merchantIdOf((await sessionA.request('/smart-match/result')).html);
   assert.equal(shownToA, 'foursquare-x');
 
-  await sessionB.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(sessionB, { latitude: 1.45, longitude: 103.82 });
   const shownToB = merchantIdOf((await sessionB.request('/smart-match/result')).html);
   assert.equal(shownToB, 'foursquare-x', "session B must still be able to receive X - A's history must not leak");
 });
@@ -1181,7 +1183,7 @@ test('TEST N: pool exhaustion never recycles any rejected merchant', async funct
   const mock = mockFoursquare([fsqPlace('a', 'Merchant A', 'Restaurant'), fsqPlace('b', 'Merchant B', 'Restaurant')]);
   global.fetch = mock.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(v, { latitude: 1.45, longitude: 103.82 });
   const first = merchantIdOf((await v.request('/smart-match/result')).html);
   await rejectCurrent(v, first, 'not-in-mood');
   const second = merchantIdOf((await v.request('/smart-match/result')).html);
@@ -1215,7 +1217,7 @@ test('TEST P: suitable unseen alternatives need zero additional Foursquare reque
   ]);
   global.fetch = mock.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(v, { latitude: 1.45, longitude: 103.82 });
   await v.request('/smart-match/result');
   const callsAfterFirst = mock.getCalls();
   const first = merchantIdOf((await v.request('/smart-match/result')).html);
@@ -1237,7 +1239,7 @@ test('TEST R: choosing a merchant still flows into Scan when you arrive', async 
   const mock = mockFoursquare([fsqPlace('a', 'Merchant A', 'Restaurant')]);
   global.fetch = mock.fetchFn;
   const v = visitor();
-  await v.request('/smart-match/location', { latitude: 1.45, longitude: 103.82 });
+  await seedLegacyLocation(v, { latitude: 1.45, longitude: 103.82 });
   const id = merchantIdOf((await v.request('/smart-match/result')).html);
   assert.equal((await v.request('/recommendation/accept', { merchantId: id })).status, 302);
   const again = await v.request('/smart-match/result');

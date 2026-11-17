@@ -121,58 +121,13 @@ function diningRecommendationQuery() {
   return '?' + query.toString();
 }
 
-// Asks the device for its CURRENT position - never a cached one (maximumAge: 0) - every time a
-// new Smart Match discovery starts. Returns the coordinates, or null on any failure. Does NOT
-// silently fall back to a demo location; the caller decides what to show on failure.
-function requestCurrentPosition() {
-  return new Promise(function(resolve) {
-    if (!navigator.geolocation) { smartMatchDebug('geolocation unsupported'); return resolve(null); }
-    navigator.geolocation.getCurrentPosition(function(position) {
-      
-      // HACKATHON FIX: Laptops use IP triangulation (often 10km+ inaccurate in SG).
-      // If accuracy is worse than 1000m, reject it to prevent routing users to the wrong side of the country.
-      if (position.coords.accuracy > 1000) {
-        smartMatchDebug('geolocation accuracy too low (' + Math.round(position.coords.accuracy) + 'm). Rejecting.');
-        return resolve(null);
-      }
-      
-      smartMatchDebug('geolocation success (accuracy: ' + Math.round(position.coords.accuracy) + 'm)');
-      resolve({ latitude: position.coords.latitude, longitude: position.coords.longitude });
-      
-    }, function() { smartMatchDebug('geolocation denied/failed'); resolve(null); }, {
-      enableHighAccuracy: true, maximumAge: 0, timeout: 10000
-    });
-  });
-}
-
-// Resolves true once THIS user's current device coordinates are stored server-side, or false if
-// geolocation failed and the caller must show an explicit retry/demo-location choice - it must
-// never guess a location on the user's behalf.
-async function prepareDiscoveryLocation() {
-  if (!matchRegion || matchRegion.dataset.locationReady === 'true') return true;
-  const location = await requestCurrentPosition();
-  if (!location) return false;
-  try {
-    const response = await fetch('/smart-match/location', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(location)
-    });
-    smartMatchDebug('location request status: ' + response.status);
-    // The location only counts as stored once the server accepted it.
-    if (!response.ok) return false;
-  } catch (error) { return false; }
-  matchRegion.dataset.locationReady = 'true';
-  return true;
-}
-
-function renderLocationNeeded() {
-  clearMatchingStages();
-  matchRegion.innerHTML = '<section class="card state-card reveal"><div class="state-icon" aria-hidden="true">' +
-    '<svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg></div>' +
-    '<h2>Location needed</h2><p>We use your location to find places nearby.</p>' +
-    '<button class="button" type="button" data-retry-location>Try again</button>' +
-    '<button class="text-button" type="button" data-use-demo-location>Use demo location</button></section>';
-  matchRegion.setAttribute('aria-busy', 'false');
+// Singapore dining date and time exactly as written in the datetime-local control (no Date object).
+function diningParts() {
+  if (!diningTimeForm) return null;
+  const input = diningTimeForm.querySelector('[name="diningDateTime"]');
+  const value = input && input.value;
+  const match = typeof value === 'string' && value.match(/^(\d{4}-\d{2}-\d{2})T((?:[01]\d|2[0-3]):[0-5]\d)$/);
+  return match ? { diningDate: match[1], diningTime: match[2] } : null;
 }
 
 // Loading copy only - no fake progress. If the match takes a while (e.g. preference checks),
@@ -195,20 +150,6 @@ function startMatchingStages() {
     if (title) title.textContent = 'Checking which places fit your preferences…';
     if (sub) sub.textContent = 'Hang tight — this can take a few seconds.';
   }, 4000);
-}
-
-// Only an explicit tap on "Use demo location" may put Smart Match into the demo fallback -
-// it is never chosen automatically on the user's behalf.
-async function useDemoLocation() {
-  try {
-    const response = await fetch('/smart-match/location', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'fallback' })
-    });
-    if (!response.ok) { renderLocationNeeded(); return; }
-  } catch (error) { renderLocationNeeded(); return; }
-  matchRegion.dataset.locationReady = 'true';
-  loadMatch(false);
 }
 
 function escHtml(str) {
@@ -270,12 +211,13 @@ function renderRecCard(r) {
       ? '<p class="rec-dish">' + escHtml(r.itemName) +
         (Number.isFinite(r.price) ? ' · ' + priceHtml : '') + '</p>'
       : '<p class="rec-dish">Typical price: ' + priceHtml + '</p>') +
-    '<p class="rec-meta">' + escHtml(distance) +
-      (tagHtml ? ' · ' + tagHtml : '') + '</p>' +
+    '<p class="rec-meta">' + (r.travel ? '' : escHtml(distance)) +
+      (tagHtml ? (r.travel ? '' : ' · ') + tagHtml : '') + '</p>' +
     cuisineHtml +
     '</div>' +
     '</div>' +
     sampleHtml +
+    renderGoogleRoute(r.travel, r.id) +
     activityHtml +
     matchesHtml +
     rewardHtml +
@@ -299,6 +241,59 @@ function renderRecCard(r) {
     '</article>';
 }
 
+// Google walking-route facts: facts, then the visible "Google Maps" attribution, then the required
+// walking warning, all inside ONE visually distinct container (same structure as
+// views/partials/google-walking.ejs). Nothing is shown without its warning. The directions link is
+// added later, in browser memory only, and only while a live origin exists.
+function renderGoogleRoute(travel, merchantId) {
+  if (!travel || typeof travel.warning !== 'string' || !travel.warning) return '';
+  const minutes = Number(travel.walkingMinutes);
+  const metres = Number(travel.walkingMetres);
+  if (!Number.isFinite(minutes) || !Number.isFinite(metres)) return '';
+  return '<span class="google-route" data-google-route>' +
+    '<span class="google-route__facts">About ' + escHtml(String(Math.round(minutes))) + ' min walk · ' +
+    escHtml(String(Math.round(metres))) + ' m</span>' +
+    '<span class="google-route__attribution" translate="no">Google Maps</span>' +
+    '<span class="google-route__warning">' + escHtml(travel.warning) + '</span>' +
+    '<span class="google-route__directions" data-directions-slot="' + escAttr(merchantId) + '"></span>' +
+    '</span>';
+}
+
+// The ONLY place a Google Maps directions URL is built. The origin never leaves browser memory
+// except inside this user-triggered link; the destination is a fictional sample merchant coordinate.
+function buildDirectionsUrl(origin, destination) {
+  const url = new URL('https://www.google.com/maps/dir/');
+  url.searchParams.set('api', '1');
+  url.searchParams.set('origin', origin.latitude + ',' + origin.longitude);
+  url.searchParams.set('destination', destination.latitude + ',' + destination.longitude);
+  url.searchParams.set('travelmode', 'walking');
+  return url.href;
+}
+
+function attachDirectionLinks(slots, origin, destinations) {
+  if (!origin) return;
+  slots.forEach(function(slot) {
+    const destination = destinations.get(slot.getAttribute('data-directions-slot'));
+    if (!destination) return;
+    const link = document.createElement('a');
+    link.href = buildDirectionsUrl(origin, destination);
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.setAttribute('data-directions-link', '');
+    link.textContent = 'Open walking directions';
+    const note = document.createElement('span');
+    note.className = 'google-route__note';
+    note.textContent = 'Destination is a fictional sample merchant coordinate.';
+    slot.textContent = '';
+    slot.appendChild(link);
+    slot.appendChild(note);
+  });
+}
+
+function clearDirectionLinks(slots) {
+  slots.forEach(function(slot) { slot.textContent = ''; });
+}
+
 function renderRecommendationList(recommendations, catalogue, metadata) {
   const notice = catalogue && catalogue.source === 'demo-fallback'
     ? '<p class="report-note" role="status">Catalogue unavailable — showing demo merchants.</p>' : '';
@@ -317,8 +312,49 @@ function renderRecommendationList(recommendations, catalogue, metadata) {
   return notice + activityNotice + '<div class="rec-list">' + recommendations.map(renderRecCard).join('') + '</div>';
 }
 
+// ---------------------------------------------------------------------------
+// Live starting point (Jolene Step 6). The origin exists ONLY in this closure's memory: never in
+// localStorage, sessionStorage, cookies, a URL, an HTML attribute or a console message. It is sent
+// once per request in a POST body, cleared on errors and when switching to the RP demo origin, and
+// gone after a reload (which returns to the labelled RP demo origin).
+// ---------------------------------------------------------------------------
+function requestLiveOrigin() {
+  return new Promise(function(resolve) {
+    if (!navigator.geolocation) return resolve({ ok: false, reason: 'unsupported' });
+    navigator.geolocation.getCurrentPosition(function(position) {
+      const accuracy = position && position.coords && position.coords.accuracy;
+      // Anything worse than 150 metres (or an unknown accuracy) is rejected.
+      if (!(accuracy <= 150)) return resolve({ ok: false, reason: 'inaccurate' });
+      resolve({ ok: true, location: { latitude: position.coords.latitude, longitude: position.coords.longitude } });
+    }, function(error) {
+      const code = error && error.code;
+      resolve({ ok: false, reason: code === 1 ? 'denied' : code === 3 ? 'timeout' : 'unavailable' });
+    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
+  });
+}
+
+const ORIGIN_MESSAGES = {
+  denied: 'Location permission was denied. Search for a place instead, or use the RP demo origin.',
+  unavailable: 'Your location is unavailable. Search for a place instead, or use the RP demo origin.',
+  timeout: 'Finding your location took too long. Search for a place instead, or use the RP demo origin.',
+  inaccurate: 'Your location is not accurate enough for walking times (within 150 m is needed). Search for a place instead, or use the RP demo origin.',
+  unsupported: 'This browser cannot share a location. Search for a place instead, or use the RP demo origin.',
+  places: 'Place search could not load. Use your location or the RP demo origin.',
+  unconfigured: 'Place search is not available right now. Use your location or the RP demo origin.',
+  'walking-routes-not-configured': 'Google Maps walking times are not available right now.',
+  'walking-routes-timeout': 'Google Maps walking times took too long.',
+  'walking-routes-rate-limited': 'Google Maps walking times are busy right now.',
+  'walking-routes-provider-failure': 'Google Maps walking times are unavailable right now.',
+  'walking-routes-invalid-response': 'Google Maps walking times could not be read.',
+  'live-recommendation-unavailable': 'Recommendations are unavailable right now.',
+  'location-request-rate-limited': 'Too many walking-time requests. Please wait a moment.',
+  'invalid-recommendation-input': 'That starting point could not be used. Choose a place in Singapore.'
+};
+const ORIGIN_RECOVERY = ' Your previous results are unchanged. Choose a starting point again, or use the RP demo origin.';
+
 async function loadMatch(again) {
   if (!matchRegion) return;
+  if (originModule.isLive()) return originModule.loadLive();
   const query = diningRecommendationQuery();
   if (query === null) {
     matchRegion.innerHTML = '<p class="error" role="status">Choose a valid Singapore dining date and time.</p>';
@@ -353,6 +389,169 @@ async function loadMatch(again) {
   }
   matchRegion.setAttribute('aria-busy', 'false');
 }
+const originModule = (function() {
+  const panel = document.querySelector('[data-origin-panel]');
+  const modeEl = panel && panel.querySelector('[data-origin-mode]');
+  const statusEl = panel && panel.querySelector('[data-origin-status]');
+  const demoButton = panel && panel.querySelector('[data-origin-demo]');
+  const searchBox = panel && panel.querySelector('[data-origin-search]');
+  let origin = null;
+  let label = '';
+  let source = '';
+  const destinations = new Map();
+  let autocomplete = null;
+  let placesPromise = null;
+
+  function slots() { return Array.prototype.slice.call(document.querySelectorAll('[data-directions-slot]')); }
+  function setStatus(message, isError) {
+    if (!statusEl) return;
+    statusEl.textContent = message || '';
+    statusEl.hidden = !message;
+    statusEl.classList.toggle('error', Boolean(message) && Boolean(isError));
+  }
+  function describeMode() {
+    if (!modeEl) return;
+    modeEl.textContent = !origin ? 'RP demo origin: estimated distances, not routed walking times.'
+      : source === 'device' ? 'Your current location: Google Maps walking times (kept only in this tab).'
+      : 'Starting place: ' + label + ' (Google Maps walking times, kept only in this tab).';
+    if (demoButton) demoButton.hidden = !origin;
+  }
+  function clear() {
+    origin = null; label = ''; source = '';
+    destinations.clear();
+    clearDirectionLinks(slots());
+    describeMode();
+  }
+  function set(location, kind, name) {
+    origin = { latitude: location.latitude, longitude: location.longitude };
+    source = kind;
+    label = String(name || '').slice(0, 120);
+    describeMode();
+  }
+  function rememberDestinations(recommendations) {
+    destinations.clear();
+    (recommendations || []).forEach(function(r) {
+      const d = r && r.travel && r.travel.sampleDestination;
+      if (d && Number.isFinite(d.latitude) && Number.isFinite(d.longitude)) {
+        destinations.set(r.id, { latitude: d.latitude, longitude: d.longitude });
+      }
+    });
+  }
+  function afterRender(recommendations) {
+    rememberDestinations(recommendations);
+    attachDirectionLinks(slots(), origin, destinations);
+  }
+  function messageFor(code) { return ORIGIN_MESSAGES[code] || 'Google Maps walking times are unavailable right now.'; }
+  function isTravelCode(code) {
+    return typeof code === 'string' && (/^walking-routes-/.test(code) || code === 'location-request-rate-limited' ||
+      code === 'live-recommendation-unavailable');
+  }
+  // Any failed live request clears the origin. The previous results stay on screen, unchanged.
+  function failed(body) {
+    const code = body && body.error && typeof body.error.code === 'string' ? body.error.code : '';
+    clear();
+    setStatus(messageFor(code) + ORIGIN_RECOVERY, true);
+  }
+  function showResults(body) {
+    setStatus('', false);
+    matchRegion.innerHTML = renderRecommendationList(body.recommendations, body.catalogue, body.metadata);
+    afterRender(body.recommendations);
+    initMerchantMap();
+  }
+  async function loadLive() {
+    const parts = diningParts();
+    if (!parts) { setStatus('Choose a valid Singapore dining date and time.', true); return; }
+    matchRegion.setAttribute('aria-busy', 'true');
+    setStatus('Finding Google Maps walking times…', false);
+    try {
+      const response = await fetch('/api/recommend/live', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location: { latitude: origin.latitude, longitude: origin.longitude },
+          diningDate: parts.diningDate, diningTime: parts.diningTime }) });
+      let body = null;
+      try { body = await response.json(); } catch (error) { body = null; }
+      if (!response.ok || !body || !Array.isArray(body.recommendations)) { failed(body); return; }
+      showResults(body);
+    } catch (error) {
+      failed(null);
+    } finally {
+      matchRegion.setAttribute('aria-busy', 'false');
+    }
+  }
+  async function useDevice() {
+    setStatus('Requesting your location…', false);
+    const result = await requestLiveOrigin();
+    if (!result.ok) { setStatus(ORIGIN_MESSAGES[result.reason] || ORIGIN_MESSAGES.unavailable, true); return; }
+    set(result.location, 'device', '');
+    await loadMatch(false);
+  }
+  function loadPlaces(key) {
+    if (placesPromise) return placesPromise;
+    placesPromise = new Promise(function(resolve, reject) {
+      function ready() {
+        window.google.maps.importLibrary('places').then(resolve, reject);
+      }
+      if (window.google && window.google.maps && window.google.maps.importLibrary) return ready();
+      const script = document.createElement('script');
+      script.src = 'https://maps.googleapis.com/maps/api/js?' + new URLSearchParams({ key: key, loading: 'async', v: 'weekly' }).toString();
+      script.async = true;
+      script.onload = ready;
+      script.onerror = function() { reject(new Error('places script')); };
+      document.head.appendChild(script);
+    }).catch(function(error) { placesPromise = null; throw error; });
+    return placesPromise;
+  }
+  async function usePlace() {
+    const key = panel.getAttribute('data-maps-browser-key');
+    if (!key) { setStatus(ORIGIN_MESSAGES.unconfigured, true); return; }
+    setStatus('Loading place search…', false);
+    try {
+      const library = await loadPlaces(key);
+      if (!autocomplete) {
+        autocomplete = new library.PlaceAutocompleteElement({});
+        // Singapore only, biased towards Republic Polytechnic. Google's own attribution is left untouched.
+        autocomplete.includedRegionCodes = ['sg'];
+        autocomplete.locationBias = { center: { lat: 1.4428, lng: 103.7854 }, radius: 20000 };
+        autocomplete.addEventListener('gmp-select', async function(event) {
+          try {
+            const place = event.placePrediction.toPlace();
+            await place.fetchFields({ fields: ['location', 'displayName'] });
+            set({ latitude: place.location.lat(), longitude: place.location.lng() }, 'place', place.displayName);
+            await loadMatch(false);
+          } catch (error) {
+            clear();
+            setStatus(ORIGIN_MESSAGES.places + ORIGIN_RECOVERY, true);
+          }
+        });
+        searchBox.appendChild(autocomplete);
+      }
+      searchBox.hidden = false;
+      setStatus('', false);
+    } catch (error) {
+      clear();
+      setStatus(ORIGIN_MESSAGES.places, true);
+    }
+  }
+  if (panel) {
+    panel.querySelector('[data-origin-device]').addEventListener('click', useDevice);
+    panel.querySelector('[data-origin-place]').addEventListener('click', usePlace);
+    demoButton.addEventListener('click', function() {
+      clear();
+      searchBox.hidden = true;
+      setStatus('', false);
+      loadMatch(false);
+    });
+    describeMode();
+  }
+  return {
+    isLive: function() { return Boolean(origin); },
+    loadLive: loadLive, failed: failed, afterRender: afterRender, messageFor: messageFor, isTravelCode: isTravelCode,
+    withLocation: function(payload) {
+      return origin ? Object.assign({}, payload, { location: { latitude: origin.latitude, longitude: origin.longitude } }) : payload;
+    }
+  };
+})();
+
 // ---------------------------------------------------------------------------
 // Natural-language request (Jolene Step 5). The server asks an LLM only to extract constraints;
 // fixed rules choose merchants. Every value shown here (typed text, interpretation chips, unsupported
@@ -420,11 +619,18 @@ async function submitNaturalLanguage(form) {
   nlSetStatus(form, 'Interpreting your request…', false);
   try {
     const response = await fetch('/api/recommend/natural', { method: 'POST',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text }) });
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(originModule.withLocation({ text: text })) });
     let body = null;
     try { body = await response.json(); } catch (error) { body = null; }
     if (!response.ok || !body || !Array.isArray(body.recommendations)) {
       const code = body && body.error && typeof body.error.code === 'string' ? body.error.code : '';
+      if (originModule.isTravelCode(code)) {
+        // A walking-time failure clears the in-memory origin; the typed text and current results stay.
+        originModule.failed(body);
+        nlSetStatus(form, originModule.messageFor(code), true);
+        nlRenderInterpretation(form, null, null);
+        return;
+      }
       // Typed text and manual filters stay as they are; the current recommendations are left untouched.
       nlSetStatus(form, NL_ERROR_MESSAGES[code] || 'Something went wrong. Use the manual filters instead.', true);
       nlRenderInterpretation(form, null, body && body.notApplied);
@@ -439,6 +645,7 @@ async function submitNaturalLanguage(form) {
     }
     clearMatchingStages();
     matchRegion.innerHTML = renderRecommendationList(body.recommendations, body.catalogue, body.metadata);
+    originModule.afterRender(body.recommendations);
     matchRegion.setAttribute('aria-busy', 'false');
     initMerchantMap();
   } catch (error) {
@@ -453,12 +660,6 @@ if (nlForm) nlForm.addEventListener('submit', function(event) {
   submitNaturalLanguage(nlForm);
 });
 
-if (matchRegion) {
-  matchRegion.addEventListener('click', function(event) {
-    if (event.target.closest('[data-retry-location]')) loadMatch(false);
-    else if (event.target.closest('[data-use-demo-location]')) useDemoLocation();
-  });
-}
 if (diningTimeForm) diningTimeForm.addEventListener('submit', function(event) {
   event.preventDefault();
   loadMatch(false);

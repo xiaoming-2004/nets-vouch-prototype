@@ -1,4 +1,5 @@
 require('./helpers/test-isolation.cjs');
+const seedLegacyLocation = require('./helpers/legacy-location.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -85,7 +86,7 @@ function mockGoogle(options) {
 
 function visitor() {
   let cookie = '';
-  return { async request(requestPath, body) {
+  return { cookieValue() { return cookie; }, async request(requestPath, body) {
     const response = await originalFetch(base + requestPath, {
       method: body === undefined ? 'GET' : 'POST', redirect: 'manual',
       headers: { Cookie: cookie, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
@@ -104,7 +105,7 @@ async function matched(location) {
   const v = visitor();
   await v.request('/home');
   await v.request('/profile', { dietaryPreference: 'none', budget: '10', maxDistanceMinutes: '10', craving: '', moodCuisine: 'any' });
-  await v.request('/smart-match/location', location || USER);
+  await seedLegacyLocation(v, location || USER);
   const page = await v.request('/smart-match/result');
   assert.equal(page.status, 200);
   assert.match(page.html, /data-merchant-id="google-/);
@@ -331,7 +332,7 @@ test('DIET BADGE: the badge states only what the registered merchant listed', as
   const v = visitor();
   await v.request('/home');
   await v.request('/profile', { dietaryPreference: 'halal', budget: '10', maxDistanceMinutes: '10', craving: '', moodCuisine: 'any' });
-  await v.request('/smart-match/location', { status: 'fallback' });
+  await seedLegacyLocation(v, { status: 'fallback' });
   const halal = (await v.request('/smart-match/result')).html;
   // The shipped demo data lists Halal for this merchant, so the badge is simply "Halal".
   assert.match(halal, /<span class="diet-tag diet-tag--halal">Halal<\/span>/);
@@ -354,7 +355,7 @@ test('DIET BADGE: with no dietary preference the card shows no dietary badge and
   const v = visitor();
   await v.request('/home');
   await v.request('/profile', { dietaryPreference: 'none', budget: '10', maxDistanceMinutes: '10', craving: '', moodCuisine: 'any' });
-  await v.request('/smart-match/location', { status: 'fallback' });
+  await seedLegacyLocation(v, { status: 'fallback' });
   const html = (await v.request('/smart-match/result')).html;
   assert.match(html, /data-merchant-id="/);
   assert.ok(!/diet-tag/.test(html), 'no dietary badge without an active preference');

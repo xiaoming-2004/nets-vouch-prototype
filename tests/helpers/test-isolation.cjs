@@ -101,14 +101,14 @@ const database = {
     const text = sql.replace(/\s+/g, ' ').trim();
     this.calls.push({ sql: text, params: [...params] });
     if (this.failing) throw new Error('simulated database outage');
-    if (text === 'SELECT merchant_id, name, location_label, distance_metres, cuisine_type, typical_price, dietary_halal, dietary_vegetarian, dietary_vegan, reward_amount, min_spend, is_sample_data FROM merchants ORDER BY merchant_id') {
+    if (text === 'SELECT merchant_id, name, location_label, distance_metres, cuisine_type, typical_price, dietary_halal, dietary_vegetarian, dietary_vegan, reward_amount, min_spend, is_sample_data, latitude, longitude FROM merchants ORDER BY merchant_id') {
       if (this.catalogueFailing) throw new Error('simulated catalogue outage');
       assert.deepEqual(params, []);
       return [[...this.merchants.values()].filter(row => !Array.isArray(row))
         .sort((a, b) => a.merchant_id < b.merchant_id ? -1 : a.merchant_id > b.merchant_id ? 1 : 0)
         .map(row => ({ ...row })), []];
     }
-    if (text === 'SELECT merchant_id, name, location_label, distance_metres, cuisine_type, typical_price, dietary_halal, dietary_vegetarian, dietary_vegan, reward_amount, min_spend, is_sample_data FROM merchants WHERE merchant_id = ?') {
+    if (text === 'SELECT merchant_id, name, location_label, distance_metres, cuisine_type, typical_price, dietary_halal, dietary_vegetarian, dietary_vegan, reward_amount, min_spend, is_sample_data, latitude, longitude FROM merchants WHERE merchant_id = ?') {
       if (this.catalogueFailing) throw new Error('simulated catalogue outage');
       assert.equal(params.length, 1);
       assert.equal(typeof params[0], 'string');

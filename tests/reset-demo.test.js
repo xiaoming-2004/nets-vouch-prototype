@@ -1,4 +1,5 @@
 const { database: fixtureDb } = require('./helpers/test-isolation.cjs');
+const seedLegacyLocation = require('./helpers/legacy-location.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { app, demoStore, getMerchantCampaigns, getNearbyMerchants,
@@ -43,6 +44,7 @@ test.afterEach(function() {
 function visitor() {
   let cookie = '';
   return {
+    cookieValue() { return cookie; },
     async request(path, body) {
       const response = await realFetch(base + path, {
         method: body === undefined ? 'GET' : 'POST', redirect: 'manual',
@@ -147,7 +149,7 @@ test('Smart Match, preferences, location, selected merchant and partial scan res
   const v = visitor();
   await reset(v);
   await v.request('/profile', { dietaryPreference: 'halal', budget: '9', maxDistanceMinutes: '7', craving: '' });
-  await v.request('/smart-match/location', { status: 'fallback' });
+  await seedLegacyLocation(v, { status: 'fallback' });
   await v.request('/smart-match/result');
   await v.request('/scan', { merchantId: 'green-bowl' });
   const before = (await v.state()).demo;

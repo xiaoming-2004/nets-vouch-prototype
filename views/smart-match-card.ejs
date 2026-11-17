@@ -18,7 +18,7 @@ var whyText = locals.matchExplanation || '';
 // The dish now has its own compact facts row, so the metadata row can always carry the provider's
 // category (or the parent venue) next to the distance. Nothing is invented when neither is known.
 var metaLead = recommendation.parentVenueName || recommendation.categoryLabel || recommendation.cuisine || recommendation.category || '';
-%><p class="result-meta"><% if (metaLead) { %><span class="result-lead"><%= metaLead %></span><% } %><span class="result-distance"><%= recommendation.distanceLabel || recommendation.distanceMinutes + ' min away' %></span></p>
+%><p class="result-meta"><% if (metaLead) { %><span class="result-lead"><%= metaLead %></span><% } %><% if (recommendation.travel) { %><%- include('partials/google-walking', { travel: recommendation.travel }) %><% } else if (recommendation.distanceLabel || Number.isFinite(recommendation.distanceMinutes)) { %><span class="result-distance"><%= recommendation.distanceLabel || recommendation.distanceMinutes + ' min away' %></span><% } %></p>
 <p class="result-tags"><% if (display.demoVouches) { %><span class="result-vouches" data-demo-sample="true"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m7.5 12.3 3 3 6-6.3"/></svg><%= display.demoVouches %> Vouches</span><% } %><% if (display.dietary) { %><span class="diet-tag diet-tag--<%= display.dietary.tone %>"><%= display.dietary.label %></span><% } %><% if (dietaryTagLabel && dietaryTagLabel !== 'Halal') { %><span class="match-diet"><%= dietaryTagLabel %></span><% } %></p>
 </div>
 </div>
@@ -45,7 +45,7 @@ var noteInRow = locationNotice && !whyText;
 <% if (recommendation.itemName || noteInRow) { %>
 <p class="result-facts"><% if (recommendation.itemName) { %><span class="result-dish"><span class="result-dish-name">Try: <%= recommendation.itemName %></span><% if (recommendation.price !== null) { %><span class="result-dish-price">$<%= recommendation.price.toFixed(2) %></span><% } %></span><% } %><% if (noteInRow) { %><span class="result-note">Using demo location</span><% } %></p>
 <% } %>
-<% if (recommendation.coordinates) { %>
+<% if (recommendation.coordinates && recommendation.source !== 'mysql') { %>
 <div class="match-map-wrap">
 <div class="match-map" data-lat="<%= recommendation.coordinates.latitude %>" data-lng="<%= recommendation.coordinates.longitude %>" data-name="<%= recommendation.merchantName %>" data-address="<%= recommendation.address || '' %>"></div>
 <% if (display.walking) { %><a class="match-map-open" href="<%= display.walking.mapsUrl %>" target="_blank" rel="noopener noreferrer"><span class="match-map-hint">Open in Google Maps<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg></span><span class="visually-hidden"> - walking directions to <%= recommendation.merchantName %></span></a><% } %>

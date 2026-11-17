@@ -1,0 +1,7 @@
+<%
+// Google walking-route facts with Google Maps attribution and the required walking warning, in ONE
+// visually distinct container (Jolene Step 6). Server-rendered downstream presentation: it shows only
+// the minutes/metres retained in the active journey snapshot. It never renders a directions link,
+// an origin or a destination coordinate; those exist only in the browser during a live request.
+// Locals: travel ({ walkingMinutes, walkingMetres }). The warning text comes from app.locals.walkingWarning.
+%><span class="google-route" data-google-route><span class="google-route__facts">About <%= travel.walkingMinutes %> min walk · <%= travel.walkingMetres %> m</span><span class="google-route__attribution" translate="no">Google Maps</span><span class="google-route__warning"><%= walkingWarning %></span></span>

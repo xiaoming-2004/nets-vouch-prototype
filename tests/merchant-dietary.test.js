@@ -1,4 +1,5 @@
 require('./helpers/test-isolation.cjs');
+const seedLegacyLocation = require('./helpers/legacy-location.cjs');
 const rankingFixture = require('./ranking-fixture');
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -47,7 +48,7 @@ const PLATFORM_ID = 'woodlands-noodle-bar';
 
 function visitor() {
   let cookie = '';
-  return { async request(path, body, form) {
+  return { cookieValue() { return cookie; }, async request(path, body, form) {
     const response = await originalFetch(base + path, {
       method: body === undefined ? 'GET' : 'POST', redirect: 'manual',
       headers: { Cookie: cookie, ...(body === undefined ? {} : {
@@ -230,7 +231,7 @@ test('DIET 5: the customer card shows the listed option and the merchant-provide
   const v = visitor();
   await v.request('/home');
   await v.request('/profile/dietary', { dietaryPreference: 'halal' });
-  await v.request('/smart-match/location', { status: 'fallback' });
+  await seedLegacyLocation(v, { status: 'fallback' });
   const card = await v.request('/smart-match/result');
   assert.match(card.html, new RegExp('data-merchant-id="' + PLATFORM_ID + '"'));
   assert.match(card.html, /diet-tag diet-tag--halal">Halal</, 'the badge is just "Halal"');

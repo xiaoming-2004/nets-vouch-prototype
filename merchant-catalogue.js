@@ -1,8 +1,8 @@
 'use strict';
 
 // Read only. Filtering/ranking stays in the existing recommendation flow.
-const SELECT_CATALOGUE = 'SELECT merchant_id, name, location_label, distance_metres, cuisine_type, typical_price, dietary_halal, dietary_vegetarian, dietary_vegan, reward_amount, min_spend, is_sample_data FROM merchants ORDER BY merchant_id';
-const SELECT_MERCHANT = 'SELECT merchant_id, name, location_label, distance_metres, cuisine_type, typical_price, dietary_halal, dietary_vegetarian, dietary_vegan, reward_amount, min_spend, is_sample_data FROM merchants WHERE merchant_id = ?';
+const SELECT_CATALOGUE = 'SELECT merchant_id, name, location_label, distance_metres, cuisine_type, typical_price, dietary_halal, dietary_vegetarian, dietary_vegan, reward_amount, min_spend, is_sample_data, latitude, longitude FROM merchants ORDER BY merchant_id';
+const SELECT_MERCHANT = 'SELECT merchant_id, name, location_label, distance_metres, cuisine_type, typical_price, dietary_halal, dietary_vegetarian, dietary_vegan, reward_amount, min_spend, is_sample_data, latitude, longitude FROM merchants WHERE merchant_id = ?';
 
 function numberOrNull(value) {
   if (typeof value !== 'number' && typeof value !== 'string') return null;
@@ -15,6 +15,15 @@ function flag(value) {
   if (value === true || value === 1 || value === '1') return true;
   if (value === false || value === 0 || value === '0') return false;
   return null;
+}
+
+// Fictional sample destination coordinate (Task 3 data). Both values must be valid or neither is used.
+function coordinatesOrNull(latitude, longitude) {
+  const parse = value => (typeof value === 'number' || (typeof value === 'string' && /^-?\d+(?:\.\d+)?$/.test(value.trim())))
+    ? Number(value) : NaN;
+  const lat = parse(latitude); const lng = parse(longitude);
+  return Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180
+    ? { latitude: lat, longitude: lng } : null;
 }
 
 function mapMerchant(row) {
@@ -30,7 +39,7 @@ function mapMerchant(row) {
   return {
     id: row.merchant_id, merchantId: row.merchant_id, merchantName: row.name, name: row.name,
     address: typeof row.location_label === 'string' ? row.location_label : null,
-    price: numberOrNull(row.typical_price), itemName: null, coordinates: null,
+    price: numberOrNull(row.typical_price), itemName: null, coordinates: coordinatesOrNull(row.latitude, row.longitude),
     category, categoryLabel: category, categoryNames: category ? [category] : [], cuisineTags: [],
     distanceMetres, distanceMinutes: distanceMetres === null ? null : Math.ceil(distanceMetres / 80),
     distanceLabel: distanceMetres === null ? 'Catalogue distance unavailable'

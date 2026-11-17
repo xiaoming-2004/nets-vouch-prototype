@@ -1,4 +1,5 @@
 require('./helpers/test-isolation.cjs');
+const seedLegacyLocation = require('./helpers/legacy-location.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { app, getNearbyMerchants, clearDiscoveryCache, resetMerchantCampaigns } = require('../app');
@@ -69,7 +70,7 @@ function mockPlaces(resultsByQuery) {
 
 function visitor() {
   let cookie = '';
-  return { async request(path, body) {
+  return { cookieValue() { return cookie; }, async request(path, body) {
     const response = await realFetch(base + path, {
       method: body === undefined ? 'GET' : 'POST', redirect: 'manual',
       headers: { Cookie: cookie, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
@@ -156,8 +157,8 @@ test('two sessions share discovery but keep shown and rejected state independent
   const queries = mockPlaces({ food: [place('a', 100), place('b', 200)] });
   const jia = visitor();
   const darren = visitor();
-  await jia.request('/smart-match/location', location);
-  await darren.request('/smart-match/location', location);
+  await seedLegacyLocation(jia, location);
+  await seedLegacyLocation(darren, location);
   const first = merchantId((await jia.request('/smart-match/result')).html);
   assert.equal(first, 'foursquare-a');
   await jia.request('/recommendation/reject', { merchantId: first, reason: 'not-in-mood' });

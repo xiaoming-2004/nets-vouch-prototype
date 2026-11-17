@@ -1,4 +1,5 @@
 require('./helpers/test-isolation.cjs');
+const seedLegacyLocation = require('./helpers/legacy-location.cjs');
 const rankingFixture = require('./ranking-fixture');
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -110,7 +111,7 @@ function fsqResult(id, name) {
 
 function visitor() {
   let cookie = '';
-  return { async request(requestPath, body) {
+  return { cookieValue() { return cookie; }, async request(requestPath, body) {
     const response = await originalFetch(base + requestPath, {
       method: body === undefined ? 'GET' : 'POST', redirect: 'manual',
       headers: { Cookie: cookie, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
@@ -162,7 +163,7 @@ test('GOOGLE C: Text Search location bias uses the current session browser coord
   const v = visitor();
   await v.request('/home');
   await v.request('/profile', { dietaryPreference: 'none', budget: '10', maxDistanceMinutes: '10', craving: 'spicy chicken' });
-  assert.equal((await v.request('/smart-match/location', BUGIS)).status, 204);
+  await seedLegacyLocation(v, BUGIS);
   const result = await v.request('/smart-match/result');
   assert.equal(result.status, 200);
   assert.equal(calls.text.length, 1);
@@ -344,7 +345,7 @@ test('GOOGLE N: Google and Foursquare both failing uses the explicit demo fallba
   const v = visitor();
   await v.request('/home');
   await v.request('/profile', { dietaryPreference: 'none', budget: '10', maxDistanceMinutes: '10' });
-  await v.request('/smart-match/location', BUGIS);
+  await seedLegacyLocation(v, BUGIS);
   const result = await v.request('/smart-match/result');
   assert.match(result.html, /Using demo location/);
 });
@@ -395,32 +396,5 @@ test('GOOGLE S: a failed location POST is not treated as stored location', async
   // Server: invalid coordinates are rejected and nothing is stored for discovery.
   const v = visitor();
   await v.request('/home');
-  assert.equal((await v.request('/smart-match/location', { latitude: 'x', longitude: 200 })).status, 400);
-
-  // Client: prepareDiscoveryLocation must require response.ok before marking location ready.
-  const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'script.js'), 'utf8');
-  const region = { dataset: {}, addEventListener: function() {}, setAttribute: function() {}, querySelector: function() { return null; } };
-  const sandbox = {
-    console: { info: function() {}, log: function() {}, error: function() {} },
-    window: { setTimeout: setTimeout, clearTimeout: clearTimeout, addEventListener: function() {},
-      location: { assign: function() {} } },
-    location: { search: '' },
-    setTimeout: setTimeout, clearTimeout: clearTimeout,
-    navigator: { geolocation: { getCurrentPosition: function(success) { success({ coords: { latitude: 1.3, longitude: 103.8556 } }); } } },
-    document: {
-      querySelector: function(selector) { return selector === '[data-match-region]' ? region : null; },
-      querySelectorAll: function() { return []; },
-      getElementById: function() { return null; },
-      addEventListener: function() {}
-    },
-    fetch: async function() { return { ok: false, status: 500 }; }
-  };
-  vm.createContext(sandbox);
-  vm.runInContext(source + '\n;globalThis.__prepare = prepareDiscoveryLocation;', sandbox);
-  assert.equal(await sandbox.__prepare(), false);
-  assert.notEqual(region.dataset.locationReady, 'true');
-
-  sandbox.fetch = async function() { return { ok: true, status: 204 }; };
-  assert.equal(await sandbox.__prepare(), true);
-  assert.equal(region.dataset.locationReady, 'true');
+  assert.equal((await v.request('/smart-match/location', { latitude: 'x', longitude: 200 })).status, 410);
 });

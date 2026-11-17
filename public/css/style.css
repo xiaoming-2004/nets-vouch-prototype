@@ -427,6 +427,31 @@ fieldset.field>legend.field-label+* { clear:both; }
 .dining-time-controls input { width:100%; min-height:44px; padding:9px 10px; border:1px solid var(--border); border-radius:var(--r-md); background:white; color:var(--text); font:inherit; }
 .dining-time-controls .button { width:auto; min-height:44px; margin:0; white-space:nowrap; }
 .dining-time-form .field-hint { margin:7px 0 0; }
+/* Starting point (live Google walking times) */
+.origin-panel { margin:0 0 12px; padding:12px 14px; border:1px solid var(--border); border-radius:var(--r-lg); background:var(--surface); }
+.origin-panel h2 { margin:0 0 6px; font-size:15px; }
+.origin-mode { margin:0 0 6px; font-size:13px; font-weight:600; color:var(--text); overflow-wrap:anywhere; }
+.origin-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:10px; }
+.origin-actions .button { width:auto; min-height:44px; margin:0; padding:10px 12px; font-size:14px; }
+.origin-actions .text-button { grid-column:1 / -1; }
+.origin-search { margin-top:10px; }
+.origin-search gmp-place-autocomplete { display:block; width:100%; }
+.origin-status { margin:8px 0 0; font-size:13px; color:var(--text-2); }
+.origin-status.error { color:var(--danger); background:var(--danger-bg); padding:10px 12px; border-radius:var(--r-sm); font-weight:550; }
+@media (max-width:420px) { .origin-actions { grid-template-columns:1fr; } }
+
+/* Google walking-route content: its own bordered container, visually separate from the fictional
+   merchant facts. The "Google Maps" attribution follows the facts, is never wrapped, clipped, hidden
+   or faded, and uses an approved colour (#5E5E5E) on white, 13px, weight 400. */
+.google-route { display:block; margin:10px 0; padding:10px 12px; border:1px solid #c9d1d9; border-radius:var(--r-md); background:#ffffff; }
+.google-route > span { display:block; }
+.google-route__facts { font-size:14px; font-weight:600; color:#1F1F1F; }
+.google-route__attribution { margin-top:2px; font-family:Roboto,Arial,sans-serif; font-size:13px; font-weight:400; font-style:normal; letter-spacing:normal; line-height:1.3; color:#5E5E5E; white-space:nowrap; }
+.google-route__warning { margin-top:6px; font-size:12.5px; line-height:1.4; color:#1F1F1F; }
+.google-route__directions { margin-top:6px; }
+.google-route__directions a { display:inline-block; min-height:44px; padding:10px 0; font-size:14px; font-weight:600; color:var(--nets-navy); }
+.google-route__note { display:block; font-size:12px; color:#5E5E5E; }
+
 /* Natural-language request */
 .nl-form { margin:0 0 12px; padding:12px 14px; border:1px solid var(--border); border-radius:var(--r-lg); background:var(--surface); }
 .nl-form>label { display:block; margin-bottom:7px; font-size:13px; font-weight:650; }

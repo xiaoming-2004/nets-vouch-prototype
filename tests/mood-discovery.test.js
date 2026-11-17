@@ -1,4 +1,5 @@
 require('./helpers/test-isolation.cjs');
+const seedLegacyLocation = require('./helpers/legacy-location.cjs');
 const rankingFixture = require('./ranking-fixture');
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -101,7 +102,7 @@ function mockProviders(options) {
 
 function visitor() {
   let cookie = '';
-  return { async request(requestPath, body) {
+  return { cookieValue() { return cookie; }, async request(requestPath, body) {
     const response = await originalFetch(base + requestPath, {
       method: body === undefined ? 'GET' : 'POST', redirect: 'manual',
       headers: { Cookie: cookie, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
@@ -126,7 +127,7 @@ test('MOOD 1: exactly six mood choices with stable values, and the old choices a
   // Mood is a current-meal input: it lives in onboarding and in the Smart Match refine form.
   const v = visitor();
   const home = await v.request('/home');
-  await v.request('/smart-match/location', { status: 'fallback' });
+  await seedLegacyLocation(v, { status: 'fallback' });
   const card = (await v.request('/smart-match/result')).html;
   ['any', 'rice', 'noodles', 'pasta', 'soup', 'bread'].forEach(function(value) {
     assert.match(home.html, new RegExp('name="moodCuisine" value="' + value + '"'));
@@ -411,7 +412,7 @@ test('MOOD 12: editing the mood in the refine form re-runs discovery with the ne
   const calls = mockProviders({ nearby: generalPlaces(8), text: { soup: generalPlaces(6, 90) } });
   const v = visitor();
   await v.request('/home');
-  assert.equal((await v.request('/smart-match/location', ORIGIN)).status, 204);
+  await seedLegacyLocation(v, ORIGIN);
   const first = await v.request('/smart-match/result');
   assert.equal(first.status, 200);
   assert.equal(calls.nearby, 1, '"Anything" keeps the generic nearby discovery');

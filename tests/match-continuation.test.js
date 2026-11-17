@@ -1,4 +1,5 @@
 require('./helpers/test-isolation.cjs');
+const seedLegacyLocation = require('./helpers/legacy-location.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { app, demoStore, resetMerchantCampaigns, clearDiscoveryCache, clearSearchIntentCache, getMerchantCampaigns,
@@ -18,6 +19,7 @@ test.afterEach(() => { global.fetch = realFetch; });
 function visitor() {
   let cookie = '';
   return {
+    cookieValue() { return cookie; },
     async request(path, body) {
       const response = await realFetch(base + path, { method: body === undefined ? 'GET' : 'POST', redirect: 'manual',
         headers: { Cookie: cookie, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
@@ -87,7 +89,7 @@ function mock(options = {}) {
 async function start(v, profile = {}) {
   await v.request('/home');
   await v.request('/profile', { craving: '', moodCuisine: 'any', dietaryPreference: 'none', budget: '10', maxDistanceMinutes: 10, ...profile });
-  await v.request('/smart-match/location', origin);
+  await seedLegacyLocation(v, origin);
   return merchantId(await v.request('/smart-match/result'));
 }
 async function reject(v, id, reason = 'not-in-mood') {
@@ -231,7 +233,7 @@ for (const change of ['craving', 'mood', 'diet', 'distance', 'location']) {
     const v = visitor(); const first = await start(v, { moodCuisine: 'bread' });
     await reject(v, first); await v.request('/smart-match/result'); assert.ok((await v.state()).matchContinuation);
     if (change === 'diet') await v.request('/profile/dietary', { dietaryPreference: 'vegan' });
-    else if (change === 'location') await v.request('/smart-match/location', { latitude: 1.301, longitude: 103.85 });
+    else if (change === 'location') await seedLegacyLocation(v, { latitude: 1.301, longitude: 103.85 });
     else await v.request('/profile', { craving: change === 'craving' ? 'something warm' : '', moodCuisine: change === 'mood' ? 'rice' : 'bread',
       budget: '10', maxDistanceMinutes: change === 'distance' ? 15 : 10 });
     const state = await v.state(); assert.equal(state.matchContinuation, null); assert.ok(state.rejectedMerchantIds.includes(first));

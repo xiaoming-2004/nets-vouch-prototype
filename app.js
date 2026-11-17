@@ -23,6 +23,7 @@ const merchantCatalogue = require('./merchant-catalogue');
 const merchantActivity = require('./merchant-activity');
 const rejectionFeedback = require('./rejection-feedback');
 const naturalLanguage = require('./natural-language-intent');
+const walkingRoutes = require('./walking-routes');
 const { getAgentRecommendations } = require('./nets_agent');
 
 const app = express();
@@ -77,6 +78,7 @@ app.set('views', path.join(__dirname, 'views'));
 app.locals.rewardCreditText = function(amount, label) { return rewardCreditText(amount, label); };
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+app.locals.walkingWarning = walkingRoutes.WALKING_WARNING;
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Configure session
@@ -1007,6 +1009,14 @@ function snapshotMerchant(merchant) {
   return merchant ? JSON.parse(JSON.stringify(merchant)) : null;
 }
 
+// Google walking-route facts belong only to the active journey snapshot. Completed payments and
+// shared Vouch offers are retained longer (and shared across sessions), so they never carry them.
+function snapshotMerchantWithoutTravel(merchant) {
+  const copy = snapshotMerchant(merchant);
+  if (copy) delete copy.travel;
+  return copy;
+}
+
 function campaignWithTerms(campaign, merchant) {
   if (!campaign || !merchant || !merchant.catalogueTerms) return campaign;
   const terms = merchant.catalogueTerms;
@@ -1163,15 +1173,21 @@ function sanitizeCraving(value) {
 // MySQL recommendations require known price/distance to enforce their limits.
 // Legacy provider flows retain their existing unknown-price policy; provider
 // price tiers are not factual meal prices.
-function merchantMatchesProfile(merchant, profile) {
-  if (merchant.source === 'mysql' && (!Number.isFinite(merchant.price) || !Number.isFinite(merchant.distanceMetres))) return false;
+// options.skipStoredDistance (live walking mode only): the stored RP demo-origin distance is never
+// compared or required; the caller enforces the routed walking time instead.
+function merchantMatchesProfile(merchant, profile, options) {
+  const skipDistance = Boolean(options && options.skipStoredDistance);
+  if (merchant.source === 'mysql' && (!Number.isFinite(merchant.price) ||
+      (!skipDistance && !Number.isFinite(merchant.distanceMetres)))) return false;
   if (merchant.source === 'mysql' && isActiveRestriction(profile.dietaryPreference) &&
       !merchantDeclaresDiet(merchant, profile.dietaryPreference)) return false;
   if (merchant.price !== null && merchant.price > profile.budget) return false;
   // Places API merchants carry real distanceMetres; use it for precise filtering.
   // Local demo merchants only have distanceMinutes, so fall back to the coarser check.
   const maxMetres = profile.maxDistanceMinutes * WALKING_METRES_PER_MINUTE;
-  if (Number.isFinite(merchant.distanceMetres)) {
+  if (skipDistance) {
+    // Live mode: distance is decided by the routed walking time, never by the RP estimate.
+  } else if (Number.isFinite(merchant.distanceMetres)) {
     if (merchant.distanceMetres > maxMetres) return false;
   } else if (merchant.distanceMinutes > profile.maxDistanceMinutes) {
     return false;
@@ -2890,11 +2906,11 @@ function eligibilityDiagnostics(profile, nearbyMerchants, excludedIds, demo) {
   return Object.keys(counts).map(function(k) { return k + ' ' + counts[k]; }).join(', ');
 }
 
-function getEligibleMerchants(profile, nearbyMerchants, rejectedMerchantIds, demo) {
+function getEligibleMerchants(profile, nearbyMerchants, rejectedMerchantIds, demo, matchOptions) {
   return filterByMealEligibility(nearbyMerchants.filter(function(merchant) {
     return merchant.available &&
       !wasMerchantRejected(merchant.id, rejectedMerchantIds) &&
-      merchantMatchesProfile(merchant, profile) &&
+      merchantMatchesProfile(merchant, profile, matchOptions) &&
       Boolean(findCampaignForMerchant(merchant, demo));
   }), profile);
 }
@@ -3408,7 +3424,7 @@ function recordPayment(demo, journey, amount, useCashback) {
     id: 'tx-' + randomUUID(), ownerUserId: demo.user.id,
     journeyId: journey.id, source: acquisitionSource, journeySource: journey.source,
     merchantId: journey.merchantId, merchantName: journey.merchantName, outlet: journey.outlet,
-    merchantSnapshot: snapshotMerchant(journey.merchantSnapshot),
+    merchantSnapshot: snapshotMerchantWithoutTravel(journey.merchantSnapshot),
     itemName: journey.source === 'smart-match' ? journey.itemName : null,
     purchaseAmount: amount, merchantCreditUsed: breakdown.merchantCreditUsed,
     cashbackUsed: breakdown.merchantCreditUsed, netsPaid: breakdown.netsPaid,
@@ -3582,7 +3598,8 @@ function smartMatchResultDisplay(demo, recommendation) {
     photo: photo ? { src: '/smart-match/photo/' + encodeURIComponent(recommendation.id), attributions: photo.attributions } : null,
     // Tapping the result map opens Google Maps walking directions. Origin is the visitor's real
     // session location; with demo location/data Google Maps routes from the device instead.
-    walking: smartMatchResult.buildWalkingDirections(
+    // Catalogue merchants are fictional samples: no map pin and no server-rendered directions URL for them.
+    walking: recommendation.source === 'mysql' ? null : smartMatchResult.buildWalkingDirections(
       !demo.discoveryLocation || demo.nearbyDemoFallback ? null : demo.discoveryLocation, recommendation)
   };
 }
@@ -3726,6 +3743,7 @@ app.get('/home', function(req, res) {
     homeGreeting: getHomeGreeting(),
     diningDateTime: getSingaporeDateTimeInputValue(),
     showOnboarding: !demo.hasSetPreferences, locationAttempted: demo.locationAttempted,
+    mapsBrowserKey: String(process.env.GOOGLE_MAPS_BROWSER_API_KEY || '').trim(),
     settingsError: req.query.error === 'invalid'
   });
 });
@@ -3756,35 +3774,12 @@ app.post('/setup-preferences', async function(req, res) {
   res.redirect('/home');
 });
 
-// Add this line to restore the missing location cache map
-const locationCache = new Map();
-
-// Browser location is kept only in this demo session for the current discovery journey.
+// DISABLED (Jolene Step 6 privacy cleanup). Nothing in the application calls this route any more, and
+// precise coordinates must not be accepted into the session or the in-process cache. Live locations use
+// POST /api/recommend/live (request-scoped). The handler reads no request field, mutates no session state,
+// stores nothing and logs nothing.
 app.post('/smart-match/location', function(req, res) {
-  const demo = req.session.demo;
-  if (req.body.status === 'fallback') {
-    demo.discoveryLocation = null;
-    locationCache.delete(req.session.id);
-    logDiscovery('Smart Match location source: demo fallback');
-  } else if (validCoordinates(req.body.latitude, req.body.longitude)) {
-    demo.discoveryLocation = { latitude: req.body.latitude, longitude: req.body.longitude };
-    locationCache.set(req.session.id, demo.discoveryLocation);
-    logDiscovery('Smart Match location source: browser');
-  } else {
-    return res.sendStatus(400);
-  }
-  demo.locationAttempted = true;
-  demo.nearbyMerchants = [];
-  demo.nearbySource = null;
-  demo.nearbyDemoFallback = false;
-  demo.nearbyRefreshAttempted = false;
-  resetMatchContinuation(demo);
-  if (!demo.recommendationAccepted) {
-    demo.selectedMerchantId = null;
-    demo.selectedMerchantReason = null;
-    demo.selectedMerchantRelevance = null;
-  }
-  res.sendStatus(204);
+  res.status(410).json({ error: { code: 'smart-match-location-disabled' } });
 });
 
 // Safe one-line diagnostics for a finished matching request (no keys, no user data).
@@ -3802,26 +3797,16 @@ function logMatchDiagnostics(budget, outcome) {
 
 // 2. REPLACE your existing app.get('/smart-match/result', ...) route with this:
 app.get('/smart-match/result', async function(req, res) {
+  // Jolene Step 6 privacy closure: no GET route accepts a precise location. Any coordinate parameter is
+  // refused before the session is read or any state changes, and its value is never echoed or logged.
+  // Live locations use POST /api/recommend/live only.
+  if (Object.keys(req.query).some(function(name) { return /^(lat|lng|latitude|longitude)(\[|$)/i.test(name); })) {
+    return res.status(400).json({ error: { code: 'smart-match-coordinates-not-accepted' } });
+  }
   const demo = req.session.demo;
   const budget = requestBudget.createBudget(SMART_MATCH_DEADLINE_MS);
   try {
     await requestBudget.runWithBudget(budget, async function() {
-      const qLat = parseFloat(req.query.lat);
-      const qLng = parseFloat(req.query.lng);
-      if (validCoordinates(qLat, qLng)) {
-        if (!demo.discoveryLocation || demo.discoveryLocation.latitude !== qLat || demo.discoveryLocation.longitude !== qLng) {
-          resetMatchContinuation(demo);
-          demo.nearbyMerchants = [];
-          if (!demo.recommendationAccepted) demo.selectedMerchantId = null;
-          demo.nearbyRefreshAttempted = false;
-        }
-        demo.discoveryLocation = { latitude: qLat, longitude: qLng };
-        demo.locationAttempted = true;
-        locationCache.set(req.session.id, demo.discoveryLocation);
-      } else if (!demo.locationAttempted && locationCache.has(req.session.id)) {
-        demo.discoveryLocation = locationCache.get(req.session.id);
-        demo.locationAttempted = true;
-      }
       let recommendation = findMerchantForDemo(demo, demo.selectedMerchantId);
       let emptyState = demo.matchContinuation && demo.matchContinuation.emptyState || null;
       if (!recommendation && !emptyState) {
@@ -4039,22 +4024,12 @@ function recommendationInput(query, profile) {
     if (raw === null || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(raw)) errors.diningTime = 'invalid-time';
     else diningTime = raw;
   }
-  const hasLatitude = supplied('lat'); const hasLongitude = supplied('lng');
-  let coordinates = null;
-  if (hasLatitude !== hasLongitude) {
-    if (!hasLatitude) errors.lat = 'coordinate-pair-required';
-    if (!hasLongitude) errors.lng = 'coordinate-pair-required';
-  } else if (hasLatitude) {
-    const latRaw = scalar('lat'); const lngRaw = scalar('lng');
-    const latitude = latRaw !== null && latRaw.trim() ? Number(latRaw) : NaN;
-    const longitude = lngRaw !== null && lngRaw.trim() ? Number(lngRaw) : NaN;
-    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) errors.lat = 'out-of-range';
-    if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) errors.lng = 'out-of-range';
-    if (!errors.lat && !errors.lng) coordinates = { latitude, longitude };
-  }
+  // Location is never accepted in a URL. Live location uses the JSON body of the POST routes only.
+  if (supplied('lat')) errors.lat = 'unsupported-parameter';
+  if (supplied('lng')) errors.lng = 'unsupported-parameter';
   if (Object.keys(errors).length) return { errors };
   return { budget, maxDistanceMinutes, cuisine, dietaryPreference, diningDate, diningTime,
-    isoWeekday: singaporeIsoWeekday(diningDate), coordinates,
+    isoWeekday: singaporeIsoWeekday(diningDate),
     explicit: { budget: supplied('budget'), maxDistance: supplied('maxDistance'), cuisine: supplied('cuisine') } };
 }
 
@@ -4092,21 +4067,19 @@ function recommendationReasons(merchant, profile, activity) {
 
 // Shared deterministic core for GET /api/recommend and POST /api/recommend/natural. `input` is the
 // already validated result of recommendationInput(). Returns { status, body }; the caller sends it.
-async function buildRecommendationResponse(req, input) {
+async function buildRecommendationResponse(req, input, live) {
   const demo = req.session.demo;
+  // Request-scoped only: never stored on the session, the batch, any snapshot or in logs.
+  const liveOrigin = live && live.origin ? live.origin : null;
   let persistedFeedback;
   try {
     persistedFeedback = await rejectionFeedback.loadRecentFeedback(db, demo.user.id);
   } catch (error) {
     return { status: 503, body: { error: { code: 'recommendation-feedback-unavailable' } } };
   }
-  const learning = rejectionFeedback.buildLearningPolicy(persistedFeedback, input.explicit);
-
-  // Validation and durable-feedback loading complete before this first session mutation and catalogue read.
-  if (input.coordinates) {
-    demo.discoveryLocation = input.coordinates;
-    demo.locationAttempted = true;
-  }
+  // A live origin is explicit location context: distance similarity learned from another origin is not applied.
+  const learning = rejectionFeedback.buildLearningPolicy(persistedFeedback,
+    liveOrigin ? Object.assign({}, input.explicit, { maxDistance: true }) : input.explicit);
 
   const apiProfile = Object.assign({}, demo.profile, {
     budget: input.budget,
@@ -4127,8 +4100,35 @@ async function buildRecommendationResponse(req, input) {
     catalogue = { source: 'demo-fallback', status: 'unavailable' };
   }
 
-  const eligible = getEligibleMerchants(apiProfile, merchants.filter(m => Number.isFinite(m.price)),
-    Array.from(learning.excludedMerchantIds), demo);
+  const eligibleStored = getEligibleMerchants(apiProfile, merchants.filter(m => Number.isFinite(m.price)),
+    Array.from(learning.excludedMerchantIds), demo, liveOrigin ? { skipStoredDistance: true } : undefined);
+  let eligible = eligibleStored;
+  let travelSummary = null;
+  if (liveOrigin) {
+    // One batched Compute Route Matrix request for every otherwise-eligible, routable destination.
+    // It throws a WalkingRoutesError before any session mutation, so a failure keeps the previous batch.
+    const routable = eligibleStored.filter(m => walkingRoutes.validDestination(m.coordinates));
+    let matrix = { routes: new Map(), noRoute: [], unavailable: [] };
+    if (routable.length) {
+      matrix = await walkingRoutes.computeWalkingMatrix(liveOrigin, routable.map(function(m) {
+        return { id: m.id, latitude: m.coordinates.latitude, longitude: m.coordinates.longitude };
+      }));
+    }
+    eligible = routable.filter(function(m) {
+      const route = matrix.routes.get(m.id);
+      return route && route.walkingMinutes <= input.maxDistanceMinutes;
+    }).map(function(m) {
+      const route = matrix.routes.get(m.id);
+      // Routed facts replace, never mix with, the RP estimate: those fields are null for live merchants.
+      return Object.assign({}, m, { distanceMetres: null, distanceMinutes: null, distanceLabel: null,
+        travel: { mode: 'live-walking', walkingMinutes: route.walkingMinutes, walkingMetres: route.walkingMetres,
+          provider: walkingRoutes.PROVIDER_LABEL, warningRequired: true } });
+    });
+    travelSummary = { requestedDestinations: routable.length,
+      withoutCoordinates: eligibleStored.length - routable.length,
+      noRoute: matrix.noRoute.length, unavailable: matrix.unavailable.length,
+      beyondWalkingLimit: matrix.routes.size - eligible.length };
+  }
   let activities = [];
   if (eligible.length) {
     activities = await merchantActivity.loadUsualActivity(db, eligible.map(function(m) { return m.id; }), {
@@ -4147,11 +4147,14 @@ async function buildRecommendationResponse(req, input) {
       dining: { date: input.diningDate, time: input.diningTime, isoWeekday: input.isoWeekday,
         hour: Number(input.diningTime.slice(0, 2)), timezone: merchantActivity.TIMEZONE }
     },
-    distance: { basis: 'demo-origin-estimate', origin: 'Republic Polytechnic demo origin', routed: false },
+    distance: liveOrigin
+      ? { basis: 'google-walking-route', routed: true, provider: walkingRoutes.PROVIDER_LABEL, origin: 'user-selected' }
+      : { basis: 'demo-origin-estimate', origin: 'Republic Polytechnic demo origin', routed: false },
     activity: recommendationActivityMetadata(activities),
     feedback: { status: 'applied', basis: 'rules-based-preference-learning',
       historyWindowDays: rejectionFeedback.HISTORY_DAYS }
   };
+  if (travelSummary) metadata.travel = travelSummary;
 
   if (!openEligible.length) {
     demo.lastApiRecommendations = [];
@@ -4161,7 +4164,7 @@ async function buildRecommendationResponse(req, input) {
   }
 
   const scored = openEligible.map(function(m) {
-    let score = 150 - distancePenalty(m);
+    let score = 150 - (m.travel ? m.travel.walkingMetres / 20 : distancePenalty(m));
     if (classifyMealEligibility(m) === MEAL_ELIGIBILITY.UNCERTAIN) score -= 60;
     if (m.price !== null) score += Math.max(0, apiProfile.budget - m.price);
     if (merchantMentionsCraving(m, apiProfile.craving)) score += 100;
@@ -4177,7 +4180,8 @@ async function buildRecommendationResponse(req, input) {
 
   scored.sort(function(a, b) {
     if (b.score !== a.score) return b.score - a.score;
-    const distance = merchantDistanceMetres(a.merchant) - merchantDistanceMetres(b.merchant);
+    const distance = (a.merchant.travel ? a.merchant.travel.walkingMetres : merchantDistanceMetres(a.merchant)) -
+      (b.merchant.travel ? b.merchant.travel.walkingMetres : merchantDistanceMetres(b.merchant));
     if (distance) return distance;
     const price = a.merchant.price - b.merchant.price;
     if (price) return price;
@@ -4200,7 +4204,7 @@ async function buildRecommendationResponse(req, input) {
   const recommendations = top3.map(function(item) {
     const m = item.merchant;
     const campaign = findCampaignForMerchant(m, demo);
-    return {
+    const card = {
       id: m.id,
       merchantName: m.merchantName || m.name,
       itemName: m.itemName || null,
@@ -4222,6 +4226,14 @@ async function buildRecommendationResponse(req, input) {
         minimumEligibleSpend: campaign.minimumEligibleSpend
       } : null
     };
+    if (m.travel) {
+      // Route facts for display only. The fictional sample destination lets the BROWSER build a
+      // directions link; the server never receives or returns the origin.
+      card.travel = { mode: m.travel.mode, walkingMinutes: m.travel.walkingMinutes,
+        walkingMetres: m.travel.walkingMetres, provider: m.travel.provider, warning: walkingRoutes.WALKING_WARNING,
+        sampleDestination: { latitude: m.coordinates.latitude, longitude: m.coordinates.longitude } };
+    }
+    return card;
   });
 
   demo.lastApiRecommendations = recommendations.map(function(r) { return r.id; });
@@ -4236,6 +4248,79 @@ app.get('/api/recommend', async function(req, res) {
   } });
   const result = await buildRecommendationResponse(req, input);
   res.status(result.status).json(result.body);
+});
+
+// ---------------------------------------------------------------------------
+// Live walking-time recommendations (Jolene Step 6). The origin exists only in the JSON body of the
+// request, then in the server-to-Google Routes request. It is never stored, logged, cached, returned
+// or placed in an error, and never appears in a URL, redirect or header.
+// ---------------------------------------------------------------------------
+function liveFailure(res, error) {
+  const body = { error: { code: error.code }, alternative: 'demo-origin' };
+  if (error.retryable) body.error.retryable = true;
+  if (error.retryAfterSeconds) res.set('Retry-After', String(error.retryAfterSeconds));
+  logDiscovery('Live walking request failed: ' + error.code);
+  return res.status(error.status || 502).json(body);
+}
+
+// Configuration, local limit, then the shared deterministic core. Throws WalkingRoutesError only.
+// Every failure happens before the core mutates the session, so the previous batch is preserved.
+async function liveRecommendationResult(req, input, origin) {
+  if (!walkingRoutes.isConfigured()) throw new walkingRoutes.WalkingRoutesError('walking-routes-not-configured');
+  const limit = walkingRoutes.consumeRateLimit(req.session.liveRoutingRequests, Date.now());
+  req.session.liveRoutingRequests = limit.stamps;
+  if (limit.retryAfterSeconds) {
+    throw new walkingRoutes.WalkingRoutesError('location-request-rate-limited', { retryAfterSeconds: limit.retryAfterSeconds });
+  }
+  try {
+    return await buildRecommendationResponse(req, input, { origin: origin });
+  } catch (error) {
+    if (error instanceof walkingRoutes.WalkingRoutesError) throw error;
+    throw new walkingRoutes.WalkingRoutesError('live-recommendation-unavailable');
+  }
+}
+
+const LIVE_REQUEST_KEYS = ['location', 'budget', 'maxDistance', 'cuisine', 'dietaryPreference', 'diningDate', 'diningTime'];
+
+// Strict body validation. Error details name fields only and never echo values.
+function liveRecommendationRequest(body, profile) {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return { errors: { request: 'invalid' } };
+  const fields = {};
+  if (Object.keys(body).some(function(key) { return LIVE_REQUEST_KEYS.indexOf(key) === -1; })) fields.request = 'unknown-field';
+  let origin = null;
+  if (!Object.prototype.hasOwnProperty.call(body, 'location')) fields.location = 'required';
+  else {
+    const located = walkingRoutes.parseLocation(body.location);
+    if (located.ok) origin = located.value; else fields.location = located.reason;
+  }
+  const query = {};
+  function take(name, accept, convert) {
+    if (!Object.prototype.hasOwnProperty.call(body, name)) return;
+    if (!accept(body[name])) fields[name] = 'invalid-type'; else query[name] = convert(body[name]);
+  }
+  take('budget', value => typeof value === 'number', String);
+  take('maxDistance', value => typeof value === 'number' && Number.isInteger(value), String);
+  ['cuisine', 'dietaryPreference', 'diningDate', 'diningTime'].forEach(function(name) {
+    take(name, value => typeof value === 'string', value => value);
+  });
+  const input = recommendationInput(query, profile);
+  if (input.errors) Object.keys(input.errors).forEach(function(name) {
+    if (!fields[name]) fields[name] = input.errors[name];
+  });
+  if (Object.keys(fields).length) return { errors: fields };
+  return { input: input, origin: origin };
+}
+
+app.post('/api/recommend/live', async function(req, res) {
+  const parsed = liveRecommendationRequest(req.body, req.session.demo.profile);
+  if (parsed.errors) return res.status(400).json({ error: { code: 'invalid-recommendation-input', fields: parsed.errors } });
+  try {
+    const result = await liveRecommendationResult(req, parsed.input, parsed.origin);
+    return res.status(result.status).json(result.body);
+  } catch (error) {
+    return liveFailure(res, error instanceof walkingRoutes.WalkingRoutesError ? error
+      : new walkingRoutes.WalkingRoutesError('live-recommendation-unavailable'));
+  }
 });
 
 // Natural-language request. The LLM only extracts a strict set of constraints (see
@@ -4255,6 +4340,16 @@ app.post('/api/recommend/natural', async function(req, res) {
   let text;
   try {
     text = naturalLanguage.validateText(req.body && req.body.text);
+    // Optional live origin: validated up front and never sent to the language model.
+    let origin = null;
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'location')) {
+      const located = walkingRoutes.parseLocation(req.body.location);
+      if (!located.ok) {
+        return res.status(400).json({ error: { code: 'invalid-recommendation-input', fields: { location: located.reason } } });
+      }
+      origin = located.value;
+      if (!walkingRoutes.isConfigured()) throw new walkingRoutes.WalkingRoutesError('walking-routes-not-configured');
+    }
     if (!naturalLanguage.isConfigured()) throw new naturalLanguage.NaturalLanguageError('natural-language-not-configured');
     // Kept on the session itself (not in demo) so Reset Demo does not clear the limit.
     const limit = naturalLanguage.consumeRateLimit(req.session.naturalLanguageRequests, Date.now());
@@ -4265,16 +4360,20 @@ app.post('/api/recommend/natural', async function(req, res) {
     const content = await naturalLanguage.callNaturalLanguageProvider(naturalLanguage.buildMessages(text));
     const interpretation = naturalLanguage.validateInterpretation(content);
     const resolution = naturalLanguage.resolveInterpretation(interpretation, {
-      savedMaxDistanceMinutes: demo.profile.maxDistanceMinutes, text: text
+      savedMaxDistanceMinutes: demo.profile.maxDistanceMinutes, text: text, live: Boolean(origin)
     });
     const input = recommendationInput(resolution.query, demo.profile);
     if (input.errors) throw new naturalLanguage.NaturalLanguageError('natural-language-invalid-output');
     let result;
-    try {
-      result = await buildRecommendationResponse(req, input);
-    } catch (engineError) {
-      // Interpretation already succeeded: this is the deterministic engine failing, not the provider.
-      throw new naturalLanguage.NaturalLanguageError('natural-language-recommendation-unavailable');
+    if (origin) {
+      result = await liveRecommendationResult(req, input, origin);
+    } else {
+      try {
+        result = await buildRecommendationResponse(req, input);
+      } catch (engineError) {
+        // Interpretation already succeeded: this is the deterministic engine failing, not the provider.
+        throw new naturalLanguage.NaturalLanguageError('natural-language-recommendation-unavailable');
+      }
     }
     if (result.status !== 200) return res.status(result.status).json(result.body);
     logDiscovery('Natural-language request accepted (' + text.length + ' characters)');
@@ -4283,6 +4382,7 @@ app.post('/api/recommend/natural', async function(req, res) {
       notApplied: resolution.notApplied, resolved: resolution.resolved
     } }));
   } catch (error) {
+    if (error instanceof walkingRoutes.WalkingRoutesError) return liveFailure(res, error);
     const known = error instanceof naturalLanguage.NaturalLanguageError ? error
       : new naturalLanguage.NaturalLanguageError('natural-language-provider-failure');
     logDiscovery('Natural-language request failed: ' + known.code);
@@ -4313,8 +4413,9 @@ app.post('/recommendation/reject', async function(req, res) {
       userId: demo.user.id, merchantId: merchant.id, reason,
       category: merchant.category || null,
       price: Number.isFinite(merchant.price) ? merchant.price : null,
-      distanceMinutes: Number.isFinite(merchant.distanceMinutes) ? merchant.distanceMinutes : null,
-      distanceMetres: Number.isFinite(merchant.distanceMetres) ? merchant.distanceMetres : null,
+      // Live (routed) rejections store NULL: routed distances never feed RP-origin "Too far" learning.
+      distanceMinutes: !merchant.travel && Number.isFinite(merchant.distanceMinutes) ? merchant.distanceMinutes : null,
+      distanceMetres: !merchant.travel && Number.isFinite(merchant.distanceMetres) ? merchant.distanceMetres : null,
       cuisineTags: merchantCuisineTags(merchant), token,
       rejectedAtSingapore: rejectionFeedback.singaporeParts().dateTime
     });
@@ -4359,8 +4460,13 @@ app.post('/recommendation/accept', function(req, res) {
   const batchMerchant = Array.isArray(demo.lastApiRecommendations) && demo.lastApiRecommendations.includes(req.body.merchantId)
     ? findMerchantById(demo.catalogueBatch || [], req.body.merchantId) : null;
   const merchant = batchMerchant || findMerchantForDemo(demo, demo.selectedMerchantId);
-  if (!merchant || merchant.id !== req.body.merchantId ||
-      !merchantMatchesProfile(merchant, batchMerchant ? demo.catalogueBatchProfile || demo.profile : demo.profile) || !findCampaignForMerchant(merchant, demo)) {
+  const acceptProfile = batchMerchant ? demo.catalogueBatchProfile || demo.profile : demo.profile;
+  // A live batch merchant is judged only by its routed walking time, never by the stored RP estimate.
+  const withinProfile = Boolean(merchant) && (merchant.travel
+    ? merchantMatchesProfile(merchant, acceptProfile, { skipStoredDistance: true }) &&
+      Number.isFinite(merchant.travel.walkingMinutes) && merchant.travel.walkingMinutes <= acceptProfile.maxDistanceMinutes
+    : merchantMatchesProfile(merchant, acceptProfile));
+  if (!merchant || merchant.id !== req.body.merchantId || !withinProfile || !findCampaignForMerchant(merchant, demo)) {
     return res.redirect('/home?error=offer');
   }
   // An API refresh/selection cannot replace a scan/payment already in progress.
@@ -4536,7 +4642,7 @@ app.post('/vouch/:id', function(req, res) {
       token: shareToken, vouchId: vouch.id, ownerSessionId: req.sessionID, senderUserId: demo.user.id,
       merchantId: transaction.merchantId,
       merchantName: transaction.merchantName, user: demo.user.name, tagLabel: vouch.tagLabel,
-      merchantSnapshot: snapshotMerchant(transaction.merchantSnapshot),
+      merchantSnapshot: snapshotMerchantWithoutTravel(transaction.merchantSnapshot),
       rewardAmount: campaign ? campaign.rewardAmount : 0.50
     });
     transaction.vouchCreated = true;
@@ -4951,6 +5057,15 @@ app.post('/reset-demo', async function(req, res) {
     if (saveError) return res.status(500).send('Demo reset could not be completed');
     res.redirect('/home?reset=done');
   });
+});
+
+// Malformed JSON bodies on the recommendation routes get a fixed 400. Node's default handler would log
+// a stack whose message can quote a fragment of the body (for example coordinates).
+app.use('/api/recommend', function(err, req, res, next) {
+  const bodyError = err && typeof err.type === 'string' && /^(entity|encoding|charset|request|stream|parameters)\./.test(err.type);
+  if (!bodyError) return next(err);
+  return res.status(400).json({ error: { code: req.path === '/natural' ? 'invalid-natural-language-input'
+    : 'invalid-recommendation-input' } });
 });
 
 // Start server. Export the app and demo factory for local automated tests.

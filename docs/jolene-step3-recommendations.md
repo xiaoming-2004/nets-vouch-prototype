@@ -19,7 +19,7 @@ Every explicitly supplied field is validated before a catalogue/activity read, d
 }
 ```
 
-`cuisine=halal` is invalid; callers use `dietaryPreference=halal`. Coordinates must be a valid pair. They remain session context and do not alter catalogue distances.
+`cuisine=halal` is invalid; callers use `dietaryPreference=halal`. **Superseded in Step 6:** `lat` and `lng` are no longer accepted on GET (HTTP 400 `unsupported-parameter`); live locations use the POST routes described in `docs/jolene-step6-google-walking-routes.md`. The RP demo-origin behaviour of this route is otherwise unchanged.
 
 ## Eligibility, activity and ranking
 

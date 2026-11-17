@@ -18,6 +18,14 @@ async function start() {
         if (next) cookie = next.split(';')[0];
         return { status: response.status, location: response.headers.get('location'), retryAfter: response.headers.get('retry-after'), html: await response.text() };
       },
+      // Sends the text exactly as given (for malformed-body tests); not JSON-encoded.
+      async rawPost(url, text) {
+        const response = await realFetch(base + url, { method: 'POST', redirect: 'manual',
+          headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: text });
+        const next = response.headers.get('set-cookie');
+        if (next) cookie = next.split(';')[0];
+        return { status: response.status, html: await response.text() };
+      },
       async state() {
         const id = decodeURIComponent(cookie.split('=')[1]).slice(2).split('.')[0];
         return new Promise((resolve, reject) => demoStore.get(id, (error, state) => error ? reject(error) : resolve(state)));

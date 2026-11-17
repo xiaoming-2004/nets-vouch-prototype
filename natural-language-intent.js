@@ -223,8 +223,9 @@ function resolveInterpretation(interpretation, context) {
   }
   if (interpretation.distance === 'nearby') {
     // "Nearby" adds no new number: the saved limit stays in force (and is not marked as an explicit override).
-    understood.push({ field: 'distance', label: 'Distance', value: 'Nearby: within your saved limit of ' +
-      savedDistance + ' min (demo-origin estimate, not a routed walking time)' });
+    understood.push({ field: 'distance', label: 'Distance', value: context.live
+      ? 'Nearby: within your saved limit of ' + savedDistance + ' min walking (Google Maps route)'
+      : 'Nearby: within your saved limit of ' + savedDistance + ' min (demo-origin estimate, not a routed walking time)' });
   }
   if (interpretation.cuisine !== null) {
     query.cuisine = interpretation.cuisine;
@@ -270,7 +271,8 @@ function resolveInterpretation(interpretation, context) {
   return {
     query: query, understood: understood, notApplied: notApplied,
     resolved: { diningDate: diningDate, diningTime: diningTime, isoWeekday: isoWeekday(diningDate),
-      maxDistanceMinutes: savedDistance, distanceBasis: 'demo-origin-estimate', routed: false }
+      maxDistanceMinutes: savedDistance, distanceBasis: context.live ? 'google-walking-route' : 'demo-origin-estimate',
+      routed: Boolean(context.live) }
   };
 }
 

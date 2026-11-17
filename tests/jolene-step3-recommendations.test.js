@@ -59,7 +59,7 @@ test('explicit invalid fields return stable 400 errors before reads or session m
   assert.deepEqual(result.body, { error: { code: 'invalid-recommendation-input', fields: {
     budget: 'out-of-range', maxDistance: 'out-of-range', cuisine: 'unsupported-value',
     dietaryPreference: 'unsupported-value', diningDate: 'invalid-date', diningTime: 'invalid-time',
-    lng: 'coordinate-pair-required'
+    lat: 'unsupported-parameter'
   } } });
   assert.equal(db.calls.length, 0);
   const after = (await v.state()).demo;
@@ -187,7 +187,7 @@ test('Home exposes timezone-safe dining controls and mobile-readable card styles
   assert.match(home.html, /type="datetime-local"/);
   assert.match(home.html, /Singapore date and time/);
   const script = fs.readFileSync(path.join(__dirname, '../public/js/script.js'), 'utf8');
-  const queryBuilder = script.slice(script.indexOf('function diningRecommendationQuery'), script.indexOf('function requestCurrentPosition'));
+  const queryBuilder = script.slice(script.indexOf('function diningRecommendationQuery'), script.indexOf('function diningParts'));
   assert.match(queryBuilder, /query\.set\('diningDate'/);
   assert.match(queryBuilder, /query\.set\('diningTime'/);
   assert.doesNotMatch(queryBuilder, /new Date|toISOString|toLocale/);

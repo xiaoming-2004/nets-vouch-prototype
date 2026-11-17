@@ -1,4 +1,5 @@
 require('./helpers/test-isolation.cjs');
+const seedLegacyLocation = require('./helpers/legacy-location.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { app, demoStore, getDietaryMatchState, MATCH_STATE, getMerchantCampaigns, clearDiscoveryCache, clearSearchIntentCache, resetMerchantCampaigns } = require('../app');
@@ -40,6 +41,7 @@ const M = 111195;
 function visitor() {
   let cookie = '';
   return {
+    cookieValue() { return cookie; },
     async request(requestPath, body) {
       const response = await originalFetch(base + requestPath, {
         method: body === undefined ? 'GET' : 'POST', redirect: 'manual',
@@ -242,7 +244,7 @@ test('SAVE 1: saving a dietary restriction changes only that field', async funct
 test('SAVE 2: saving dietary preserves payments, Vouches, rewards and location state', async function() {
   const v = visitor();
   await v.request('/home');
-  await v.request('/smart-match/location', ORIGIN);
+  await seedLegacyLocation(v, ORIGIN);
   const first = await v.request('/smart-match/result');
   const merchantId = (first.html.match(/data-merchant-id="([^"]+)"/) || [])[1];
   assert.ok(merchantId);
@@ -302,7 +304,7 @@ test('SAVE 4: a dietary value stored by an older build safely falls back to none
 test('SAVE 5: changing the restriction clears a stale recommendation instead of relabelling it', async function() {
   const v = visitor();
   await v.request('/home');
-  await v.request('/smart-match/location', ORIGIN);
+  await seedLegacyLocation(v, ORIGIN);
   const first = await v.request('/smart-match/result');
   const merchantId = (first.html.match(/data-merchant-id="([^"]+)"/) || [])[1];
   assert.ok(merchantId, 'a recommendation exists under "none"');
@@ -329,7 +331,7 @@ test('SAVE 6: the next Smart Match search uses the newly saved restriction', asy
   });
   const v = visitor();
   await v.request('/home');
-  await v.request('/smart-match/location', ORIGIN);
+  await seedLegacyLocation(v, ORIGIN);
   await v.request('/smart-match/result');
   assert.equal(calls.nearby, 1, '"none" performs normal discovery');
   assert.deepEqual(calls.text, [], 'no dietary-targeted search while unrestricted');
@@ -355,7 +357,7 @@ test('SAVE 7: an unlisted merchant is never presented as suitable, whatever it i
   const v = visitor();
   await v.request('/home');
   await v.request('/profile/dietary', { dietaryPreference: 'halal' });
-  await v.request('/smart-match/location', ORIGIN);
+  await seedLegacyLocation(v, ORIGIN);
   const result = await v.request('/smart-match/result');
   assert.equal(result.status, 200);
   assert.ok(!/data-merchant-id=/.test(result.html),
@@ -371,7 +373,7 @@ test('REFINE: the Smart Match refine form shows the restriction read-only and li
   await v.request('/home');
   await v.request('/profile/dietary', { dietaryPreference: 'halal' });
   await v.change(function(demo) { demo.profile.dietaryPreference = 'none'; });
-  await v.request('/smart-match/location', ORIGIN);
+  await seedLegacyLocation(v, ORIGIN);
   const card = await v.request('/smart-match/result');
   assert.equal(card.status, 200);
   assert.match(card.html, /Dietary: <strong>No dietary restriction<\/strong>/);

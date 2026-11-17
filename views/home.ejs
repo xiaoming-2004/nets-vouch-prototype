@@ -26,6 +26,18 @@
 <% if (resetComplete) { %><p class="badge badge--verified" role="status">✓ Demo reset successfully.</p><% } %>
 <% if (settingsError) { %><p class="error" role="status">Please choose valid filters.</p><% } %>
 <header class="greeting"><p><%= homeGreeting.greeting %>, <%= user.name %> 👋</p><h1><%= homeGreeting.prompt %></h1></header>
+<section class="origin-panel" data-origin-panel<% if (mapsBrowserKey) { %> data-maps-browser-key="<%= mapsBrowserKey %>"<% } %> aria-labelledby="origin-title">
+  <h2 id="origin-title">Starting point</h2>
+  <p class="origin-mode" data-origin-mode>RP demo origin: estimated distances, not routed walking times.</p>
+  <p class="field-hint">Choose a Singapore starting point to see Google Maps walking times. Your location is used only in this browser tab: it is sent to our server for that request and to Google Maps to calculate routes, and it is not saved.</p>
+  <div class="origin-actions">
+    <button class="button" type="button" data-origin-device>Use my location</button>
+    <button class="button" type="button" data-origin-place>Search for a place</button>
+    <button class="text-button" type="button" data-origin-demo hidden>Use RP demo origin</button>
+  </div>
+  <div class="origin-search" data-origin-search hidden></div>
+  <p class="origin-status" data-origin-status role="status" aria-live="polite" hidden></p>
+</section>
 <form class="nl-form" data-nl-form novalidate>
   <label for="nl-text">Describe what you feel like</label>
   <div class="nl-controls">

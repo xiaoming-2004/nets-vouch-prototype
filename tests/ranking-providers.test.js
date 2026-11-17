@@ -1,4 +1,5 @@
 require('./helpers/test-isolation.cjs');
+const seedLegacyLocation = require('./helpers/legacy-location.cjs');
 const rankingFixture = require('./ranking-fixture');
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -423,7 +424,7 @@ test('SERVER REASONS end-to-end: unsupported AI response uses cautious targeted 
     };
     await request('/home');
     await request('/profile', { dietaryPreference: 'none', budget: '10', maxDistanceMinutes: '10', craving: 'spicy crispy chicken' });
-    await request('/smart-match/location', ORIGIN);
+    await seedLegacyLocation({ cookieValue: () => cookie, request: path => request(path) }, ORIGIN);
     const html = await request('/smart-match/result');
     assert.match(html, /data-merchant-id="google-/);
     assert.match(html, /merchant details are limited/);
