@@ -6,6 +6,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const net = require('node:net');
 const http = require('node:http');
+const task3 = require('../../sample-data/nets-vouch-task3.cjs');
 
 process.env.NODE_ENV = 'test';
 for (const key of Object.keys(process.env)) {
@@ -81,7 +82,9 @@ const defaults = () => ({ budget_max: 10, max_walk_minutes: 15, dietary_preferen
   max_distance_minutes: 10, mood_cuisine: 'any', craving: '', notifications: 1, has_set_preferences: 0 });
 const database = {
   users: new Map(), merchants: new Map(), calls: [], failing: false, catalogueFailing: false,
-  reset() { this.users.clear(); this.merchants.clear(); this.calls.length = 0; this.failing = false; this.catalogueFailing = false; },
+  activityFailing: false, sampleActivityRows: task3.activityRows(),
+  reset() { this.users.clear(); this.merchants.clear(); this.calls.length = 0; this.failing = false;
+    this.catalogueFailing = false; this.activityFailing = false; this.sampleActivityRows = task3.activityRows(); },
   seedMerchant(row) { this.merchants.set(row.merchant_id, { ...row }); },
   seedUser(id, values = {}) { this.users.set(id, { ...defaults(), user_id: id, display_name: id, ...values }); },
   async execute(sql, params = []) {
@@ -101,6 +104,35 @@ const database = {
       assert.equal(typeof params[0], 'string');
       const row = this.merchants.get(params[0]);
       return [row && !Array.isArray(row) ? [{ ...row }] : [], []];
+    }
+    if (/^SELECT m\.merchant_id, d\.dataset_key, d\.sample_label, d\.timezone_name,/.test(text) &&
+        /FROM merchants m JOIN sample_datasets d/.test(text)) {
+      if (this.activityFailing) throw new Error('simulated private activity database detail');
+      const isoDay = params[0]; const slotStart = params[1]; const ids = params.slice(2);
+      assert.ok(Number.isInteger(isoDay) && isoDay >= 1 && isoDay <= 7);
+      assert.match(slotStart, /^\d{2}:00:00$/);
+      assert.equal((text.match(/\?/g) || []).length, params.length);
+      const selected = new Set(ids);
+      return [this.sampleActivityRows.filter(row => selected.has(row.merchantId) &&
+        (row.observationStatus === 'OBSERVED' ||
+          (task3.isoWeekday(row.observationDate) === isoDay && row.slotStart === slotStart)))
+        .map(row => ({
+          merchant_id: row.merchantId,
+          dataset_key: task3.DATASET.key,
+          sample_label: task3.DATASET.label,
+          timezone_name: task3.DATASET.timezone,
+          period_start: task3.DATASET.periodStart,
+          period_end: task3.DATASET.periodEnd,
+          slot_start_hour: task3.DATASET.slotStartHour,
+          slot_end_hour: task3.DATASET.slotEndHour,
+          slot_minutes: task3.DATASET.slotMinutes,
+          disclosure: task3.DATASET.disclosure,
+          observation_date: row.observationDate,
+          iso_weekday: task3.isoWeekday(row.observationDate),
+          slot_start: row.slotStart,
+          observation_status: row.observationStatus,
+          transaction_count: row.transactionCount
+        })), []];
     }
     if (/^SELECT (budget_max, max_walk_minutes, dietary_preference|\*) FROM users WHERE user_id = \?$/.test(text)) {
       const row = this.users.get(params[0]);

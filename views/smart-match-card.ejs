@@ -17,13 +17,24 @@ var whyText = locals.matchExplanation || '';
 <%
 // The dish now has its own compact facts row, so the metadata row can always carry the provider's
 // category (or the parent venue) next to the distance. Nothing is invented when neither is known.
-var metaLead = recommendation.parentVenueName || recommendation.categoryLabel || '';
+var metaLead = recommendation.parentVenueName || recommendation.categoryLabel || recommendation.cuisine || recommendation.category || '';
 %><p class="result-meta"><% if (metaLead) { %><span class="result-lead"><%= metaLead %></span><% } %><span class="result-distance"><%= recommendation.distanceLabel || recommendation.distanceMinutes + ' min away' %></span></p>
 <p class="result-tags"><% if (display.demoVouches) { %><span class="result-vouches" data-demo-sample="true"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m7.5 12.3 3 3 6-6.3"/></svg><%= display.demoVouches %> Vouches</span><% } %><% if (display.dietary) { %><span class="diet-tag diet-tag--<%= display.dietary.tone %>"><%= display.dietary.label %></span><% } %><% if (dietaryTagLabel && dietaryTagLabel !== 'Halal') { %><span class="match-diet"><%= dietaryTagLabel %></span><% } %></p>
 </div>
 </div>
 <% if (recommendation.source === 'mysql') { %>
 <p class="result-facts">Typical price: <%= Number.isFinite(recommendation.price) ? '$' + recommendation.price.toFixed(2) : 'unavailable' %><% if (recommendation.isSampleData === true) { %> · Sample catalogue data<% } %></p>
+<% } %>
+<% if (recommendation.usualActivity) {
+var usual = recommendation.usualActivity;
+var activityCopy = usual.status === 'available'
+  ? 'Usually ' + usual.comparison + ' at this time based on fictional sample history.'
+  : usual.status === 'insufficient-data'
+    ? 'Not enough fictional sample history for this time.'
+    : 'Usual activity unavailable — fictional sample history only.';
+%><p class="result-activity" data-activity-state="<%= usual.status %>"><%= activityCopy %></p><% } %>
+<% if (Array.isArray(recommendation.matchReasons) && recommendation.matchReasons.length) { %>
+<ul class="result-match-reasons" aria-label="Why this matches"><% recommendation.matchReasons.forEach(function(reason) { %><li><%= reason %></li><% }); %></ul>
 <% } %>
 <%
 // The demo-location notice sits on the "Why this match" label line, which has free space to its

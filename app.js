@@ -20,6 +20,7 @@ try {
 // FIXED: Corrected relative path to load db.js from the Database folder
 const db = require('./Database/db');
 const merchantCatalogue = require('./merchant-catalogue');
+const merchantActivity = require('./merchant-activity');
 const { getAgentRecommendations } = require('./nets_agent');
 
 const app = express();
@@ -3729,6 +3730,7 @@ app.get('/home', function(req, res) {
     ...matchView(demo, recommendation), user: demo.user,
     matchingAgain: req.query.matching === 'again', resetComplete: req.query.reset === 'done',
     homeGreeting: getHomeGreeting(),
+    diningDateTime: getSingaporeDateTimeInputValue(),
     showOnboarding: !demo.hasSetPreferences, locationAttempted: demo.locationAttempted,
     settingsError: req.query.error === 'invalid'
   });
@@ -4000,40 +4002,143 @@ app.get('/smart-match/static', async function(req, res) {
   res.redirect('/home');
 });
 
-// Recommendation API — returns up to 3 ranked merchants as JSON.
-// Query params (all optional, fall back to session profile):
-//   budget        — max spend in dollars (e.g. 10)
-//   lat / lng     — user coordinates
-//   cuisine       — dietary preference id: none | halal | vegetarian | vegan
-//   diningTime    — HH:MM string (e.g. "12:30") — stored as context, not a hard filter
-//   maxDistance   — max walking minutes (e.g. 15)
+// Recommendation API input helpers. Cuisine and dietary preference are separate; local dining
+// strings are interpreted as Asia/Singapore calendar values without host-timezone conversion.
+function getSingaporeDateTimeParts() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    hour12: false, timeZone: merchantActivity.TIMEZONE
+  }).formatToParts(new Date());
+  const values = {};
+  parts.forEach(function(part) { if (part.type !== 'literal') values[part.type] = part.value; });
+  if (values.hour === '24') values.hour = '00';
+  return { date: values.year + '-' + values.month + '-' + values.day,
+    time: values.hour + ':' + values.minute };
+}
+
+function getSingaporeDateTimeInputValue() {
+  const value = getSingaporeDateTimeParts();
+  return value.date + 'T' + value.time;
+}
+
+function validCalendarDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parts = value.split('-').map(Number);
+  const date = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+  return date.getUTCFullYear() === parts[0] && date.getUTCMonth() === parts[1] - 1 && date.getUTCDate() === parts[2];
+}
+
+function singaporeIsoWeekday(dateText) {
+  const parts = dateText.split('-').map(Number);
+  return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2])).getUTCDay() || 7;
+}
+
+function recommendationInput(query, profile) {
+  const errors = {};
+  const supplied = function(name) { return Object.prototype.hasOwnProperty.call(query, name); };
+  const scalar = function(name) { return typeof query[name] === 'string' ? query[name] : null; };
+  const defaults = getSingaporeDateTimeParts();
+  let budget = profile.budget;
+  if (supplied('budget')) {
+    const raw = scalar('budget'); const value = raw !== null && raw.trim() ? Number(raw) : NaN;
+    if (!Number.isFinite(value) || value <= 0 || value > 1000) errors.budget = 'out-of-range'; else budget = value;
+  }
+  let maxDistanceMinutes = profile.maxDistanceMinutes;
+  if (supplied('maxDistance')) {
+    const raw = scalar('maxDistance'); const value = raw !== null && /^\d+$/.test(raw) ? Number(raw) : NaN;
+    if (!Number.isInteger(value) || value < 1 || value > 60) errors.maxDistance = 'out-of-range';
+    else maxDistanceMinutes = value;
+  }
+  let cuisine = normaliseMoodCuisine(profile.moodCuisine);
+  if (supplied('cuisine')) {
+    const raw = scalar('cuisine');
+    if (!isValidMoodCuisine(raw)) errors.cuisine = 'unsupported-value'; else cuisine = raw;
+  }
+  let dietaryPreference = normaliseDietaryPreference(profile.dietaryPreference);
+  if (supplied('dietaryPreference')) {
+    const raw = scalar('dietaryPreference');
+    if (!isValidDietaryPreference(raw)) errors.dietaryPreference = 'unsupported-value'; else dietaryPreference = raw;
+  }
+  let diningDate = defaults.date;
+  if (supplied('diningDate')) {
+    const raw = scalar('diningDate');
+    if (!validCalendarDate(raw)) errors.diningDate = 'invalid-date'; else diningDate = raw;
+  }
+  let diningTime = defaults.time;
+  if (supplied('diningTime')) {
+    const raw = scalar('diningTime');
+    if (raw === null || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(raw)) errors.diningTime = 'invalid-time';
+    else diningTime = raw;
+  }
+  const hasLatitude = supplied('lat'); const hasLongitude = supplied('lng');
+  let coordinates = null;
+  if (hasLatitude !== hasLongitude) {
+    if (!hasLatitude) errors.lat = 'coordinate-pair-required';
+    if (!hasLongitude) errors.lng = 'coordinate-pair-required';
+  } else if (hasLatitude) {
+    const latRaw = scalar('lat'); const lngRaw = scalar('lng');
+    const latitude = latRaw !== null && latRaw.trim() ? Number(latRaw) : NaN;
+    const longitude = lngRaw !== null && lngRaw.trim() ? Number(lngRaw) : NaN;
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) errors.lat = 'out-of-range';
+    if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) errors.lng = 'out-of-range';
+    if (!errors.lat && !errors.lng) coordinates = { latitude, longitude };
+  }
+  if (Object.keys(errors).length) return { errors };
+  return { budget, maxDistanceMinutes, cuisine, dietaryPreference, diningDate, diningTime,
+    isoWeekday: singaporeIsoWeekday(diningDate), coordinates };
+}
+
+function activityScore(activity) {
+  if (!activity || activity.status !== 'available') return 0;
+  return activity.comparison === 'quieter' ? 20 : activity.comparison === 'busier' ? -20 : 0;
+}
+
+function recommendationActivityMetadata(results) {
+  if (!results.length) return { status: 'not-requested', basis: 'fictional-sample-history',
+    sampleDataLabel: 'Fictional sample history not requested', disclosure: 'No eligible merchant activity was requested.' };
+  const usable = results.filter(function(result) { return result.status !== 'unavailable'; });
+  const representative = usable[0] || results[0];
+  return { status: usable.length === results.length ? 'available' : usable.length ? 'partial' : 'unavailable',
+    basis: 'fictional-sample-history', sampleDataLabel: representative.sampleDataLabel,
+    disclosure: representative.disclosure };
+}
+
+function recommendationReasons(merchant, profile, activity) {
+  const reasons = [];
+  if (Number.isFinite(merchant.price)) reasons.push('Typical price $' + merchant.price.toFixed(2) +
+    ' is within your $' + profile.budget.toFixed(2) + ' budget.');
+  if (getMoodMatchState(merchant, profile.moodCuisine) === MATCH_STATE.MATCH) {
+    reasons.push('Cuisine information matches your ' + getMoodCuisineLabel(profile.moodCuisine).toLowerCase() + ' preference.');
+  }
+  if (getDietaryMatchState(merchant, profile.dietaryPreference) === MATCH_STATE.MATCH) {
+    reasons.push('The fictional catalogue explicitly lists a ' + profile.dietaryPreference + ' option; this is not verified certification.');
+  }
+  if (merchant.distanceLabel) reasons.push(merchant.distanceLabel + '; this is not a routed walking time.');
+  if (activity && activity.status === 'available') {
+    reasons.push('Usually ' + activity.comparison + ' at this time based on fictional sample history.');
+  }
+  return reasons;
+}
+
 app.get('/api/recommend', async function(req, res) {
   const demo = req.session.demo;
+  const input = recommendationInput(req.query, demo.profile);
+  if (input.errors) return res.status(400).json({ error: {
+    code: 'invalid-recommendation-input', fields: input.errors
+  } });
 
-  const budget = (function() {
-    const v = parseFloat(req.query.budget);
-    return Number.isFinite(v) && v > 0 && v <= 1000 ? v : demo.profile.budget;
-  }());
-  const cuisine = isValidDietaryPreference(req.query.cuisine) ? req.query.cuisine : demo.profile.dietaryPreference;
-  const maxDistanceMinutes = (function() {
-    const v = parseInt(req.query.maxDistance, 10);
-    return Number.isFinite(v) && v > 0 && v <= 60 ? v : demo.profile.maxDistanceMinutes;
-  }());
-
-  // Update discovery location if coordinates supplied
-  const qLat = parseFloat(req.query.lat);
-  const qLng = parseFloat(req.query.lng);
-  if (validCoordinates(qLat, qLng)) {
-    demo.discoveryLocation = { latitude: qLat, longitude: qLng };
+  // Validation completes before this first session mutation and before the catalogue read.
+  if (input.coordinates) {
+    demo.discoveryLocation = input.coordinates;
     demo.locationAttempted = true;
   }
 
   const apiProfile = Object.assign({}, demo.profile, {
-    budget: budget,
-    dietaryPreference: cuisine,
-    maxDistanceMinutes: maxDistanceMinutes
+    budget: input.budget,
+    dietaryPreference: input.dietaryPreference,
+    moodCuisine: input.cuisine,
+    maxDistanceMinutes: input.maxDistanceMinutes
   });
-  demo.catalogueBatchProfile = { ...apiProfile };
 
   let merchants;
   let catalogue;
@@ -4047,16 +4152,39 @@ app.get('/api/recommend', async function(req, res) {
     catalogue = { source: 'demo-fallback', status: 'unavailable' };
   }
 
-  const eligible = getEligibleMerchants(apiProfile, merchants.filter(m => Number.isFinite(m.price)), demo.rejectedMerchantIds, demo);
+  const eligible = getEligibleMerchants(apiProfile, merchants.filter(m => Number.isFinite(m.price)),
+    demo.rejectedMerchantIds, demo);
+  let activities = [];
+  if (eligible.length) {
+    activities = await merchantActivity.loadUsualActivity(db, eligible.map(function(m) { return m.id; }), {
+      isoWeekday: input.isoWeekday, time: input.diningTime
+    });
+  }
+  const activityByMerchant = new Map(activities.map(function(activity) { return [activity.merchantId, activity]; }));
+  const openEligible = eligible.filter(function(merchant) {
+    const activity = activityByMerchant.get(merchant.id);
+    return !activity || activity.status !== 'closed';
+  });
+  const metadata = {
+    request: {
+      budget: input.budget, maxDistanceMinutes: input.maxDistanceMinutes,
+      cuisinePreference: input.cuisine, dietaryPreference: input.dietaryPreference,
+      dining: { date: input.diningDate, time: input.diningTime, isoWeekday: input.isoWeekday,
+        hour: Number(input.diningTime.slice(0, 2)), timezone: merchantActivity.TIMEZONE }
+    },
+    distance: { basis: 'demo-origin-estimate', origin: 'Republic Polytechnic demo origin', routed: false },
+    activity: recommendationActivityMetadata(activities)
+  };
 
-  if (!eligible.length) {
+  if (!openEligible.length) {
     demo.lastApiRecommendations = [];
     demo.catalogueBatch = [];
-    return res.json({ recommendations: [], catalogue });
+    demo.catalogueBatchProfile = { ...apiProfile };
+    return res.json({ recommendations: [], catalogue, metadata });
   }
 
   const lastFeedback = getLastFeedback(demo.recommendationFeedback);
-  const scored = eligible.map(function(m) {
+  const scored = openEligible.map(function(m) {
     let score = 150 - distancePenalty(m);
     if (classifyMealEligibility(m) === MEAL_ELIGIBILITY.UNCERTAIN) score -= 60;
     if (m.price !== null) score += Math.max(0, apiProfile.budget - m.price);
@@ -4077,18 +4205,30 @@ app.get('/api/recommend', async function(req, res) {
         merchantCuisineTags(m).some(function(tag) { return rejectedTags.indexOf(tag) !== -1; });
       if (sameSpecificCategory || overlapsCuisine) score -= 30;
     }
-    return { merchant: m, score: score };
+    const activity = activityByMerchant.get(m.id) || null;
+    score += activityScore(activity);
+    return { merchant: m, activity, score: score };
   });
 
-  scored.sort(function(a, b) { return b.score - a.score; });
+  scored.sort(function(a, b) {
+    if (b.score !== a.score) return b.score - a.score;
+    const distance = merchantDistanceMetres(a.merchant) - merchantDistanceMetres(b.merchant);
+    if (distance) return distance;
+    const price = a.merchant.price - b.merchant.price;
+    if (price) return price;
+    return a.merchant.id < b.merchant.id ? -1 : a.merchant.id > b.merchant.id ? 1 : 0;
+  });
   const top3 = scored.slice(0, 3);
 
   demo.catalogueBatch = top3.map(item => {
     const merchant = item.merchant;
     const campaign = findCampaignForMerchant(merchant, demo);
-    return { ...merchant, catalogueTerms: { rewardAmount: campaign.rewardAmount,
-      rewardLabel: campaign.rewardLabel, minimumEligibleSpend: campaign.minimumEligibleSpend } };
+    return { ...merchant, usualActivity: item.activity,
+      matchReasons: recommendationReasons(merchant, apiProfile, item.activity),
+      catalogueTerms: { rewardAmount: campaign.rewardAmount,
+        rewardLabel: campaign.rewardLabel, minimumEligibleSpend: campaign.minimumEligibleSpend } };
   });
+  demo.catalogueBatchProfile = { ...apiProfile };
 
   const recommendations = top3.map(function(item) {
     const m = item.merchant;
@@ -4105,6 +4245,9 @@ app.get('/api/recommend', async function(req, res) {
       isSampleData: m.source === 'mysql' ? m.isSampleData : true,
       dietary: Array.isArray(m.dietary) ? m.dietary : [],
       category: m.category || null,
+      cuisine: m.category || null,
+      usualActivity: item.activity,
+      matchReasons: recommendationReasons(m, apiProfile, item.activity),
       campaign: campaign ? {
         rewardAmount: campaign.rewardAmount,
         rewardLabel: campaign.rewardLabel,
@@ -4115,7 +4258,7 @@ app.get('/api/recommend', async function(req, res) {
 
   demo.lastApiRecommendations = recommendations.map(function(r) { return r.id; });
 
-  res.json({ recommendations: recommendations, catalogue });
+  res.json({ recommendations: recommendations, catalogue, metadata });
 });
 
 app.get('/recommendation', function(req, res) { res.redirect('/home'); });

@@ -105,6 +105,21 @@ function initMerchantMap() {
 function smartMatchDebug(message) { console.info('Smart Match: ' + message); }
 
 const matchRegion = document.querySelector('[data-match-region]');
+const diningTimeForm = document.querySelector('[data-dining-time-form]');
+
+function diningRecommendationQuery() {
+  if (!diningTimeForm) return '';
+  const input = diningTimeForm.querySelector('[name="diningDateTime"]');
+  const value = input && input.value;
+  // datetime-local is deliberately split as written. Do not construct a Date: that would convert
+  // through the browser timezone instead of treating it as a Singapore calendar date and time.
+  const match = typeof value === 'string' && value.match(/^(\d{4}-\d{2}-\d{2})T((?:[01]\d|2[0-3]):[0-5]\d)$/);
+  if (!match) return null;
+  const query = new URLSearchParams();
+  query.set('diningDate', match[1]);
+  query.set('diningTime', match[2]);
+  return '?' + query.toString();
+}
 
 // Asks the device for its CURRENT position - never a cached one (maximumAge: 0) - every time a
 // new Smart Match discovery starts. Returns the coordinates, or null on any failure. Does NOT
@@ -212,6 +227,15 @@ const REC_REJECTION_REASONS = [
 
 const DIETARY_LABELS = { halal: 'Halal', vegetarian: 'Vegetarian', vegan: 'Vegan' };
 
+function activityText(activity) {
+  if (!activity || activity.status === 'unavailable') return 'Usual activity unavailable — fictional sample history only.';
+  if (activity.status === 'insufficient-data') return 'Not enough fictional sample history for this time.';
+  if (activity.status === 'closed') return 'Historically closed at this time in the fictional sample.';
+  if (activity.comparison === 'quieter') return 'Usually quieter at this time based on fictional sample history.';
+  if (activity.comparison === 'busier') return 'Usually busier at this time based on fictional sample history.';
+  return 'Usually typical at this time based on fictional sample history.';
+}
+
 function renderRecCard(r) {
   const tags = (r.dietary || []).map(function(d) { return DIETARY_LABELS[d]; }).filter(Boolean);
   const tagHtml = tags.map(function(t) { return '<span class="rec-tag">' + escHtml(t) + '</span>'; }).join('');
@@ -222,13 +246,21 @@ function renderRecCard(r) {
     : '';
   const priceHtml = Number.isFinite(r.price) ? '<strong>$' + r.price.toFixed(2) + '</strong>' : 'unavailable';
   const distance = r.source === 'mysql' ? r.distanceLabel || 'Catalogue distance unavailable'
-    : r.distanceMinutes + ' min away';
+    : 'Approx. demo distance: ' + r.distanceMinutes + ' min-equivalent (not routed)';
   const sampleHtml = r.isSampleData === true ? '<p class="rec-meta">' +
     (r.source === 'mysql' ? 'Sample catalogue data' : 'Demo merchant') + '</p>' : '';
   const reasonHtml = REC_REJECTION_REASONS.map(function(reason) {
     return '<button type="submit" name="reason" value="' + escAttr(reason.id) + '">' +
       escHtml(reason.label) + '<span aria-hidden="true">→</span></button>';
   }).join('');
+  const cuisineHtml = r.cuisine ? '<span class="rec-cuisine">Cuisine: ' + escHtml(r.cuisine) + '</span>' : '';
+  const activityHtml = '<p class="rec-activity" data-activity-state="' +
+    escAttr(r.usualActivity && r.usualActivity.status || 'unavailable') + '">' +
+    escHtml(activityText(r.usualActivity)) + '</p>';
+  const matchesHtml = Array.isArray(r.matchReasons) && r.matchReasons.length
+    ? '<ul class="rec-reasons" aria-label="Why this matches">' + r.matchReasons.map(function(reason) {
+      return '<li>' + escHtml(reason) + '</li>';
+    }).join('') + '</ul>' : '';
   return '<article class="rec-card reveal" data-merchant-id="' + escAttr(r.id) + '">' +
     '<div class="rec-header">' +
     '<div class="rec-initial" aria-hidden="true">' + escHtml((r.merchantName || '').charAt(0)) + '</div>' +
@@ -240,9 +272,12 @@ function renderRecCard(r) {
       : '<p class="rec-dish">Typical price: ' + priceHtml + '</p>') +
     '<p class="rec-meta">' + escHtml(distance) +
       (tagHtml ? ' · ' + tagHtml : '') + '</p>' +
+    cuisineHtml +
     '</div>' +
     '</div>' +
     sampleHtml +
+    activityHtml +
+    matchesHtml +
     rewardHtml +
     '<form method="POST" action="/recommendation/accept" data-single-submit>' +
     '<input type="hidden" name="merchantId" value="' + escAttr(r.id) + '">' +
@@ -262,12 +297,14 @@ function renderRecCard(r) {
     '</article>';
 }
 
-function renderRecommendationList(recommendations, catalogue) {
+function renderRecommendationList(recommendations, catalogue, metadata) {
   const notice = catalogue && catalogue.source === 'demo-fallback'
     ? '<p class="report-note" role="status">Catalogue unavailable — showing demo merchants.</p>' : '';
+  const activityNotice = metadata && metadata.activity && metadata.activity.status === 'unavailable'
+    ? '<p class="report-note" role="status">Usual activity is unavailable. Recommendations remain based on suitable catalogue facts.</p>' : '';
   const emptyCatalogue = catalogue && catalogue.source === 'mysql' && catalogue.status === 'empty';
   if (!recommendations || !recommendations.length) {
-    return notice + '<section class="card state-card reveal">' +
+    return notice + activityNotice + '<section class="card state-card reveal">' +
       '<div class="state-icon" aria-hidden="true">' +
       '<svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/>' +
       '<circle cx="12" cy="9.5" r="2.5"/></svg></div>' +
@@ -275,26 +312,32 @@ function renderRecommendationList(recommendations, catalogue) {
         : '<h2>No matches for your filters</h2><p>Try widening your distance or budget in <a href="/profile">Profile</a>.</p>') +
       '</section>';
   }
-  return notice + '<div class="rec-list">' + recommendations.map(renderRecCard).join('') + '</div>';
+  return notice + activityNotice + '<div class="rec-list">' + recommendations.map(renderRecCard).join('') + '</div>';
 }
 
 async function loadMatch(again) {
   if (!matchRegion) return;
+  const query = diningRecommendationQuery();
+  if (query === null) {
+    matchRegion.innerHTML = '<p class="error" role="status">Choose a valid Singapore dining date and time.</p>';
+    return;
+  }
   matchRegion.setAttribute('aria-busy', 'true');
   matchRegion.innerHTML = matchingMarkup(again);
   startMatchingStages();
   // Catalogue distances are estimates from the demo origin, not device GPS.
   try {
     const results = await Promise.all([
-      fetch('/api/recommend').then(function(response) {
+      fetch('/api/recommend' + query).then(async function(response) {
         smartMatchDebug('recommend request status: ' + response.status);
-        if (!response.ok) throw new Error('Unable to load recommendations');
-        return response.json();
+        const body = await response.json();
+        if (!response.ok) throw new Error(response.status === 400 ? 'Invalid recommendation filters' : 'Unable to load recommendations');
+        return body;
       }),
       wait(2000)
     ]);
     clearMatchingStages();
-    matchRegion.innerHTML = renderRecommendationList(results[0].recommendations, results[0].catalogue);
+    matchRegion.innerHTML = renderRecommendationList(results[0].recommendations, results[0].catalogue, results[0].metadata);
     const cards = matchRegion.querySelectorAll('[data-merchant-id]');
     smartMatchDebug('recommendations rendered: ' + cards.length);
     initMerchantMap();
@@ -314,6 +357,10 @@ if (matchRegion) {
     else if (event.target.closest('[data-use-demo-location]')) useDemoLocation();
   });
 }
+if (diningTimeForm) diningTimeForm.addEventListener('submit', function(event) {
+  event.preventDefault();
+  loadMatch(false);
+});
 if (document.querySelector('[data-load-match]')) loadMatch(location.search.includes('matching=again'));
 initMerchantMap();
 

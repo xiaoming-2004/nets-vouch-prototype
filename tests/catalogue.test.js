@@ -84,17 +84,17 @@ test('catalogue dietary flags control eligibility, including vegan satisfying ve
   Object.assign(db.merchants.get('catalogue-a'), { dietary_halal: '0' });
   Object.assign(db.merchants.get('catalogue-b'), { dietary_halal: '1', dietary_vegan: null });
   Object.assign(db.merchants.get('catalogue-c'), { dietary_halal: null, dietary_vegan: 1 });
-  assert.deepEqual((await recommend(http.visitor(), '?cuisine=halal')).recommendations.map(m => m.id), ['catalogue-b']);
-  assert.deepEqual((await recommend(http.visitor(), '?cuisine=vegetarian')).recommendations.map(m => m.id), ['catalogue-c']);
-  assert.deepEqual((await recommend(http.visitor(), '?cuisine=vegan')).recommendations.map(m => m.id), ['catalogue-c']);
+  assert.deepEqual((await recommend(http.visitor(), '?dietaryPreference=halal')).recommendations.map(m => m.id), ['catalogue-b']);
+  assert.deepEqual((await recommend(http.visitor(), '?dietaryPreference=vegetarian')).recommendations.map(m => m.id), ['catalogue-c']);
+  assert.deepEqual((await recommend(http.visitor(), '?dietaryPreference=vegan')).recommendations.map(m => m.id), ['catalogue-c']);
 });
 
 test('empty catalogue, filtered-empty results and outage fallback remain distinct', async () => {
   db.merchants.clear(); const empty = await recommend(http.visitor());
-  assert.deepEqual(empty, { recommendations: [], catalogue: { source: 'mysql', status: 'empty' } });
+  assert.deepEqual(empty.recommendations, []); assert.deepEqual(empty.catalogue, { source: 'mysql', status: 'empty' });
   seedCatalogue(db); for (const m of db.merchants.values()) m.typical_price = '99.00';
   const filtered = await recommend(http.visitor());
-  assert.deepEqual(filtered, { recommendations: [], catalogue: { source: 'mysql', status: 'ok' } });
+  assert.deepEqual(filtered.recommendations, []); assert.deepEqual(filtered.catalogue, { source: 'mysql', status: 'ok' });
   db.catalogueFailing = true; const fallback = await recommend(http.visitor());
   assert.deepEqual(fallback.catalogue, { source: 'demo-fallback', status: 'unavailable' });
   assert.equal(fallback.recommendations.length, 3); assert.ok(fallback.recommendations.every(m => m.source === 'local-fallback' && m.isSampleData));
@@ -135,7 +135,7 @@ test('query filter overrides remain usable when choosing a card', async () => {
 test('same-ID demo facts cannot shadow the database merchant or reward terms', async () => {
   db.merchants.clear(); db.seedMerchant(row({ merchant_id: 'felicia-chicken-rice', name: 'Database identity',
     location_label: 'Database outlet', typical_price: '8.25', reward_amount: '1.25', min_spend: '3.00', dietary_halal: 0 }));
-  const v = http.visitor(); assert.deepEqual((await recommend(v, '?cuisine=halal')).recommendations, []);
+  const v = http.visitor(); assert.deepEqual((await recommend(v, '?dietaryPreference=halal')).recommendations, []);
   const result = await recommend(v); assert.equal(result.recommendations[0].merchantName, 'Database identity');
   const scan = await choose(v, 'felicia-chicken-rice'); assert.equal(scan.outlet, 'Database outlet');
   const tx = await pay(v, scan); assert.equal(tx.merchantName, 'Database identity'); assert.equal(tx.merchantRewardEarned, 1.25);
