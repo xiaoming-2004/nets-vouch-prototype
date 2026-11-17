@@ -13,6 +13,10 @@ for (const key of Object.keys(process.env)) {
   if (/^(MYSQL_|DB_|REDIS_|UPSTASH_)/.test(key) || /(?:_API_KEY|_API_TOKEN|_SECRET)$/.test(key)) delete process.env[key];
 }
 process.env.SESSION_SECRET = 'isolated-test-session-only';
+// Task 9: the REAL default is disabled (see google-services.js and tests/task9-zero-cost.test.js). The existing mocked
+// Google/Foursquare suites are technical evidence for the dormant integration, so the harness opts in explicitly.
+// Every request in those suites is mocked and nothing here can reach a real provider.
+process.env.GOOGLE_SERVICES_ENABLED = 'true';
 
 const violations = [];
 const counters = { envLoads: 0, privateReads: 0, mysqlFactories: 0, redisFactories: 0, blockedConnections: 0 };

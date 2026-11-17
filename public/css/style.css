@@ -1115,3 +1115,6 @@ body.modal-open { overflow:hidden; }
 @media (max-width:360px) { .greeting h1 { font-size:26px; } .sheet-title { font-size:20px; } .sheet-modal__panel { padding:20px 14px 14px; } }
 @media not all and (min-width:700px) and (min-height:700px) { .sheet-modal { position:fixed; } }
 .sheet-title { margin-right:30px; font-size:21px; }
+/* Task 9: static RP demo origin (Google disabled, S$0 mode) */
+.origin-pill--static { cursor:default; }
+.demo-mode-note { margin:8px 4px 0; font-size:12.5px; line-height:1.4; font-weight:600; color:var(--text-2); }

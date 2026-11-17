@@ -9,6 +9,7 @@
 //   response bodies, headers and messages are never read into an error and never leave this module.
 // - Nothing here persists or caches Google content. Results live only in the caller's journey state.
 
+const googleServices = require('./google-services');
 const ROUTES_URL = 'https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix';
 const FIELD_MASK = 'originIndex,destinationIndex,duration,distanceMeters,status,condition';
 const DEFAULT_TIMEOUT_MS = 4000;
@@ -41,8 +42,9 @@ class WalkingRoutesError extends Error {
   }
 }
 
+// Task 9: also requires the master switch (GOOGLE_SERVICES_ENABLED exactly "true"); see google-services.js.
 function isConfigured() {
-  return typeof process.env.GOOGLE_ROUTES_API_KEY === 'string' && process.env.GOOGLE_ROUTES_API_KEY.trim() !== '';
+  return googleServices.routesEnabled();
 }
 
 function timeoutMs() {

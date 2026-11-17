@@ -24,6 +24,7 @@ const merchantActivity = require('./merchant-activity');
 const rejectionFeedback = require('./rejection-feedback');
 const naturalLanguage = require('./natural-language-intent');
 const walkingRoutes = require('./walking-routes');
+const googleServices = require('./google-services');
 const foodVocabulary = require('./food-vocabulary');
 const merchantMenu = require('./merchant-menu');
 const { getAgentRecommendations } = require('./nets_agent');
@@ -81,6 +82,7 @@ app.locals.rewardCreditText = function(amount, label) { return rewardCreditText(
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.locals.walkingWarning = walkingRoutes.WALKING_WARNING;
+app.locals.googleServices = googleServices;
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Configure session
@@ -2040,8 +2042,8 @@ async function getCravingSearchIntent(rawCraving, mood) {
 // Nearby Search is merged in by place ID. Max 2 Google requests. Returns null when Google cannot
 // supply any usable merchant, so the caller falls back to the next provider.
 async function discoverWithGoogle(searchLocation, craving, maxMetres, restriction, mood) {
-  if (!process.env.GOOGLE_PLACES_API_KEY) {
-    logDiscovery('Google Places unavailable: key missing');
+  if (!googleServices.legacyPlacesEnabled()) {
+    logDiscovery('Google Places unavailable: disabled or key missing');
     return null;
   }
   const nearbyRadius = Math.min(demoLocation.searchRadiusMetres, maxMetres || demoLocation.searchRadiusMetres);
@@ -2230,8 +2232,8 @@ async function discoverWithGoogle(searchLocation, craving, maxMetres, restrictio
 // craving drives the query itself, with at most one broader query=food fallback if that produces
 // too few candidates. Returns null when Foursquare cannot supply any usable merchant.
 async function discoverWithFoursquare(searchLocation, craving, restriction, maxMetres, mood) {
-  if (!process.env.FOURSQUARE_API_KEY) {
-    logDiscovery('Foursquare unavailable: key missing');
+  if (!googleServices.foursquareDiscoveryEnabled()) {
+    logDiscovery('Foursquare unavailable: disabled or key missing');
     return null;
   }
   const specificCraving = isSpecificCraving(craving);
@@ -2445,7 +2447,7 @@ async function continuationFoodQuery(demo, originalQuery) {
 async function continueNearbySearch(demo) {
   const profile = demo.profile;
   const available = discoveryProviderOrder().filter(function(provider) {
-    return Boolean(process.env[provider === 'google' ? 'GOOGLE_PLACES_API_KEY' : 'FOURSQUARE_API_KEY']);
+    return provider === 'google' ? googleServices.legacyPlacesEnabled() : googleServices.foursquareDiscoveryEnabled();
   });
   if (!available.length) return false;
   const alternate = available.find(function(provider) { return provider !== demo.nearbySource; });
@@ -3609,7 +3611,7 @@ function smartMatchResultDisplay(demo, recommendation) {
     // Tapping the result map opens Google Maps walking directions. Origin is the visitor's real
     // session location; with demo location/data Google Maps routes from the device instead.
     // Catalogue merchants are fictional samples: no map pin and no server-rendered directions URL for them.
-    walking: recommendation.source === 'mysql' ? null : smartMatchResult.buildWalkingDirections(
+    walking: recommendation.source === 'mysql' || !googleServices.switchOn() ? null : smartMatchResult.buildWalkingDirections(
       !demo.discoveryLocation || demo.nearbyDemoFallback ? null : demo.discoveryLocation, recommendation)
   };
 }
@@ -3720,7 +3722,7 @@ app.get('/health', async function(req, res) {
     foursquareKey: process.env.FOURSQUARE_API_KEY ? 'configured' : 'missing'
   };
   // Lightweight Foursquare ping — uses a known-good Singapore location.
-  if (process.env.FOURSQUARE_API_KEY) {
+  if (googleServices.foursquareDiscoveryEnabled()) {
     try {
       const pingUrl = new URL('https://places-api.foursquare.com/places/search');
       pingUrl.searchParams.set('ll', '1.3521,103.8198');
@@ -3754,7 +3756,10 @@ app.get('/home', function(req, res) {
     diningDateTime: getSingaporeDateTimeInputValue(),
     foodChoiceOptions: foodVocabulary.FOOD_CHOICES,
     showOnboarding: !demo.hasSetPreferences, locationAttempted: demo.locationAttempted,
-    mapsBrowserKey: String(process.env.GOOGLE_MAPS_BROWSER_API_KEY || '').trim(),
+    // Task 9: the interactive starting-point controls exist only when Google routing is enabled; the browser key
+    // is exposed only when place search can work (browser key AND routes both enabled).
+    googleLocation: googleServices.routesEnabled(),
+    mapsBrowserKey: googleServices.routesEnabled() && googleServices.browserMapsEnabled() ? String(process.env.GOOGLE_MAPS_BROWSER_API_KEY || '').trim() : '',
     settingsError: req.query.error === 'invalid'
   });
 });
@@ -3924,7 +3929,7 @@ const RESULT_EXTRAS_WAIT_MS = 500;
 async function settleResultExtras(merchant) {
   const waitMs = Math.max(0, requestBudget.callTimeout(RESULT_EXTRAS_WAIT_MS));
   if (waitMs <= 0) return;
-  const extras = Promise.resolve(smartMatchResult.ensureMerchantPhoto(merchant, process.env.GOOGLE_PLACES_API_KEY, waitMs))
+  const extras = Promise.resolve(smartMatchResult.ensureMerchantPhoto(merchant, googleServices.legacyPlacesEnabled() ? process.env.GOOGLE_PLACES_API_KEY : '', waitMs))
     .catch(function() { /* display-only extras never break the result */ });
   let timer;
   await Promise.race([extras, new Promise(function(resolve) { timer = setTimeout(resolve, waitMs); })]);
@@ -3937,7 +3942,7 @@ app.get('/smart-match/photo/:merchantId', async function(req, res) {
   const demo = req.session.demo;
   const merchant = findMerchantForDemo(demo, demo.selectedMerchantId);
   if (!merchant || merchant.id !== req.params.merchantId) return res.sendStatus(404);
-  const image = await smartMatchResult.fetchMerchantPhotoBytes(merchant, process.env.GOOGLE_PLACES_API_KEY);
+  const image = await smartMatchResult.fetchMerchantPhotoBytes(merchant, googleServices.legacyPlacesEnabled() ? process.env.GOOGLE_PLACES_API_KEY : '');
   if (!image) return res.sendStatus(404);
   res.set({ 'Content-Type': image.type, 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
   res.send(image.body);
@@ -5206,7 +5211,7 @@ app.use('/api/recommend', function(err, req, res, next) {
 if (require.main === module) {
   app.listen(PORT, function() {
     console.log('VouchAI running on http://localhost:' + PORT);
-    console.log('FOURSQUARE_API_KEY configured: ' + (process.env.FOURSQUARE_API_KEY ? 'yes' : 'no'));
+    googleServices.startupMessages().forEach(function(line) { console.log(line); });
   });
 }
 module.exports = { app: app, createInitialDemo: createInitialDemo, demoStore: demoStore,

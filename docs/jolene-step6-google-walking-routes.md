@@ -1,5 +1,7 @@
 # Jolene Step 6: Google starting point and walking travel information
 
+> **Dormant by default (Task 9).** Everything below runs only when `GOOGLE_SERVICES_ENABLED` is exactly `true` and the specific key is present. This deployment is in S$0 Google-disabled mode; see `docs/task9-zero-cost-deployment.md`. The tests in this document use mocked responses and are not live Google evidence.
+
 Implemented on 17 November 2026 (Asia/Singapore). A user can choose a real Singapore starting point and see Google Maps walking minutes and metres to the fictional sample merchants. The RP demo-origin estimate remains the default, clearly labelled mode. There is no schema, migration, seed or database write, no route cache, and no embedded map.
 
 ## Modes and request contracts
@@ -78,7 +80,8 @@ Two different variables, neither committed (`.env` is private):
 
 - `GOOGLE_MAPS_BROWSER_API_KEY`: browser key. Restrict by HTTP referrer (localhost for development and the deployed domain) and to **Maps JavaScript API** and **Places API (New)** only. It is rendered into the Home page only when set (inside the starting-point panel), and it is public by nature.
 - `GOOGLE_ROUTES_API_KEY`: server-only key. Restrict to **Routes API** only. It is read only in `walking-routes.js`, sent only in the `X-Goog-Api-Key` header to Google, and never reaches the browser, a response, a log or an error. Vercel does not provide a stable outbound IP address for ordinary deployments, so an IP restriction may be unavailable; API restriction, daily quotas and billing alerts are therefore essential.
-- The existing `GOOGLE_PLACES_API_KEY` (legacy discovery and photos) is not reused.
+- The existing `GOOGLE_PLACES_API_KEY` (legacy discovery and photos) is not reused by Step 6, and since Task 9 the legacy Google/Foursquare paths also need `GOOGLE_SERVICES_ENABLED=true`.
+- `GOOGLE_SERVICES_ENABLED`: opt-in master switch (exactly `true`); off by default.
 - Optional: `WALKING_ROUTES_TIMEOUT_MS`.
 
 Cost notes (read from Google's pricing page on 17 November 2026, which showed no date; pricing can change, so confirm before the event): free monthly caps listed were Compute Route Matrix 10,000 (Essentials), 5,000 (Pro), 1,000 (Enterprise); Autocomplete requests 10,000 with session usage unlimited; dynamic maps 10,000. The page does not say which Routes tier applies to walking. Matrix elements are billed per origin and destination pair, so a request with ten merchants is about ten elements; if Essentials applies, 10,000 free elements is only about 1,000 requests a month. Set a daily quota on the Routes API and budget alerts in Google Cloud.

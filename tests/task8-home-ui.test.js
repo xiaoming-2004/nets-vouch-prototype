@@ -16,8 +16,10 @@ const script = read('public/js/script.js');
 const WARNING = 'Walking routes are in beta and may be missing clear sidewalks or pedestrian paths. Use caution.';
 
 let http;
-test.before(async () => { http = await start(); });
+// Enabled mode (explicit): the interactive starting-point controls exist only when Google routing is enabled.
+test.before(async () => { process.env.GOOGLE_ROUTES_API_KEY = 'fake-routes-key-task8'; http = await start(); });
 test.after(async () => {
+  delete process.env.GOOGLE_ROUTES_API_KEY;
   await http.close();
   assert.deepEqual(counters, { envLoads: 0, privateReads: 0, mysqlFactories: 0, redisFactories: 0, blockedConnections: 0 });
 });

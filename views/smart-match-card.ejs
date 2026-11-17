@@ -6,6 +6,8 @@
 // (attribution and walking warning) are NEVER inside the disclosure: they are visible whenever shown.
 var whyText = locals.matchExplanation || '';
 var isSample = recommendation.isSampleData === true;
+// Task 9: no merchant map or Google link unless Google services are enabled (S$0 mode renders neither).
+var googleOn = locals.googleServices ? locals.googleServices.switchOn() : true;
 var item = recommendation.recommendedMenuItem || null;
 var typicalDiffers = item && Number.isFinite(recommendation.price) && Math.abs(recommendation.price - Number(item.price)) >= 0.005;
 %>
@@ -44,7 +46,7 @@ var activityCopy = usual.status === 'available'
     ? 'Not enough fictional sample history for this time.'
     : 'Usual activity unavailable — fictional sample history only.';
 %><p class="result-activity" data-activity-state="<%= usual.status %>"><%= activityCopy %></p><% } %>
-<% if (recommendation.coordinates && recommendation.source !== 'mysql') { %>
+<% if (googleOn && recommendation.coordinates && recommendation.source !== 'mysql') { %>
 <div class="match-map-wrap">
 <div class="match-map" data-lat="<%= recommendation.coordinates.latitude %>" data-lng="<%= recommendation.coordinates.longitude %>" data-name="<%= recommendation.merchantName %>" data-address="<%= recommendation.address || '' %>"></div>
 <% if (display.walking) { %><a class="match-map-open" href="<%= display.walking.mapsUrl %>" target="_blank" rel="noopener noreferrer"><span class="match-map-hint">Open in Google Maps<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg></span><span class="visually-hidden"> - walking directions to <%= recommendation.merchantName %></span></a><% } %>

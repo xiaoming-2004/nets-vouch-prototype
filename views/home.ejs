@@ -38,6 +38,7 @@
 <% if (resetComplete) { %><p class="badge badge--verified" role="status">✓ Demo reset successfully.</p><% } %>
 <% if (settingsError) { %><p class="error" role="status">Please choose valid filters.</p><% } %>
 <header class="greeting"><p><%= homeGreeting.greeting %>, <%= user.name %> 👋</p><h1><%= homeGreeting.prompt %></h1></header>
+<% if (googleLocation) { %>
 <section class="origin-panel" data-origin-panel<% if (mapsBrowserKey) { %> data-maps-browser-key="<%= mapsBrowserKey %>"<% } %> aria-labelledby="origin-title">
   <h2 id="origin-title" class="visually-hidden">Starting point</h2>
   <button class="origin-pill" type="button" data-origin-toggle aria-expanded="false" aria-controls="origin-choices"><svg class="origin-pill__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg><span class="origin-pill__text"><span class="origin-pill__label">Starting point</span><strong data-origin-pill>RP demo origin</strong></span><span class="origin-pill__chevron" aria-hidden="true"></span></button>
@@ -53,6 +54,14 @@
   </div>
   <p class="origin-status" data-origin-status role="status" aria-live="polite" hidden></p>
 </section>
+<% } else { %>
+<%# Task 9: Google disabled (S$0 mode). A static RP demo origin: no buttons, no geolocation, no Google script or link. %>
+<section class="origin-panel origin-panel--static" aria-labelledby="origin-title">
+  <h2 id="origin-title" class="visually-hidden">Starting point</h2>
+  <div class="origin-pill origin-pill--static" data-origin-static><svg class="origin-pill__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg><span class="origin-pill__text"><span class="origin-pill__label">Starting point</span><strong>RP demo origin</strong></span></div>
+  <p class="demo-mode-note" data-demo-mode-note>RP demo mode · estimated distances, not walking times · fictional sample data.</p>
+</section>
+<% } %>
 <section id="smart-match" aria-labelledby="results-title">
 <div class="match-bar"><h2 class="match-bar__title" id="results-title">Your smart match</h2><button class="match-bar__edit" type="button" data-sheet-open aria-haspopup="dialog">Edit match</button></div>
 <div data-match-region data-location-ready="<%= locationAttempted ? 'true' : 'false' %>" aria-live="polite" aria-busy="<%= recommendation || showOnboarding ? 'false' : 'true' %>">

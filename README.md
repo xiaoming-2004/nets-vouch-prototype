@@ -61,6 +61,8 @@ Home has a text box, six food chips (Anything, Rice dishes, Noodles, Healthy bow
 
 ### Starting point and Google walking times (Jolene Step 6)
 
+> **S$0 mode (Task 9).** This deployment operates with Google disabled: no Google key is connected to it, and the controls below are replaced by a static RP demo origin. Google support is dormant and runs only when `GOOGLE_SERVICES_ENABLED` is exactly `true` plus the specific key. See `docs/task9-zero-cost-deployment.md`.
+
 Home has a "Starting point" panel. The default is the labelled **RP demo origin** (stored estimates, not routed). A user can press **Use my location** (accuracy within 150 m) or **Search for a place** (Google Place Autocomplete, Singapore only) to see Google Maps walking minutes and metres to the fictional sample merchants. Live requests use `POST /api/recommend/live` (or `POST /api/recommend/natural` with a `location`); `GET /api/recommend` never accepts coordinates. The origin stays in browser memory, is sent only in the POST body and to Google's Routes API for that request, and is never stored, logged or returned. Walking times appear with "Google Maps" attribution and the walking warning, and exist only in the active journey. Keys: `GOOGLE_MAPS_BROWSER_API_KEY` (referrer-restricted, Maps JavaScript and Places only) and a separate server-only `GOOGLE_ROUTES_API_KEY` (Routes API only). Details, quotas and compliance: `docs/jolene-step6-google-walking-routes.md`.
 
 One overall deadline covers discovery, dietary research and ranking for each request, and every
