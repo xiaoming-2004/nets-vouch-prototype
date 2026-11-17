@@ -84,10 +84,11 @@ const database = {
   users: new Map(), merchants: new Map(), calls: [], failing: false, catalogueFailing: false,
   activityFailing: false, feedbackReadFailing: false, feedbackWriteFailing: false,
   resetFailing: false, resetDeleteFailing: false, feedbackRows: [], nextFeedbackId: 1, sampleActivityRows: task3.activityRows(),
+  menuRows: [], menuFailing: false, menuUnfiltered: false,
   reset() { this.users.clear(); this.merchants.clear(); this.calls.length = 0; this.failing = false;
     this.catalogueFailing = false; this.activityFailing = false; this.feedbackReadFailing = false;
     this.feedbackWriteFailing = false; this.resetFailing = false; this.resetDeleteFailing = false; this.feedbackRows = [];
-    this.nextFeedbackId = 1; this.sampleActivityRows = task3.activityRows(); },
+    this.nextFeedbackId = 1; this.sampleActivityRows = task3.activityRows(); this.menuRows = []; this.menuFailing = false; this.menuUnfiltered = false; },
   seedMerchant(row) { this.merchants.set(row.merchant_id, { ...row }); },
   seedUser(id, values = {}) { this.users.set(id, { ...defaults(), user_id: id, display_name: id, ...values }); },
   seedFeedback(values = {}) {
@@ -114,6 +115,15 @@ const database = {
       assert.equal(typeof params[0], 'string');
       const row = this.merchants.get(params[0]);
       return [row && !Array.isArray(row) ? [{ ...row }] : [], []];
+    }
+    if (/^SELECT i\.item_id, i\.merchant_id, .* FROM merchant_menu_items i LEFT JOIN merchant_menu_item_terms t ON t\.item_id = i\.item_id WHERE i\.merchant_id IN \((\?, )*\?\) AND i\.availability = 'AVAILABLE' ORDER BY i\.merchant_id, i\.sort_order, i\.item_id, t\.term_kind, t\.term$/.test(text)) {
+      if (this.menuFailing) throw new Error('simulated private menu database detail');
+      assert.equal((text.match(/\?/g) || []).length, params.length);
+      const wanted = new Set(params);
+      const key = row => [row.merchant_id, String(1000 + Number(row.sort_order)), row.item_id, row.term_kind || '', row.term || ''].join('|');
+      // menuUnfiltered simulates a misbehaving source that returns rows outside the requested merchants.
+      return [this.menuRows.filter(row => row === null || this.menuUnfiltered || (wanted.has(row.merchant_id) && row.availability === 'AVAILABLE'))
+        .sort((a, b) => key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0).map(row => ({ ...row })), []];
     }
     if (/^SELECT m\.merchant_id, d\.dataset_key, d\.sample_label, d\.timezone_name,/.test(text) &&
         /FROM merchants m JOIN sample_datasets d/.test(text)) {

@@ -24,6 +24,8 @@ const merchantActivity = require('./merchant-activity');
 const rejectionFeedback = require('./rejection-feedback');
 const naturalLanguage = require('./natural-language-intent');
 const walkingRoutes = require('./walking-routes');
+const foodVocabulary = require('./food-vocabulary');
+const merchantMenu = require('./merchant-menu');
 const { getAgentRecommendations } = require('./nets_agent');
 
 const app = express();
@@ -1009,11 +1011,17 @@ function snapshotMerchant(merchant) {
   return merchant ? JSON.parse(JSON.stringify(merchant)) : null;
 }
 
-// Google walking-route facts belong only to the active journey snapshot. Completed payments and
-// shared Vouch offers are retained longer (and shared across sessions), so they never carry them.
+// Google walking-route facts and the recommended sample menu item belong only to the active journey
+// snapshot. Completed payments and shared Vouch offers are retained longer (and shared across sessions),
+// and a recommendation must never read as a purchase, so they never carry either.
 function snapshotMerchantWithoutTravel(merchant) {
   const copy = snapshotMerchant(merchant);
-  if (copy) delete copy.travel;
+  if (copy) {
+    // The match reasons quote the recommended item and its price, so they go with it.
+    if (copy.recommendedMenuItem) delete copy.matchReasons;
+    delete copy.travel;
+    delete copy.recommendedMenuItem;
+  }
   return copy;
 }
 
@@ -1177,11 +1185,13 @@ function sanitizeCraving(value) {
 // compared or required; the caller enforces the routed walking time instead.
 function merchantMatchesProfile(merchant, profile, options) {
   const skipDistance = Boolean(options && options.skipStoredDistance);
+  // Task 7: with a grounded food requirement the matched item's exact price is judged instead.
+  const skipPrice = Boolean(options && options.skipStoredPrice);
   if (merchant.source === 'mysql' && (!Number.isFinite(merchant.price) ||
       (!skipDistance && !Number.isFinite(merchant.distanceMetres)))) return false;
   if (merchant.source === 'mysql' && isActiveRestriction(profile.dietaryPreference) &&
       !merchantDeclaresDiet(merchant, profile.dietaryPreference)) return false;
-  if (merchant.price !== null && merchant.price > profile.budget) return false;
+  if (!skipPrice && merchant.price !== null && merchant.price > profile.budget) return false;
   // Places API merchants carry real distanceMetres; use it for precise filtering.
   // Local demo merchants only have distanceMinutes, so fall back to the coarser check.
   const maxMetres = profile.maxDistanceMinutes * WALKING_METRES_PER_MINUTE;
@@ -3742,6 +3752,7 @@ app.get('/home', function(req, res) {
     matchingAgain: req.query.matching === 'again', resetComplete: req.query.reset === 'done',
     homeGreeting: getHomeGreeting(),
     diningDateTime: getSingaporeDateTimeInputValue(),
+    foodChoiceOptions: foodVocabulary.FOOD_CHOICES,
     showOnboarding: !demo.hasSetPreferences, locationAttempted: demo.locationAttempted,
     mapsBrowserKey: String(process.env.GOOGLE_MAPS_BROWSER_API_KEY || '').trim(),
     settingsError: req.query.error === 'invalid'
@@ -4008,6 +4019,18 @@ function recommendationInput(query, profile) {
     const raw = scalar('cuisine');
     if (!isValidMoodCuisine(raw)) errors.cuisine = 'unsupported-value'; else cuisine = raw;
   }
+  // Task 7: foodCategory is a HARD grounded requirement; the legacy `cuisine` stays a soft preference.
+  let foodCategory = null;
+  if (supplied('foodCategory')) {
+    const raw = scalar('foodCategory');
+    if (raw === null || foodVocabulary.FOOD_CATEGORIES.indexOf(raw) === -1) errors.foodCategory = 'unsupported-value';
+    else foodCategory = raw;
+  }
+  if (supplied('cuisine') && foodCategory !== null && !errors.cuisine) {
+    const legacy = foodVocabulary.LEGACY_CUISINE_TO_FOOD[cuisine];
+    const concrete = function(value) { return Boolean(value) && value !== 'any' && foodVocabulary.FOOD_CATEGORIES.indexOf(value) !== -1; };
+    if (concrete(legacy) && concrete(foodCategory) && legacy !== foodCategory) errors.cuisine = 'conflicts-with-foodCategory';
+  }
   let dietaryPreference = normaliseDietaryPreference(profile.dietaryPreference);
   if (supplied('dietaryPreference')) {
     const raw = scalar('dietaryPreference');
@@ -4028,9 +4051,9 @@ function recommendationInput(query, profile) {
   if (supplied('lat')) errors.lat = 'unsupported-parameter';
   if (supplied('lng')) errors.lng = 'unsupported-parameter';
   if (Object.keys(errors).length) return { errors };
-  return { budget, maxDistanceMinutes, cuisine, dietaryPreference, diningDate, diningTime,
+  return { budget, maxDistanceMinutes, cuisine, foodCategory, dishTerms: [], dietaryPreference, diningDate, diningTime,
     isoWeekday: singaporeIsoWeekday(diningDate),
-    explicit: { budget: supplied('budget'), maxDistance: supplied('maxDistance'), cuisine: supplied('cuisine') } };
+    explicit: { budget: supplied('budget'), maxDistance: supplied('maxDistance'), cuisine: supplied('cuisine') || supplied('foodCategory') } };
 }
 
 function activityScore(activity) {
@@ -4048,9 +4071,21 @@ function recommendationActivityMetadata(results) {
     disclosure: representative.disclosure };
 }
 
-function recommendationReasons(merchant, profile, activity) {
+function recommendationReasons(merchant, profile, activity, requirement) {
   const reasons = [];
-  if (Number.isFinite(merchant.price)) reasons.push('Typical price $' + merchant.price.toFixed(2) +
+  const recommended = merchant.recommendedMenuItem;
+  if (recommended) {
+    // The exact stored item price controls budget when an item is matched; the typical price is shown apart.
+    reasons.push('Recommended item price $' + recommended.price.toFixed(2) + ' is within your $' + profile.budget.toFixed(2) + ' budget.');
+    if (requirement && requirement.category) {
+      const choice = foodVocabulary.FOOD_CHOICES.filter(function(c) { return c.value === requirement.category; })[0];
+      reasons.push('Matches your ' + choice.label.toLowerCase() + ' choice on this fictional sample menu item.');
+    }
+    recommended.matched.forEach(function(entry) {
+      reasons.push(entry.basis === 'exact' ? 'Matches “' + entry.term + '” on this sample menu item.'
+        : 'Covers “' + entry.term + '” through this item\'s categories and tags (not an exact dish name).');
+    });
+  } else if (Number.isFinite(merchant.price)) reasons.push('Typical price $' + merchant.price.toFixed(2) +
     ' is within your $' + profile.budget.toFixed(2) + ' budget.');
   if (getMoodMatchState(merchant, profile.moodCuisine) === MATCH_STATE.MATCH) {
     reasons.push('Cuisine information matches your ' + getMoodCuisineLabel(profile.moodCuisine).toLowerCase() + ' preference.');
@@ -4063,6 +4098,14 @@ function recommendationReasons(merchant, profile, activity) {
     reasons.push('Usually ' + activity.comparison + ' at this time based on fictional sample history.');
   }
   return reasons;
+}
+
+// The request's food requirement: a hard category (never `any`) plus the dish words the language model
+// extracted from the user's own text. Dish words are only ever supplied by a validated interpretation.
+function foodRequirementOf(input) {
+  const category = input.foodCategory && input.foodCategory !== 'any' ? input.foodCategory : null;
+  const rawTerms = Array.isArray(input.dishTerms) ? input.dishTerms : [];
+  return { category: category, rawTerms: rawTerms, active: Boolean(category) || rawTerms.length > 0 };
 }
 
 // Shared deterministic core for GET /api/recommend and POST /api/recommend/natural. `input` is the
@@ -4100,8 +4143,44 @@ async function buildRecommendationResponse(req, input, live) {
     catalogue = { source: 'demo-fallback', status: 'unavailable' };
   }
 
-  const eligibleStored = getEligibleMerchants(apiProfile, merchants.filter(m => Number.isFinite(m.price)),
-    Array.from(learning.excludedMerchantIds), demo, liveOrigin ? { skipStoredDistance: true } : undefined);
+  // Task 7: the menu is read ONLY when a food category or dish term is requested, in one batched query.
+  // Any problem with the menu read fails closed with a generic 503 before any session change.
+  const foodRequirement = foodRequirementOf(input);
+  let menu = null;
+  let groundedRequirement = null;
+  let menuMeta = null;
+  if (foodRequirement.active) {
+    const menuUnavailable = { status: 503, body: { error: { code: 'menu-catalogue-unavailable' } } };
+    if (catalogue.source !== 'mysql') return menuUnavailable;
+    try {
+      menu = merchants.length ? await merchantMenu.loadMenu(db, merchants) : new Map();
+    } catch (error) {
+      return menuUnavailable;
+    }
+    const classified = merchantMenu.classifyTerms(menu, foodRequirement.rawTerms);
+    groundedRequirement = { category: foodRequirement.category, terms: classified.applied };
+    menuMeta = { status: 'available', label: merchantMenu.SAMPLE_LABEL,
+      appliedTerms: classified.applied.map(function(term) { return term.phrase; }), unsupportedTerms: classified.unsupported };
+  }
+  const grounded = Boolean(groundedRequirement && (groundedRequirement.category || groundedRequirement.terms.length));
+  const matchOptions = {};
+  if (liveOrigin) matchOptions.skipStoredDistance = true;
+  if (grounded) matchOptions.skipStoredPrice = true;
+  const eligibleBase = getEligibleMerchants(apiProfile, merchants.filter(m => Number.isFinite(m.price)),
+    Array.from(learning.excludedMerchantIds), demo, Object.keys(matchOptions).length ? matchOptions : undefined);
+  // Food matching can only NARROW the eligible set (budget, diet, campaign, rejection are already applied).
+  const menuBonus = new Map();
+  let eligibleStored = eligibleBase;
+  if (grounded) {
+    eligibleStored = [];
+    eligibleBase.forEach(function(m) {
+      const match = merchantMenu.matchMerchant(menu.get(m.id), groundedRequirement,
+        { budget: input.budget, dietary: input.dietaryPreference });
+      if (!match) return;
+      menuBonus.set(m.id, merchantMenu.tierBonus(match));
+      eligibleStored.push(Object.assign({}, m, { recommendedMenuItem: merchantMenu.toRecommendedItem(match, groundedRequirement) }));
+    });
+  }
   let eligible = eligibleStored;
   let travelSummary = null;
   if (liveOrigin) {
@@ -4155,6 +4234,11 @@ async function buildRecommendationResponse(req, input, live) {
       historyWindowDays: rejectionFeedback.HISTORY_DAYS }
   };
   if (travelSummary) metadata.travel = travelSummary;
+  if (menuMeta) {
+    metadata.request.foodCategory = input.foodCategory || null;
+    metadata.request.dishTerms = menuMeta.appliedTerms.slice();
+    metadata.menu = menuMeta;
+  }
 
   if (!openEligible.length) {
     demo.lastApiRecommendations = [];
@@ -4166,7 +4250,9 @@ async function buildRecommendationResponse(req, input, live) {
   const scored = openEligible.map(function(m) {
     let score = 150 - (m.travel ? m.travel.walkingMetres / 20 : distancePenalty(m));
     if (classifyMealEligibility(m) === MEAL_ELIGIBILITY.UNCERTAIN) score -= 60;
-    if (m.price !== null) score += Math.max(0, apiProfile.budget - m.price);
+    const scoringPrice = m.recommendedMenuItem ? m.recommendedMenuItem.price : m.price;
+    if (scoringPrice !== null) score += Math.max(0, apiProfile.budget - scoringPrice);
+    score += menuBonus.get(m.id) || 0;
     if (merchantMentionsCraving(m, apiProfile.craving)) score += 100;
     if (getDietaryMatchState(m, apiProfile.dietaryPreference) === MATCH_STATE.MATCH) score += 35;
     if (getMoodMatchState(m, apiProfile.moodCuisine) === MATCH_STATE.MATCH) {
@@ -4195,7 +4281,7 @@ async function buildRecommendationResponse(req, input, live) {
     const merchant = item.merchant;
     const campaign = findCampaignForMerchant(merchant, demo);
     return { ...merchant, feedbackToken: item.feedbackToken, usualActivity: item.activity,
-      matchReasons: recommendationReasons(merchant, apiProfile, item.activity),
+      matchReasons: recommendationReasons(merchant, apiProfile, item.activity, groundedRequirement),
       catalogueTerms: { rewardAmount: campaign.rewardAmount,
         rewardLabel: campaign.rewardLabel, minimumEligibleSpend: campaign.minimumEligibleSpend } };
   });
@@ -4219,13 +4305,19 @@ async function buildRecommendationResponse(req, input, live) {
       cuisine: m.category || null,
       feedbackToken: item.feedbackToken,
       usualActivity: item.activity,
-      matchReasons: recommendationReasons(m, apiProfile, item.activity),
+      matchReasons: recommendationReasons(m, apiProfile, item.activity, groundedRequirement),
       campaign: campaign ? {
         rewardAmount: campaign.rewardAmount,
         rewardLabel: campaign.rewardLabel,
         minimumEligibleSpend: campaign.minimumEligibleSpend
       } : null
     };
+    if (m.recommendedMenuItem) {
+      // A recommendation, never a purchase. The typical merchant price stays in `price`; the item's own
+      // exact price is `recommendedMenuItem.price`.
+      card.typicalPrice = m.price;
+      card.recommendedMenuItem = m.recommendedMenuItem;
+    }
     if (m.travel) {
       // Route facts for display only. The fictional sample destination lets the BROWSER build a
       // directions link; the server never receives or returns the origin.
@@ -4280,7 +4372,7 @@ async function liveRecommendationResult(req, input, origin) {
   }
 }
 
-const LIVE_REQUEST_KEYS = ['location', 'budget', 'maxDistance', 'cuisine', 'dietaryPreference', 'diningDate', 'diningTime'];
+const LIVE_REQUEST_KEYS = ['location', 'budget', 'maxDistance', 'cuisine', 'foodCategory', 'dietaryPreference', 'diningDate', 'diningTime'];
 
 // Strict body validation. Error details name fields only and never echo values.
 function liveRecommendationRequest(body, profile) {
@@ -4300,7 +4392,7 @@ function liveRecommendationRequest(body, profile) {
   }
   take('budget', value => typeof value === 'number', String);
   take('maxDistance', value => typeof value === 'number' && Number.isInteger(value), String);
-  ['cuisine', 'dietaryPreference', 'diningDate', 'diningTime'].forEach(function(name) {
+  ['cuisine', 'foodCategory', 'dietaryPreference', 'diningDate', 'diningTime'].forEach(function(name) {
     take(name, value => typeof value === 'string', value => value);
   });
   const input = recommendationInput(query, profile);
@@ -4330,6 +4422,7 @@ app.post('/api/recommend/live', async function(req, res) {
 function naturalLanguageFailure(res, error) {
   const body = { error: { code: error.code } };
   if (error.retryable) body.error.retryable = true;
+  if (Array.isArray(error.fields)) body.error.fields = error.fields;
   if (Array.isArray(error.notApplied) && error.notApplied.length) body.notApplied = error.notApplied;
   if (error.retryAfterSeconds) res.set('Retry-After', String(error.retryAfterSeconds));
   return res.status(error.status || 502).json(body);
@@ -4350,6 +4443,20 @@ app.post('/api/recommend/natural', async function(req, res) {
       origin = located.value;
       if (!walkingRoutes.isConfigured()) throw new walkingRoutes.WalkingRoutesError('walking-routes-not-configured');
     }
+    // Task 7: chips the user actively touched (untouched defaults are never sent). Validated before any call.
+    const chips = { food: null, dietary: null };
+    const chipErrors = {};
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'foodCategory')) {
+      if (typeof req.body.foodCategory === 'string' && foodVocabulary.FOOD_CATEGORIES.indexOf(req.body.foodCategory) !== -1) chips.food = req.body.foodCategory;
+      else chipErrors.foodCategory = 'unsupported-value';
+    }
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'dietaryPreference')) {
+      if (typeof req.body.dietaryPreference === 'string' && isValidDietaryPreference(req.body.dietaryPreference)) chips.dietary = req.body.dietaryPreference;
+      else chipErrors.dietaryPreference = 'unsupported-value';
+    }
+    if (Object.keys(chipErrors).length) {
+      return res.status(400).json({ error: { code: 'invalid-recommendation-input', fields: chipErrors } });
+    }
     if (!naturalLanguage.isConfigured()) throw new naturalLanguage.NaturalLanguageError('natural-language-not-configured');
     // Kept on the session itself (not in demo) so Reset Demo does not clear the limit.
     const limit = naturalLanguage.consumeRateLimit(req.session.naturalLanguageRequests, Date.now());
@@ -4358,12 +4465,24 @@ app.post('/api/recommend/natural', async function(req, res) {
       throw new naturalLanguage.NaturalLanguageError('natural-language-rate-limited', { retryAfterSeconds: limit.retryAfterSeconds });
     }
     const content = await naturalLanguage.callNaturalLanguageProvider(naturalLanguage.buildMessages(text));
-    const interpretation = naturalLanguage.validateInterpretation(content);
+    const interpretation = naturalLanguage.validateInterpretation(content, { text: text });
+    // An actively selected chip and a different typed requirement for the same thing is a conflict: report it,
+    // never guess. Equal values and untouched chips combine normally. A typed requirement is never dropped.
+    const conflicts = [];
+    if (chips.food !== null && interpretation.foodCategory !== null && chips.food !== interpretation.foodCategory) conflicts.push('food');
+    if (chips.dietary !== null && interpretation.dietary !== null && chips.dietary !== interpretation.dietary) conflicts.push('dietary');
+    if (conflicts.length) {
+      throw new naturalLanguage.NaturalLanguageError('natural-language-conflicts-with-selection', { fields: conflicts });
+    }
+    if (chips.food !== null) interpretation.foodCategory = chips.food;
+    if (chips.dietary !== null) interpretation.dietary = chips.dietary;
     const resolution = naturalLanguage.resolveInterpretation(interpretation, {
-      savedMaxDistanceMinutes: demo.profile.maxDistanceMinutes, text: text, live: Boolean(origin)
+      savedMaxDistanceMinutes: demo.profile.maxDistanceMinutes, text: text, live: Boolean(origin),
+      selected: { food: chips.food !== null, dietary: chips.dietary !== null }
     });
     const input = recommendationInput(resolution.query, demo.profile);
     if (input.errors) throw new naturalLanguage.NaturalLanguageError('natural-language-invalid-output');
+    input.dishTerms = resolution.dishTerms;
     let result;
     if (origin) {
       result = await liveRecommendationResult(req, input, origin);
@@ -4377,9 +4496,12 @@ app.post('/api/recommend/natural', async function(req, res) {
     }
     if (result.status !== 200) return res.status(result.status).json(result.body);
     logDiscovery('Natural-language request accepted (' + text.length + ' characters)');
+    const unsupportedTerms = result.body.metadata && result.body.metadata.menu ? result.body.metadata.menu.unsupportedTerms : [];
     return res.json(Object.assign({}, result.body, { interpretation: {
       source: 'llm', model: naturalLanguage.configuredModel(), understood: resolution.understood,
-      notApplied: resolution.notApplied, resolved: resolution.resolved
+      notApplied: resolution.notApplied.concat(unsupportedTerms.map(function(term) {
+        return '“' + term + '”: not applied. The sample menu has no matching item.';
+      })), resolved: resolution.resolved
     } }));
   } catch (error) {
     if (error instanceof walkingRoutes.WalkingRoutesError) return liveFailure(res, error);
@@ -4455,6 +4577,13 @@ app.post('/recommendation/next', restartMatch);
 app.post('/recommendation/try-again', restartMatch);
 app.post('/recommendation/widen-distance', restartMatch);
 
+function recommendedItemSatisfiesDiet(item, dietary) {
+  if (dietary === 'halal') return item.dietary.halal === true;
+  if (dietary === 'vegetarian') return item.dietary.vegetarian === true || item.dietary.vegan === true;
+  if (dietary === 'vegan') return item.dietary.vegan === true;
+  return true;
+}
+
 app.post('/recommendation/accept', function(req, res) {
   const demo = req.session.demo;
   const batchMerchant = Array.isArray(demo.lastApiRecommendations) && demo.lastApiRecommendations.includes(req.body.merchantId)
@@ -4462,10 +4591,15 @@ app.post('/recommendation/accept', function(req, res) {
   const merchant = batchMerchant || findMerchantForDemo(demo, demo.selectedMerchantId);
   const acceptProfile = batchMerchant ? demo.catalogueBatchProfile || demo.profile : demo.profile;
   // A live batch merchant is judged only by its routed walking time, never by the stored RP estimate.
-  const withinProfile = Boolean(merchant) && (merchant.travel
-    ? merchantMatchesProfile(merchant, acceptProfile, { skipStoredDistance: true }) &&
-      Number.isFinite(merchant.travel.walkingMinutes) && merchant.travel.walkingMinutes <= acceptProfile.maxDistanceMinutes
-    : merchantMatchesProfile(merchant, acceptProfile));
+  // A recommended sample menu item is judged by its own exact price and dietary flags, not the typical price.
+  const matchOptions = { skipStoredDistance: Boolean(merchant && merchant.travel),
+    skipStoredPrice: Boolean(merchant && merchant.recommendedMenuItem) };
+  const itemAcceptable = !merchant || !merchant.recommendedMenuItem || (
+    merchant.recommendedMenuItem.price <= acceptProfile.budget &&
+    recommendedItemSatisfiesDiet(merchant.recommendedMenuItem, acceptProfile.dietaryPreference));
+  const withinProfile = Boolean(merchant) && itemAcceptable && merchantMatchesProfile(merchant, acceptProfile, matchOptions) &&
+    (!merchant.travel || (Number.isFinite(merchant.travel.walkingMinutes) &&
+      merchant.travel.walkingMinutes <= acceptProfile.maxDistanceMinutes));
   if (!merchant || merchant.id !== req.body.merchantId || !withinProfile || !findCampaignForMerchant(merchant, demo)) {
     return res.redirect('/home?error=offer');
   }

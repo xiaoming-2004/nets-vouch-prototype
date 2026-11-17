@@ -427,6 +427,25 @@ fieldset.field>legend.field-label+* { clear:both; }
 .dining-time-controls input { width:100%; min-height:44px; padding:9px 10px; border:1px solid var(--border); border-radius:var(--r-md); background:white; color:var(--text); font:inherit; }
 .dining-time-controls .button { width:auto; min-height:44px; margin:0; white-space:nowrap; }
 .dining-time-form .field-hint { margin:7px 0 0; }
+/* Task 7 functional chips (final visual polish is Task 8) */
+.chip-group { margin:12px 0 0; }
+.chip-title { margin:0 0 6px; font-size:13px; font-weight:650; }
+.chip-grid { display:grid; gap:8px; }
+.chip-grid--food { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.chip-grid--diet { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.chip { min-height:44px; padding:8px 10px; border:1px solid var(--border); border-radius:var(--r-md); background:#fff; color:var(--text); font:inherit; font-size:13.5px; font-weight:600; line-height:1.2; text-align:center; cursor:pointer; }
+.chip[aria-pressed="true"] { border-color:var(--nets-navy); background:var(--nets-blue-soft); color:var(--nets-navy); }
+.chip.is-default[aria-pressed="true"] { border-style:dashed; }
+.chip:focus-visible { outline:3px solid var(--focus); outline-offset:2px; }
+.chip:disabled { opacity:.6; cursor:not-allowed; }
+.chip-group[aria-busy="true"] { cursor:progress; }
+.chip-hint { margin:8px 0 10px; }
+.nl-form > .button { margin-top:6px; }
+.recommended-item { display:block; margin:6px 0; }
+.recommended-item__line { display:block; font-size:14px; font-weight:650; color:var(--text); }
+.recommended-item__note { display:block; font-size:12px; color:var(--text-2); }
+@media (max-width:360px) { .chip-grid--food { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+
 /* Starting point (live Google walking times) */
 .origin-panel { margin:0 0 12px; padding:12px 14px; border:1px solid var(--border); border-radius:var(--r-lg); background:var(--surface); }
 .origin-panel h2 { margin:0 0 6px; font-size:15px; }

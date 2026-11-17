@@ -42,6 +42,7 @@ var activityCopy = usual.status === 'available'
 // Without that line it falls back to the facts row.
 var noteInRow = locationNotice && !whyText;
 %>
+<% if (recommendation.recommendedMenuItem) { %><p class="result-facts"><%- include('partials/recommended-item', { item: recommendation.recommendedMenuItem }) %></p><% } %>
 <% if (recommendation.itemName || noteInRow) { %>
 <p class="result-facts"><% if (recommendation.itemName) { %><span class="result-dish"><span class="result-dish-name">Try: <%= recommendation.itemName %></span><% if (recommendation.price !== null) { %><span class="result-dish-price">$<%= recommendation.price.toFixed(2) %></span><% } %></span><% } %><% if (noteInRow) { %><span class="result-note">Using demo location</span><% } %></p>
 <% } %>

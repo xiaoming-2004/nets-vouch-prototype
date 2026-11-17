@@ -42,8 +42,24 @@
   <label for="nl-text">Describe what you feel like</label>
   <div class="nl-controls">
     <input id="nl-text" name="text" type="text" maxlength="200" autocomplete="off" placeholder="e.g. Something light nearby under $10 at 2 pm" aria-describedby="nl-hint nl-status">
-    <button class="button" type="submit" data-nl-submit>Find matches</button>
   </div>
+  <% var savedDiet = ['none', 'halal', 'vegetarian', 'vegan'].indexOf(profile.dietaryPreference) !== -1 ? profile.dietaryPreference : 'none'; %>
+  <div class="chip-group" role="group" aria-labelledby="food-chip-title" data-chip-group="food" data-chip-default="any">
+    <p class="chip-title" id="food-chip-title">Food choice</p>
+    <div class="chip-grid chip-grid--food">
+      <% foodChoiceOptions.forEach(function(option) { %><button type="button" class="chip" data-chip-value="<%= option.value %>" aria-pressed="<%= option.value === 'any' ? 'true' : 'false' %>"><%= option.label %></button>
+      <% }); %>
+    </div>
+  </div>
+  <div class="chip-group" role="group" aria-labelledby="diet-chip-title" data-chip-group="dietary" data-chip-default="<%= savedDiet %>">
+    <p class="chip-title" id="diet-chip-title">Dietary</p>
+    <div class="chip-grid chip-grid--diet">
+      <% dietaryPreferenceOptions.forEach(function(option) { %><button type="button" class="chip" data-chip-value="<%= option.value %>" aria-pressed="<%= option.value === savedDiet ? 'true' : 'false' %>"><%= option.label %></button>
+      <% }); %>
+    </div>
+  </div>
+  <p class="field-hint chip-hint">Highlighted choices are your defaults and are only used if you do not change them. Choices are for this request only; your saved profile is not changed.</p>
+  <button class="button" type="submit" data-nl-submit>Find my match</button>
   <p class="field-hint" id="nl-hint">AI interprets your words; fixed rules choose merchants. Up to 200 characters. The manual filters below still work.</p>
   <p class="nl-status" id="nl-status" data-nl-status role="status" aria-live="polite" hidden></p>
   <div class="nl-understood" data-nl-understood hidden></div>

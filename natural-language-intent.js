@@ -8,6 +8,8 @@
 // deterministically (Asia/Singapore), and then re-validated by the Step 3 recommendation input
 // rules before the existing deterministic engine runs.
 
+const vocabulary = require('./food-vocabulary');
+
 const MAX_TEXT_CHARS = 200;
 const DEFAULT_MODEL = 'openai/gpt-oss-20b';
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
@@ -23,7 +25,15 @@ const CUISINES = ['any', 'rice', 'noodles', 'pasta', 'soup', 'bread'];
 const DIETARY = ['none', 'halal', 'vegetarian', 'vegan'];
 const DAY_REFS = ['today', 'tomorrow', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const MEAL_PERIODS = ['breakfast', 'lunch', 'dinner', 'supper'];
-const KEYS = ['budgetMax', 'distance', 'cuisine', 'dietary', 'dayRef', 'time', 'mealPeriod', 'unsupported'];
+// v1 is the original Step 5 key set; v2 (Task 7) adds foodCategory and dishTerms. The validator accepts exactly
+// one of the two key sets; the provider is always sent the strict v2 schema.
+const KEYS_V1 = ['budgetMax', 'distance', 'cuisine', 'dietary', 'dayRef', 'time', 'mealPeriod', 'unsupported'];
+const KEYS = KEYS_V1.concat(['foodCategory', 'dishTerms']);
+// Words in the user's own text that ground a foodCategory value (singularised tokens). Without one of
+// them the model's category is treated as invented.
+const CATEGORY_GROUNDING = { any: ['anything', 'any', 'whatever', 'everything', 'anywhere', 'surprise'],
+  rice: ['rice'], noodles: ['noodle'], 'healthy-bowls': ['healthy', 'bowl'], indian: ['indian'], wraps: ['wrap'] };
+const DIETARY_NONE_GROUNDING = ['dietary', 'diet', 'restriction', 'restricted'];
 
 const MEAL_TIMES = { breakfast: '08:00', lunch: '12:00', dinner: '18:00', supper: '21:00' };
 // Inclusive minute-of-day windows used only to report a time/meal-period conflict.
@@ -42,7 +52,8 @@ const FAILURES = {
   'natural-language-invalid-output': 502,
   'natural-language-no-usable-constraint': 422,
   'natural-language-rate-limited': 429,
-  'natural-language-recommendation-unavailable': 503
+  'natural-language-recommendation-unavailable': 503,
+  'natural-language-conflicts-with-selection': 409
 };
 
 class NaturalLanguageError extends Error {
@@ -65,7 +76,11 @@ const INTERPRETATION_SCHEMA = {
   properties: {
     budgetMax: { type: ['number', 'null'], description: 'Maximum meal price in dollars, 1 to 1000, or null.' },
     distance: { type: ['string', 'null'], enum: ['nearby', null], description: '"nearby" only when the user says nearby/close/near; never a number.' },
-    cuisine: { type: ['string', 'null'], enum: CUISINES.concat([null]) },
+    cuisine: { type: ['string', 'null'], enum: CUISINES.concat([null]), description: 'Legacy field. Always null; use foodCategory and dishTerms.' },
+    foodCategory: { type: ['string', 'null'], enum: vocabulary.FOOD_CATEGORIES.concat([null]),
+      description: 'Broad food choice only: any, rice, noodles, healthy-bowls, indian or wraps, else null.' },
+    dishTerms: { type: 'array', items: { type: 'string' },
+      description: 'At most 3 verbatim dish or food words from the request (lowercase letters, digits, spaces, hyphens; 1 to 30 characters).' },
     dietary: { type: ['string', 'null'], enum: DIETARY.concat([null]) },
     dayRef: { type: ['string', 'null'], enum: DAY_REFS.concat([null]) },
     time: { type: ['string', 'null'], description: 'Explicit clock time as 24-hour HH:mm, or null.' },
@@ -81,7 +96,9 @@ const SYSTEM_PROMPT = [
   'Use null for anything the user did not mention. Never guess.',
   'budgetMax: dollars the user says they will spend at most (a number from 1 to 1000), else null.',
   'distance: "nearby" only if the user says nearby, close or near. Never output a number of minutes or metres. If the user states a specific distance or walking time (for example "within 5 minutes"), leave distance null and put that phrase in unsupported.',
-  'cuisine: rice, noodles, pasta, soup or bread only when the user asks for that staple; "any" only if the user says anything/no preference; else null.',
+  'cuisine: always null (legacy field).',
+  'foodCategory: "rice", "noodles", "healthy-bowls", "indian" or "wraps" only when the user asks for that broad kind of food; "any" only if the user says anything or no preference; else null.',
+  'dishTerms: up to 3 dish or food words copied verbatim from the request (for example "chicken rice", "soup", "light", "prata"). Never translate, rename or add words; never include halal, vegetarian or vegan; never include prices.',
   'dietary: halal, vegetarian or vegan only when the user states it; "none" only if the user says they have no dietary restrictions; else null.',
   'dayRef: today, tomorrow, or mon..sun when the user names a day, else null.',
   'time: a 24-hour HH:mm clock time only if the user states a time (2 pm becomes 14:00), else null. mealPeriod: breakfast, lunch, dinner or supper only if the user says so, else null.',
@@ -139,14 +156,16 @@ function enumOrNull(value, allowed) {
 }
 
 // Strict validation of the provider's JSON text. Any deviation rejects the whole response.
-function validateInterpretation(content) {
+function validateInterpretation(content, options) {
   let parsed;
   try { parsed = JSON.parse(String(content).trim()); } catch (error) { throw invalidOutput(); }
   if (!isPlainObject(parsed)) throw invalidOutput();
   const keys = Object.keys(parsed);
-  if (keys.length !== KEYS.length || !KEYS.every(function(key) { return Object.prototype.hasOwnProperty.call(parsed, key); })) {
-    throw invalidOutput();
-  }
+  const hasExactly = function(list) {
+    return keys.length === list.length && list.every(function(key) { return Object.prototype.hasOwnProperty.call(parsed, key); });
+  };
+  const v2 = hasExactly(KEYS);
+  if (!v2 && !hasExactly(KEYS_V1)) throw invalidOutput();
   let budgetMax = parsed.budgetMax;
   if (budgetMax !== null) {
     if (typeof budgetMax !== 'number' || !Number.isFinite(budgetMax) || budgetMax < 1 || budgetMax > MAX_BUDGET) throw invalidOutput();
@@ -169,7 +188,51 @@ function validateInterpretation(content) {
     const key = text.toLowerCase();
     if (!seen.has(key)) { seen.add(key); unsupported.push(text); }
   });
-  return { budgetMax, distance, cuisine, dietary, dayRef, time, mealPeriod, unsupported };
+  let foodCategory = null;
+  const dishTerms = [];
+  if (v2) {
+    foodCategory = enumOrNull(parsed.foodCategory, vocabulary.FOOD_CATEGORIES);
+    if (!Array.isArray(parsed.dishTerms) || parsed.dishTerms.length > vocabulary.MAX_DISH_TERMS) throw invalidOutput();
+    const seenTerms = new Set();
+    parsed.dishTerms.forEach(function(entry) {
+      if (typeof entry !== 'string') throw invalidOutput();
+      const term = entry.trim().toLowerCase();
+      if (!vocabulary.DISH_TERM_PATTERN.test(term) || /^[0-9 -]+$/.test(term)) throw invalidOutput();
+      const key = vocabulary.normalisePhrase(term);
+      if (!key) throw invalidOutput();
+      if (!seenTerms.has(key)) { seenTerms.add(key); dishTerms.push(term); }
+    });
+  }
+  // The legacy cuisine and the new category must not name two different concrete choices.
+  const legacyFood = Object.prototype.hasOwnProperty.call(vocabulary.LEGACY_CUISINE_TO_FOOD, cuisine) ? vocabulary.LEGACY_CUISINE_TO_FOOD[cuisine] : null;
+  const concrete = function(value) { return value !== null && value !== 'any' && vocabulary.FOOD_CATEGORIES.indexOf(value) !== -1; };
+  if (concrete(legacyFood) && concrete(foodCategory) && legacyFood !== foodCategory) throw invalidOutput();
+  const interpretation = { budgetMax, distance, cuisine, dietary, dayRef, time, mealPeriod, unsupported, foodCategory, dishTerms };
+  if (options && typeof options.text === 'string') checkAgainstText(interpretation, options.text, v2);
+  return interpretation;
+}
+
+// Deterministic safety checks of the model's reply against the user's own words. A reply that omits,
+// contradicts or invents a dietary requirement, or invents a food category or dish word, is rejected as a whole.
+function checkAgainstText(interpretation, text, v2) {
+  const textTokens = new Set(vocabulary.tokens(text));
+  const negated = vocabulary.negatedTokens(text);
+  const dietaryWords = vocabulary.DIETARY_WORDS.filter(function(word) { return textTokens.has(word); });
+  const positive = dietaryWords.filter(function(word) { return !negated.has(word); });
+  if (positive.length > 1) throw invalidOutput();
+  if (positive.length === 1 && interpretation.dietary !== positive[0]) throw invalidOutput();
+  if (positive.length === 0 && vocabulary.DIETARY_WORDS.indexOf(interpretation.dietary) !== -1) throw invalidOutput();
+  dietaryWords.forEach(function(word) {
+    if (negated.has(word) && interpretation.dietary === word) throw invalidOutput();
+  });
+  if (!v2) return;
+  if (interpretation.dietary === 'none' && !DIETARY_NONE_GROUNDING.some(function(word) { return textTokens.has(word); })) throw invalidOutput();
+  if (interpretation.foodCategory !== null &&
+      !CATEGORY_GROUNDING[interpretation.foodCategory].some(function(word) { return textTokens.has(word); })) throw invalidOutput();
+  interpretation.dishTerms.forEach(function(term) {
+    if (vocabulary.DIETARY_WORDS.some(function(word) { return vocabulary.tokens(term).indexOf(word) !== -1; })) throw invalidOutput();
+    if (!vocabulary.tokens(term).every(function(token) { return textTokens.has(token); })) throw invalidOutput();
+  });
 }
 
 function minutesOf(time) { return Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5)); }
@@ -195,11 +258,28 @@ const DISTANCE_ENTRY = /\d|\b(?:walk|walking|within|metres?|meters?|km|minutes?|
 function resolveInterpretation(interpretation, context) {
   const now = context.now || singaporeNow();
   const savedDistance = context.savedMaxDistanceMinutes;
+  const notApplied = [];
+  // Task 7: a food category or dish word that the user negated ("no rice", "without chicken") is never
+  // turned into a positive requirement; a value that came from an explicitly selected chip is not text.
+  const negated = vocabulary.negatedTokens(context.text || '');
+  const selected = context.selected || {};
+  let foodCategory = interpretation.foodCategory === undefined ? null : interpretation.foodCategory;
+  if (foodCategory !== null && foodCategory !== 'any' && !selected.food &&
+      CATEGORY_GROUNDING[foodCategory].some(function(word) { return negated.has(word); })) {
+    notApplied.push('“' + vocabulary.FOOD_CHOICES.filter(function(c) { return c.value === foodCategory; })[0].label +
+      '”: not applied. Negative food requests are not supported.');
+    foodCategory = null;
+  }
+  const dishTerms = [];
+  (Array.isArray(interpretation.dishTerms) ? interpretation.dishTerms : []).forEach(function(term) {
+    if (vocabulary.tokens(term).some(function(token) { return negated.has(token); })) {
+      notApplied.push('“' + term + '”: not applied. Negative food requests are not supported.');
+    } else dishTerms.push(term);
+  });
   const usable = interpretation.budgetMax !== null || interpretation.distance !== null ||
     interpretation.cuisine !== null || interpretation.dietary !== null || interpretation.dayRef !== null ||
-    interpretation.time !== null || interpretation.mealPeriod !== null;
+    interpretation.time !== null || interpretation.mealPeriod !== null || foodCategory !== null || dishTerms.length > 0;
 
-  const notApplied = [];
   interpretation.unsupported.forEach(function(entry) {
     notApplied.push(DISTANCE_ENTRY.test(entry)
       ? '“' + entry + '”: not applied. Set a walking limit with the manual filters instead.'
@@ -232,6 +312,13 @@ function resolveInterpretation(interpretation, context) {
     understood.push({ field: 'cuisine', label: 'Cuisine', value: interpretation.cuisine === 'any'
       ? 'Any (replaces your saved cuisine preference for this request)' : CUISINE_LABELS[interpretation.cuisine] });
   }
+  if (foodCategory !== null) {
+    query.foodCategory = foodCategory;
+    const choice = vocabulary.FOOD_CHOICES.filter(function(c) { return c.value === foodCategory; })[0];
+    understood.push({ field: 'foodCategory', label: 'Food', value: foodCategory === 'any'
+      ? 'Anything (no food requirement)' : choice.label });
+  }
+  if (dishTerms.length) understood.push({ field: 'dishTerms', label: 'Dish', value: dishTerms.join(', ') });
   if (interpretation.dietary !== null) {
     query.dietaryPreference = interpretation.dietary;
     understood.push({ field: 'dietary', label: 'Dietary', value: interpretation.dietary === 'none'
@@ -269,7 +356,7 @@ function resolveInterpretation(interpretation, context) {
     ' (Singapore time' + (timeSource === 'now' ? ', current time' : timeSource === 'mealPeriod' ? ', ' + interpretation.mealPeriod : '') + ')' });
 
   return {
-    query: query, understood: understood, notApplied: notApplied,
+    query: query, understood: understood, notApplied: notApplied, dishTerms: dishTerms, foodCategory: foodCategory,
     resolved: { diningDate: diningDate, diningTime: diningTime, isoWeekday: isoWeekday(diningDate),
       maxDistanceMinutes: savedDistance, distanceBasis: context.live ? 'google-walking-route' : 'demo-origin-estimate',
       routed: Boolean(context.live) }
@@ -357,7 +444,7 @@ function consumeRateLimit(store, nowMs) {
 
 module.exports = {
   MAX_TEXT_CHARS, DEFAULT_MODEL, GROQ_URL, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS, FAILURES,
-  INTERPRETATION_SCHEMA, MEAL_TIMES, NaturalLanguageError,
+  INTERPRETATION_SCHEMA, MEAL_TIMES, NaturalLanguageError, KEYS_V1,
   setClockForTest, singaporeNow, validateText, buildMessages, validateInterpretation,
   resolveInterpretation, configuredModel, isConfigured, callNaturalLanguageProvider, consumeRateLimit
 };

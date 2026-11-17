@@ -118,6 +118,8 @@ function diningRecommendationQuery() {
   const query = new URLSearchParams();
   query.set('diningDate', match[1]);
   query.set('diningTime', match[2]);
+  // Only chips the user actively changed are sent; untouched defaults are never explicit overrides.
+  chipState.params(query);
   return '?' + query.toString();
 }
 
@@ -207,7 +209,13 @@ function renderRecCard(r) {
     '<div class="rec-initial" aria-hidden="true">' + escHtml((r.merchantName || '').charAt(0)) + '</div>' +
     '<div class="rec-info">' +
     '<h2 class="rec-name">' + escHtml(r.merchantName) + '</h2>' +
-    (r.itemName
+    (r.recommendedMenuItem && Number.isFinite(r.recommendedMenuItem.price)
+      ? '<p class="rec-dish" data-recommended-item>Recommended: ' + escHtml(r.recommendedMenuItem.name) + ' · <strong>$' +
+        r.recommendedMenuItem.price.toFixed(2) + '</strong></p>' +
+        '<p class="rec-meta">Recommended item price · Typical merchant price ' +
+        (Number.isFinite(r.typicalPrice) ? '$' + r.typicalPrice.toFixed(2) : 'unavailable') + '</p>' +
+        '<p class="rec-meta">' + escHtml(r.recommendedMenuItem.label) + '</p>'
+      : r.itemName
       ? '<p class="rec-dish">' + escHtml(r.itemName) +
         (Number.isFinite(r.price) ? ' · ' + priceHtml : '') + '</p>'
       : '<p class="rec-dish">Typical price: ' + priceHtml + '</p>') +
@@ -294,6 +302,11 @@ function clearDirectionLinks(slots) {
   slots.forEach(function(slot) { slot.textContent = ''; });
 }
 
+function foodRequested(metadata) {
+  const request = metadata && metadata.request;
+  return Boolean(request && (request.foodCategory || (Array.isArray(request.dishTerms) && request.dishTerms.length)));
+}
+
 function renderRecommendationList(recommendations, catalogue, metadata) {
   const notice = catalogue && catalogue.source === 'demo-fallback'
     ? '<p class="report-note" role="status">Catalogue unavailable — showing demo merchants.</p>' : '';
@@ -306,6 +319,9 @@ function renderRecommendationList(recommendations, catalogue, metadata) {
       '<svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/>' +
       '<circle cx="12" cy="9.5" r="2.5"/></svg></div>' +
       (emptyCatalogue ? '<h2>No merchants in the catalogue</h2><p>The catalogue is currently empty.</p>'
+        : foodRequested(metadata)
+        ? '<h2>No sample menu item fits</h2><p>Nothing on the fictional sample menu matches your food choice with your other filters.</p>' +
+          '<button class="button" type="button" data-clear-food>Clear food choice</button>'
         : '<h2>No matches for your filters</h2><p>Try widening your distance or budget in <a href="/profile">Profile</a>.</p>') +
       '</section>';
   }
@@ -348,7 +364,8 @@ const ORIGIN_MESSAGES = {
   'walking-routes-invalid-response': 'Google Maps walking times could not be read.',
   'live-recommendation-unavailable': 'Recommendations are unavailable right now.',
   'location-request-rate-limited': 'Too many walking-time requests. Please wait a moment.',
-  'invalid-recommendation-input': 'That starting point could not be used. Choose a place in Singapore.'
+  'invalid-recommendation-input': 'That starting point could not be used. Choose a place in Singapore.',
+  'menu-catalogue-unavailable': 'The sample menu is unavailable right now. Try Anything or use the manual filters.'
 };
 const ORIGIN_RECOVERY = ' Your previous results are unchanged. Choose a starting point again, or use the RP demo origin.';
 
@@ -361,6 +378,7 @@ async function loadMatch(again) {
     return;
   }
   matchRegion.setAttribute('aria-busy', 'true');
+  chipState.setBusy(true);
   matchRegion.innerHTML = matchingMarkup(again);
   startMatchingStages();
   // Catalogue distances are estimates from the demo origin, not device GPS.
@@ -388,6 +406,7 @@ async function loadMatch(again) {
       '<a class="button" href="/home">Return Home</a></section>';
   }
   matchRegion.setAttribute('aria-busy', 'false');
+  chipState.setBusy(false);
 }
 const originModule = (function() {
   const panel = document.querySelector('[data-origin-panel]');
@@ -462,12 +481,13 @@ const originModule = (function() {
     const parts = diningParts();
     if (!parts) { setStatus('Choose a valid Singapore dining date and time.', true); return; }
     matchRegion.setAttribute('aria-busy', 'true');
+    chipState.setBusy(true);
     setStatus('Finding Google Maps walking times…', false);
     try {
       const response = await fetch('/api/recommend/live', { method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ location: { latitude: origin.latitude, longitude: origin.longitude },
-          diningDate: parts.diningDate, diningTime: parts.diningTime }) });
+        body: JSON.stringify(Object.assign({ location: { latitude: origin.latitude, longitude: origin.longitude },
+          diningDate: parts.diningDate, diningTime: parts.diningTime }, chipState.params({}))) });
       let body = null;
       try { body = await response.json(); } catch (error) { body = null; }
       if (!response.ok || !body || !Array.isArray(body.recommendations)) { failed(body); return; }
@@ -476,6 +496,7 @@ const originModule = (function() {
       failed(null);
     } finally {
       matchRegion.setAttribute('aria-busy', 'false');
+      chipState.setBusy(false);
     }
   }
   async function useDevice() {
@@ -566,6 +587,8 @@ const NL_ERROR_MESSAGES = {
   'natural-language-invalid-output': 'We could not safely understand that request. Try rephrasing it or use the manual filters.',
   'natural-language-no-usable-constraint': 'No supported constraint was found (budget, distance, cuisine, dietary, day or time). Try rephrasing or use the manual filters.',
   'natural-language-rate-limited': 'Too many requests. Please wait a moment and try again.',
+  'natural-language-conflicts-with-selection': 'Your typed request and your selected choices disagree. Change one of them and try again.',
+  'menu-catalogue-unavailable': 'The sample menu is unavailable right now. Try Anything or use the manual filters.',
   'natural-language-recommendation-unavailable': 'We understood your request but could not load recommendations just now. Your text is kept; try again or use the manual filters.'
 };
 
@@ -610,16 +633,23 @@ async function submitNaturalLanguage(form) {
   const input = form.querySelector('[name="text"]');
   const button = form.querySelector('[data-nl-submit]');
   const text = input.value.trim();
-  if (!text || text.length > 200) {
+  if (text.length > 200) {
     nlSetStatus(form, NL_ERROR_MESSAGES['invalid-natural-language-input'], true);
+    return;
+  }
+  if (!text) {
+    // No typed request: the chips, dining time and starting point drive the same deterministic engine.
+    nlSetStatus(form, '', false);
+    await loadMatch(false);
     return;
   }
   form.setAttribute('aria-busy', 'true');
   button.disabled = true;
+  chipState.setBusy(true);
   nlSetStatus(form, 'Interpreting your request…', false);
   try {
     const response = await fetch('/api/recommend/natural', { method: 'POST',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(originModule.withLocation({ text: text })) });
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(originModule.withLocation(Object.assign({ text: text }, chipState.params({})))) });
     let body = null;
     try { body = await response.json(); } catch (error) { body = null; }
     if (!response.ok || !body || !Array.isArray(body.recommendations)) {
@@ -653,8 +683,69 @@ async function submitNaturalLanguage(form) {
   } finally {
     form.setAttribute('aria-busy', 'false');
     button.disabled = false;
+    chipState.setBusy(false);
   }
 }
+// ---------------------------------------------------------------------------
+// Food and dietary chips (Task 7). Each group is untouched (its default is shown as pressed but is NOT sent)
+// or active (the user changed it). Tapping the active chip returns the group to untouched. Only active
+// groups are sent as explicit overrides; nothing here writes the saved profile. Chip state lives in this
+// closure only.
+// ---------------------------------------------------------------------------
+const chipState = (function() {
+  const groups = {};
+  Array.prototype.slice.call(document.querySelectorAll('[data-chip-group]')).forEach(function(element) {
+    groups[element.getAttribute('data-chip-group')] = { element: element, fallback: element.getAttribute('data-chip-default'),
+      active: null, buttons: Array.prototype.slice.call(element.querySelectorAll('[data-chip-value]')) };
+  });
+  function render(name) {
+    const group = groups[name];
+    const shown = group.active === null ? group.fallback : group.active;
+    group.buttons.forEach(function(button) {
+      const pressed = button.getAttribute('data-chip-value') === shown;
+      button.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+      button.classList.toggle('is-default', pressed && group.active === null);
+    });
+  }
+  function press(name, value) {
+    const group = groups[name];
+    if (group.active === value) group.active = null;
+    else if (group.active === null && value === group.fallback) return;
+    else group.active = value;
+    render(name);
+  }
+  Object.keys(groups).forEach(function(name) {
+    groups[name].element.addEventListener('click', function(event) {
+      const button = event.target.closest('[data-chip-value]');
+      if (button && !button.disabled) press(name, button.getAttribute('data-chip-value'));
+    });
+    render(name);
+  });
+  function params(target) {
+    const set = function(key, value) { if (typeof target.set === 'function') target.set(key, value); else target[key] = value; };
+    if (groups.food && groups.food.active !== null) set('foodCategory', groups.food.active);
+    if (groups.dietary && groups.dietary.active !== null) set('dietaryPreference', groups.dietary.active);
+    return target;
+  }
+  return {
+    params: params,
+    setBusy: function(busy) {
+      Object.keys(groups).forEach(function(name) {
+        groups[name].element.setAttribute('aria-busy', busy ? 'true' : 'false');
+        groups[name].buttons.forEach(function(button) { button.disabled = Boolean(busy); });
+      });
+    },
+    clearFood: function() { if (groups.food) { groups.food.active = null; render('food'); } }
+  };
+})();
+
+document.addEventListener('click', function(event) {
+  if (event.target.closest && event.target.closest('[data-clear-food]')) {
+    chipState.clearFood();
+    loadMatch(false);
+  }
+});
+
 if (nlForm) nlForm.addEventListener('submit', function(event) {
   event.preventDefault();
   submitNaturalLanguage(nlForm);

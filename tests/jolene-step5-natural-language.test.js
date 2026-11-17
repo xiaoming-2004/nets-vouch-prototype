@@ -489,7 +489,7 @@ test('Groq-only strict JSON-schema request with the configured model and tempera
   assert.equal(schema.additionalProperties, false);
   assert.deepEqual(schema.required.slice().sort(), Object.keys(schema.properties).sort());
   assert.deepEqual(Object.keys(schema.properties).sort(),
-    ['budgetMax', 'cuisine', 'dayRef', 'dietary', 'distance', 'mealPeriod', 'time', 'unsupported']);
+    ['budgetMax', 'cuisine', 'dayRef', 'dietary', 'dishTerms', 'distance', 'foodCategory', 'mealPeriod', 'time', 'unsupported']);
   assert.deepEqual(schema.properties.cuisine.enum, [ 'any', 'rice', 'noodles', 'pasta', 'soup', 'bread', null ]);
   assert.deepEqual(schema.properties.dietary.enum, [ 'none', 'halal', 'vegetarian', 'vegan', null ]);
   assert.deepEqual(schema.properties.distance.enum, ['nearby', null]);
